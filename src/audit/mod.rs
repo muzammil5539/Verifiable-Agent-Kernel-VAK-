@@ -8,21 +8,32 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Represents a single audit log entry with cryptographic chaining
 #[derive(Debug, Clone)]
 pub struct AuditEntry {
+    /// Unique identifier for this entry
     pub id: u64,
+    /// Unix timestamp when the entry was created
     pub timestamp: u64,
+    /// ID of the agent that performed the action
     pub agent_id: String,
+    /// The action that was performed
     pub action: String,
+    /// The resource that was accessed
     pub resource: String,
+    /// The decision outcome
     pub decision: AuditDecision,
+    /// SHA-256 hash of this entry
     pub hash: String,
+    /// Hash of the previous entry (chain linkage)
     pub prev_hash: String,
 }
 
 /// Decision outcome for an audited action
 #[derive(Debug, Clone, PartialEq)]
 pub enum AuditDecision {
+    /// Action was allowed
     Allowed,
+    /// Action was denied
     Denied,
+    /// An error occurred during evaluation
     Error(String),
 }
 
@@ -37,6 +48,7 @@ impl std::fmt::Display for AuditDecision {
 }
 
 /// Cryptographic audit logger with hash-chained entries
+#[derive(Debug)]
 pub struct AuditLogger {
     entries: Vec<AuditEntry>,
     next_id: u64,
@@ -216,14 +228,22 @@ impl Default for AuditLogger {
 /// Error types for audit chain verification
 #[derive(Debug)]
 pub enum AuditVerificationError {
+    /// Chain linkage is broken (prev_hash mismatch)
     BrokenChain {
+        /// ID of the entry with broken chain
         entry_id: u64,
+        /// Expected previous hash
         expected: String,
+        /// Actual previous hash found
         found: String,
     },
+    /// Entry hash does not match computed hash
     InvalidHash {
+        /// ID of the entry with invalid hash
         entry_id: u64,
+        /// Expected hash
         expected: String,
+        /// Actual hash found
         found: String,
     },
 }
@@ -248,13 +268,21 @@ impl std::error::Error for AuditVerificationError {}
 /// Compliance report generated from audit log
 #[derive(Debug, Clone)]
 pub struct AuditReport {
+    /// Total number of audit entries
     pub total_entries: usize,
+    /// Number of allowed actions
     pub allowed_count: usize,
+    /// Number of denied actions
     pub denied_count: usize,
+    /// Number of actions that resulted in errors
     pub error_count: usize,
+    /// Whether the hash chain is valid
     pub chain_valid: bool,
+    /// Timestamp of first entry (if any)
     pub first_timestamp: Option<u64>,
+    /// Timestamp of last entry (if any)
     pub last_timestamp: Option<u64>,
+    /// All audit entries
     pub entries: Vec<AuditEntry>,
 }
 

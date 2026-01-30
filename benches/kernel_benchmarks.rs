@@ -194,12 +194,13 @@ fn bench_audit_logging(c: &mut Criterion) {
         let mut logger = AuditLogger::new();
         
         b.iter(|| {
-            black_box(logger.log(
+            let entry = logger.log(
                 "agent-001",
                 "read",
                 "/data/test.txt",
                 AuditDecision::Allowed,
-            ))
+            );
+            black_box(entry.id)
         })
     });
 }

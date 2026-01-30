@@ -45,6 +45,7 @@ impl std::fmt::Display for StateError {
 
 impl std::error::Error for StateError {}
 
+/// Result type for state operations
 pub type StateResult<T> = Result<T, StateError>;
 
 // ============================================================================
@@ -54,7 +55,9 @@ pub type StateResult<T> = Result<T, StateError>;
 /// Represents a namespaced key in format "agent_id:key"
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NamespacedKey {
+    /// The namespace portion (typically agent_id)
     pub namespace: String,
+    /// The key within the namespace
     pub key: String,
 }
 
@@ -212,7 +215,9 @@ impl MerkleProof {
 /// Result of a verifiable read operation
 #[derive(Debug, Clone)]
 pub struct VerifiableRead {
+    /// The retrieved state value
     pub value: StateValue,
+    /// Cryptographic proof of inclusion
     pub proof: MerkleProof,
 }
 
@@ -222,10 +227,15 @@ pub struct VerifiableRead {
 
 /// Trait for ephemeral (in-memory) storage backends
 pub trait EphemeralStorage: Send + Sync {
+    /// Get a value by key
     fn get(&self, key: &NamespacedKey) -> StateResult<Option<StateValue>>;
+    /// Set a value for a key
     fn set(&self, key: &NamespacedKey, value: StateValue) -> StateResult<()>;
+    /// Delete a key and return whether it existed
     fn delete(&self, key: &NamespacedKey) -> StateResult<bool>;
+    /// Check if a key exists
     fn exists(&self, key: &NamespacedKey) -> StateResult<bool>;
+    /// Clear all keys in a namespace, returning count deleted
     fn clear_namespace(&self, namespace: &str) -> StateResult<usize>;
 }
 
@@ -247,17 +257,25 @@ pub trait SemanticStorage: Send + Sync {
 /// A semantic search match result
 #[derive(Debug, Clone)]
 pub struct SemanticMatch {
+    /// The matched key
     pub key: NamespacedKey,
+    /// The matched value data
     pub value: Vec<u8>,
+    /// Similarity score (0.0 to 1.0)
     pub score: f32,
 }
 
 /// Trait for Merkle-backed verifiable storage
 pub trait MerkleStorage: Send + Sync {
+    /// Get a value by key
     fn get(&self, key: &NamespacedKey) -> StateResult<Option<StateValue>>;
+    /// Get a value with its Merkle proof
     fn get_with_proof(&self, key: &NamespacedKey) -> StateResult<Option<VerifiableRead>>;
+    /// Set a value for a key
     fn set(&self, key: &NamespacedKey, value: StateValue) -> StateResult<()>;
+    /// Delete a key and return whether it existed
     fn delete(&self, key: &NamespacedKey) -> StateResult<bool>;
+    /// Get the current Merkle root hash
     fn get_root(&self) -> StateResult<[u8; 32]>;
 }
 
@@ -266,11 +284,13 @@ pub trait MerkleStorage: Send + Sync {
 // ============================================================================
 
 /// In-memory ephemeral storage implementation
+#[derive(Debug)]
 pub struct InMemoryEphemeral {
     store: RwLock<HashMap<String, StateValue>>,
 }
 
 impl InMemoryEphemeral {
+    /// Create a new empty ephemeral storage
     pub fn new() -> Self {
         Self {
             store: RwLock::new(HashMap::new()),
@@ -350,13 +370,14 @@ impl EphemeralStorage for InMemoryEphemeral {
 ///
 /// The current implementation stores embeddings and performs cosine
 /// similarity search for semantic matching.
+#[derive(Debug)]
 pub struct InMemorySemanticStorage {
     /// Stores (key, value, embedding) tuples
     entries: RwLock<HashMap<String, SemanticEntry>>,
 }
 
 /// A semantic storage entry with value and embedding
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct SemanticEntry {
     key: NamespacedKey,
     value: Vec<u8>,
@@ -461,12 +482,14 @@ impl SemanticStorage for InMemorySemanticStorage {
 }
 
 /// In-memory Merkle storage with proof generation
+#[derive(Debug)]
 pub struct InMemoryMerkleStore {
     store: RwLock<HashMap<String, StateValue>>,
     // Simplified: In production, use a proper Merkle tree structure
 }
 
 impl InMemoryMerkleStore {
+    /// Create a new empty Merkle storage
     pub fn new() -> Self {
         Self {
             store: RwLock::new(HashMap::new()),
@@ -628,8 +651,16 @@ pub struct StateManager {
     ephemeral: Arc<dyn EphemeralStorage>,
     semantic: Arc<dyn SemanticStorage>,
     merkle: Arc<dyn MerkleStorage>,
-    // Access counters for auto-promotion
+    /// Access counters for auto-promotion
     access_counts: RwLock<HashMap<String, u32>>,
+}
+
+impl std::fmt::Debug for StateManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StateManager")
+            .field("config", &self.config)
+            .finish_non_exhaustive()
+    }
 }
 
 impl StateManager {

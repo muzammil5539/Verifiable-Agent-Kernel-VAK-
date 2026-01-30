@@ -118,8 +118,10 @@ mod tests {
     #[test]
     fn test_version_parsing() {
         let (major, minor, patch) = version();
-        assert!(major >= 0);
-        assert!(minor >= 0);
-        assert!(patch >= 0);
+        // Verify version components are valid (non-negative is implicit for u32)
+        // This test ensures version parsing works correctly
+        assert!(major < 1000, "Major version should be reasonable");
+        assert!(minor < 1000, "Minor version should be reasonable");
+        assert!(patch < 1000, "Patch version should be reasonable");
     }
 }

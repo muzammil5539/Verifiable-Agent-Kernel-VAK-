@@ -30,41 +30,53 @@ impl Default for SandboxConfig {
 /// Errors that can occur during sandbox operations
 #[derive(Debug, thiserror::Error)]
 pub enum SandboxError {
+    /// Failed to create the WASM engine
     #[error("Failed to create WASM engine: {0}")]
     EngineCreation(String),
 
+    /// Failed to load a WASM module
     #[error("Failed to load WASM module: {0}")]
     ModuleLoad(String),
 
+    /// Failed to instantiate the module
     #[error("Failed to instantiate module: {0}")]
     Instantiation(String),
 
+    /// Function not found in the module
     #[error("Function '{0}' not found in module")]
     FunctionNotFound(String),
 
+    /// Execution failed with an error
     #[error("Execution failed: {0}")]
     Execution(String),
 
+    /// CPU fuel limit exceeded
     #[error("Fuel exhausted: CPU limit exceeded")]
     FuelExhausted,
 
+    /// Memory limit exceeded
     #[error("Memory limit exceeded")]
     MemoryLimitExceeded,
 
+    /// Execution timed out
     #[error("Execution timeout after {0:?}")]
     Timeout(Duration),
 
+    /// Invalid JSON input provided
     #[error("Invalid JSON input: {0}")]
     InvalidInput(String),
 
+    /// Invalid JSON output from execution
     #[error("Invalid JSON output: {0}")]
     InvalidOutput(String),
 
+    /// Memory allocation failed in guest
     #[error("Memory allocation failed in guest")]
     GuestAllocation,
 }
 
 /// Store data holding resource limits and state
+#[derive(Debug)]
 pub struct SandboxState {
     limits: StoreLimits,
     start_time: Option<Instant>,
@@ -100,6 +112,15 @@ pub struct WasmSandbox {
     engine: Engine,
     config: SandboxConfig,
     module: Option<Module>,
+}
+
+impl std::fmt::Debug for WasmSandbox {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WasmSandbox")
+            .field("config", &self.config)
+            .field("module_loaded", &self.module.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl WasmSandbox {

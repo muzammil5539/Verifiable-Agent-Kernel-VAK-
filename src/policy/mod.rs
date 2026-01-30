@@ -8,7 +8,9 @@ use std::path::Path;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PolicyEffect {
+    /// Allow the action to proceed
     Allow,
+    /// Deny the action
     Deny,
 }
 
@@ -16,35 +18,53 @@ pub enum PolicyEffect {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConditionOperator {
+    /// Exact equality match
     Equals,
+    /// Not equal comparison
     NotEquals,
+    /// String contains substring
     Contains,
+    /// String starts with prefix
     StartsWith,
+    /// String ends with suffix
     EndsWith,
+    /// Numeric greater than
     GreaterThan,
+    /// Numeric less than
     LessThan,
+    /// Value is in a set
     In,
 }
 
 /// A condition that must be satisfied for a rule to match
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyCondition {
+    /// The attribute name to check
     pub attribute: String,
+    /// The comparison operator
     pub operator: ConditionOperator,
+    /// The expected value to compare against
     pub value: serde_json::Value,
 }
 
 /// A single policy rule
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyRule {
+    /// Unique identifier for this rule
     pub id: String,
+    /// Whether to allow or deny when matched
     pub effect: PolicyEffect,
+    /// Glob pattern for resources this rule applies to
     pub resource_pattern: String,
+    /// Glob pattern for actions this rule applies to
     pub action_pattern: String,
+    /// Additional conditions that must be satisfied
     #[serde(default)]
     pub conditions: Vec<PolicyCondition>,
+    /// Priority for rule ordering (higher = evaluated first)
     #[serde(default)]
     pub priority: i32,
+    /// Human-readable description of the rule
     #[serde(default)]
     pub description: Option<String>,
 }
@@ -52,23 +72,31 @@ pub struct PolicyRule {
 /// Context for policy evaluation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyContext {
+    /// The agent requesting the action
     pub agent_id: String,
+    /// The role of the agent
     pub role: String,
+    /// Agent attributes for condition evaluation
     pub attributes: HashMap<String, serde_json::Value>,
+    /// Environment attributes for condition evaluation
     pub environment: HashMap<String, serde_json::Value>,
 }
 
 /// Result of policy evaluation
 #[derive(Debug, Clone)]
 pub struct PolicyDecision {
+    /// Whether the action is allowed
     pub allowed: bool,
+    /// ID of the rule that matched (if any)
     pub matched_rule: Option<String>,
+    /// Human-readable explanation of the decision
     pub reason: String,
 }
 
 /// Policy rules configuration file format
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyConfig {
+    /// List of policy rules
     pub rules: Vec<PolicyRule>,
 }
 
@@ -250,8 +278,11 @@ impl PolicyEngine {
 /// Policy engine errors
 #[derive(Debug, Clone)]
 pub enum PolicyError {
+    /// I/O error reading policy file
     IoError(String),
+    /// Error parsing policy file
     ParseError(String),
+    /// Invalid rule definition
     InvalidRule(String),
 }
 
