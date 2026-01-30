@@ -75,6 +75,9 @@ pub mod policy;
 /// Audit logging module for immutable audit trails.
 pub mod audit;
 
+/// LLM interface module for interacting with language models.
+pub mod llm;
+
 /// Prelude module for convenient imports.
 ///
 /// # Example

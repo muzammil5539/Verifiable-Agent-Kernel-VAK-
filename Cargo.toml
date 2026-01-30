@@ -40,8 +40,18 @@ wasmtime = "27.0"
 # Identifiers
 uuid = { version = "1.6", features = ["v4", "v7", "serde"] }
 
+# Pattern matching
+glob = "0.3"
+
 # Time handling
 chrono = { version = "0.4", features = ["serde"] }
+
+# HTTP client (using rustls for TLS to avoid system OpenSSL dependency)
+reqwest = { version = "0.11", default-features = false, features = ["json", "stream", "rustls-tls"] }
+
+# Streaming
+futures = "0.3"
+tokio-stream = "0.1"
 
 # Configuration
 config = "0.14"
@@ -74,11 +84,19 @@ chrono.workspace = true
 config.workspace = true
 wasmtime.workspace = true
 serde_yaml.workspace = true
+reqwest.workspace = true
+futures.workspace = true
+tokio-stream.workspace = true
+glob.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
 criterion.workspace = true
 tokio-test = "0.4"
+tempfile = "3.10"
+
+# Add glob to dependencies for skill registry pattern matching
+glob.workspace = true
 
 [[bench]]
 name = "kernel_benchmarks"

@@ -4,6 +4,13 @@
 //! - Ephemeral tier: Fast in-memory session state
 //! - Semantic tier: Vector storage for semantic search (LanceDB backend)
 //! - Merkle tier: Verifiable key-value storage with cryptographic proofs
+//! - Episodic tier: Append-only episode chain with Merkle chain integrity
+
+pub mod episodic;
+
+pub use episodic::{
+    ChainVerificationError, Episode, EpisodeChain, EpisodeId, EpisodicMemory, ImportError,
+};
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};

@@ -3,6 +3,8 @@
 //! Provides isolated execution environment with resource limits
 //! using wasmtime for WebAssembly runtime.
 
+pub mod registry;
+
 use std::time::{Duration, Instant};
 use wasmtime::{Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
 
