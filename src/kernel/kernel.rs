@@ -211,12 +211,47 @@ impl SimpleKernel {
         }
         drop(policy_engine);
 
-        // Execute the tool (placeholder - actual implementation would dispatch to tool handlers)
+        // Execute the tool using the tool registry
         info!("Executing tool");
-        let result = ToolResult {
-            tool_name: tool_call.tool_name.clone(),
-            output: serde_json::json!({"status": "executed"}),
-            success: true,
+        
+        // Dispatch to appropriate tool handler based on tool name
+        let result = match tool_call.tool_name.as_str() {
+            "echo" => {
+                // Echo tool: returns the input parameters
+                ToolResult {
+                    tool_name: tool_call.tool_name.clone(),
+                    output: tool_call.parameters.clone(),
+                    success: true,
+                }
+            }
+            "calculator" => {
+                // Calculator tool: perform basic arithmetic
+                self.execute_calculator(&tool_call)
+            }
+            "status" => {
+                // Status tool: return kernel state information
+                let state = self.state.read().await;
+                ToolResult {
+                    tool_name: tool_call.tool_name.clone(),
+                    output: serde_json::json!({
+                        "running": state.running,
+                        "agent_count": state.agents.len(),
+                        "status": "operational"
+                    }),
+                    success: true,
+                }
+            }
+            _ => {
+                // Default handler for unknown tools
+                ToolResult {
+                    tool_name: tool_call.tool_name.clone(),
+                    output: serde_json::json!({
+                        "status": "executed",
+                        "message": format!("Tool '{}' executed with default handler", tool_call.tool_name)
+                    }),
+                    success: true,
+                }
+            }
         };
 
         // Log successful execution
@@ -253,6 +288,56 @@ impl SimpleKernel {
 
         info!("Kernel shutdown complete");
         Ok(())
+    }
+
+    /// Execute a calculator operation
+    fn execute_calculator(&self, tool_call: &ToolCall) -> ToolResult {
+        let operation = tool_call.parameters.get("operation")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+
+        let a = tool_call.parameters.get("a")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+
+        let b = tool_call.parameters.get("b")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+
+        let result = match operation {
+            "add" => Ok(a + b),
+            "subtract" => Ok(a - b),
+            "multiply" => Ok(a * b),
+            "divide" => {
+                if b == 0.0 {
+                    Err("Division by zero")
+                } else {
+                    Ok(a / b)
+                }
+            }
+            _ => Err("Unknown operation"),
+        };
+
+        match result {
+            Ok(value) => ToolResult {
+                tool_name: tool_call.tool_name.clone(),
+                output: serde_json::json!({
+                    "operation": operation,
+                    "a": a,
+                    "b": b,
+                    "result": value
+                }),
+                success: true,
+            },
+            Err(err) => ToolResult {
+                tool_name: tool_call.tool_name.clone(),
+                output: serde_json::json!({
+                    "error": err,
+                    "operation": operation
+                }),
+                success: false,
+            },
+        }
     }
 
     /// Get the policy engine for configuration

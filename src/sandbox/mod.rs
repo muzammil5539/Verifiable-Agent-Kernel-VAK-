@@ -3,7 +3,6 @@
 //! Provides isolated execution environment with resource limits
 //! using wasmtime for WebAssembly runtime.
 
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use wasmtime::{Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
 
@@ -165,7 +164,7 @@ impl WasmSandbox {
         })?;
 
         // Create store with resource limits
-        let mut state = SandboxState::new(&self.config);
+        let state = SandboxState::new(&self.config);
         let mut store = Store::new(&self.engine, state);
         
         // Configure resource limits
@@ -205,7 +204,7 @@ impl WasmSandbox {
         
         let input_ptr = alloc_fn
             .call(&mut store, input_len)
-            .map_err(|e| {
+            .map_err(|_e| {
                 if store.get_fuel().unwrap_or(0) == 0 {
                     SandboxError::FuelExhausted
                 } else if store.data().check_timeout() {
@@ -266,7 +265,7 @@ impl WasmSandbox {
             SandboxError::ModuleLoad("No module loaded. Call load_skill() first.".into())
         })?;
 
-        let mut state = SandboxState::new(&self.config);
+        let state = SandboxState::new(&self.config);
         let mut store = Store::new(&self.engine, state);
         
         store.limiter(|state| &mut state.limits);

@@ -150,13 +150,66 @@ impl KernelConfig {
     ///
     /// Supports TOML, YAML, and JSON formats (detected by extension).
     ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the configuration file
+    ///
     /// # Errors
     ///
     /// Returns an error if the file cannot be read or parsed.
-    pub fn from_file(_path: impl Into<PathBuf>) -> Result<Self, KernelError> {
-        // TODO: Implement file loading using the `config` crate
-        // For now, return default configuration
-        Ok(Self::default())
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use vak::kernel::config::KernelConfig;
+    ///
+    /// let config = KernelConfig::from_file("vak.yaml")?;
+    /// # Ok::<(), vak::kernel::types::KernelError>(())
+    /// ```
+    pub fn from_file(path: impl Into<PathBuf>) -> Result<Self, KernelError> {
+        let path = path.into();
+        
+        let content = std::fs::read_to_string(&path).map_err(|e| {
+            KernelError::InvalidConfiguration {
+                message: format!("Failed to read config file '{}': {}", path.display(), e),
+            }
+        })?;
+
+        let extension = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("");
+
+        let config: Self = match extension.to_lowercase().as_str() {
+            "yaml" | "yml" => serde_yaml::from_str(&content).map_err(|e| {
+                KernelError::InvalidConfiguration {
+                    message: format!("Failed to parse YAML config: {}", e),
+                }
+            })?,
+            "json" => serde_json::from_str(&content).map_err(|e| {
+                KernelError::InvalidConfiguration {
+                    message: format!("Failed to parse JSON config: {}", e),
+                }
+            })?,
+            "toml" => {
+                // For TOML, we need to handle Duration serialization specially
+                // Using a simple key-value approach for now
+                return Err(KernelError::InvalidConfiguration {
+                    message: "TOML configuration is not yet supported. Use YAML or JSON.".to_string(),
+                });
+            }
+            _ => {
+                return Err(KernelError::InvalidConfiguration {
+                    message: format!(
+                        "Unsupported config file extension: '{}'. Use .yaml, .yml, or .json",
+                        extension
+                    ),
+                });
+            }
+        };
+
+        config.validate()?;
+        Ok(config)
     }
 
     /// Loads configuration from environment variables.
@@ -164,11 +217,106 @@ impl KernelConfig {
     /// Environment variables are prefixed with `VAK_` and use `__` as a separator
     /// for nested values. For example:
     /// - `VAK_NAME` sets `name`
+    /// - `VAK_MAX_CONCURRENT_AGENTS` sets `max_concurrent_agents`
     /// - `VAK_SECURITY__ENABLE_SANDBOXING` sets `security.enable_sandboxing`
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use vak::kernel::config::KernelConfig;
+    ///
+    /// // With VAK_NAME=my-kernel and VAK_MAX_CONCURRENT_AGENTS=50 set
+    /// let config = KernelConfig::from_env();
+    /// ```
     #[must_use]
     pub fn from_env() -> Self {
-        // TODO: Implement environment variable loading
-        Self::default()
+        let mut config = Self::default();
+
+        // Load top-level settings
+        if let Ok(name) = std::env::var("VAK_NAME") {
+            config.name = name;
+        }
+
+        if let Ok(max_agents) = std::env::var("VAK_MAX_CONCURRENT_AGENTS") {
+            if let Ok(n) = max_agents.parse() {
+                config.max_concurrent_agents = n;
+            }
+        }
+
+        if let Ok(max_exec_secs) = std::env::var("VAK_MAX_EXECUTION_TIME_SECS") {
+            if let Ok(secs) = max_exec_secs.parse() {
+                config.max_execution_time = Duration::from_secs(secs);
+            }
+        }
+
+        // Load security settings
+        if let Ok(sandboxing) = std::env::var("VAK_SECURITY__ENABLE_SANDBOXING") {
+            config.security.enable_sandboxing = sandboxing.to_lowercase() == "true";
+        }
+
+        if let Ok(signed_requests) = std::env::var("VAK_SECURITY__REQUIRE_SIGNED_REQUESTS") {
+            config.security.require_signed_requests = signed_requests.to_lowercase() == "true";
+        }
+
+        if let Ok(rate_limiting) = std::env::var("VAK_SECURITY__ENABLE_RATE_LIMITING") {
+            config.security.enable_rate_limiting = rate_limiting.to_lowercase() == "true";
+        }
+
+        if let Ok(rate_limit) = std::env::var("VAK_SECURITY__MAX_REQUESTS_PER_MINUTE") {
+            if let Ok(n) = rate_limit.parse() {
+                config.security.max_requests_per_minute = n;
+            }
+        }
+
+        // Load audit settings
+        if let Ok(audit_enabled) = std::env::var("VAK_AUDIT__ENABLED") {
+            config.audit.enabled = audit_enabled.to_lowercase() == "true";
+        }
+
+        if let Ok(include_bodies) = std::env::var("VAK_AUDIT__INCLUDE_BODIES") {
+            config.audit.include_bodies = include_bodies.to_lowercase() == "true";
+        }
+
+        if let Ok(log_path) = std::env::var("VAK_AUDIT__LOG_PATH") {
+            config.audit.log_path = Some(PathBuf::from(log_path));
+        }
+
+        // Load policy settings
+        if let Ok(policy_enabled) = std::env::var("VAK_POLICY__ENABLED") {
+            config.policy.enabled = policy_enabled.to_lowercase() == "true";
+        }
+
+        if let Ok(default_decision) = std::env::var("VAK_POLICY__DEFAULT_DECISION") {
+            config.policy.default_decision = match default_decision.to_lowercase().as_str() {
+                "allow" => DefaultPolicyDecision::Allow,
+                _ => DefaultPolicyDecision::Deny,
+            };
+        }
+
+        if let Ok(caching) = std::env::var("VAK_POLICY__ENABLE_CACHING") {
+            config.policy.enable_caching = caching.to_lowercase() == "true";
+        }
+
+        // Load resource limits
+        if let Ok(max_memory) = std::env::var("VAK_RESOURCES__MAX_MEMORY_MB") {
+            if let Ok(n) = max_memory.parse() {
+                config.resources.max_memory_mb = n;
+            }
+        }
+
+        if let Ok(max_cpu) = std::env::var("VAK_RESOURCES__MAX_CPU_TIME_MS") {
+            if let Ok(n) = max_cpu.parse() {
+                config.resources.max_cpu_time_ms = n;
+            }
+        }
+
+        if let Ok(max_connections) = std::env::var("VAK_RESOURCES__MAX_CONNECTIONS") {
+            if let Ok(n) = max_connections.parse() {
+                config.resources.max_connections = n;
+            }
+        }
+
+        config
     }
 }
 

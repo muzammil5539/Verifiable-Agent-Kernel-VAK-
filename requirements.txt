@@ -1,0 +1,21 @@
+# VAK - Verifiable Agent Kernel Python Dependencies
+# Core dependencies for the Python SDK
+
+# Type checking and dataclasses (included in Python 3.7+)
+# typing-extensions>=4.0.0  # For older Python versions if needed
+
+# Optional: Development dependencies
+# pytest>=7.0.0
+# pytest-asyncio>=0.21.0
+# mypy>=1.0.0
+# black>=23.0.0
+# ruff>=0.1.0
+
+# Optional: Documentation
+# sphinx>=6.0.0
+# sphinx-rtd-theme>=1.2.0
+
+# Note: The core VAK SDK uses only Python standard library
+# PyO3 bindings will be available when Rust crate is built with maturin:
+# pip install maturin
+# maturin develop

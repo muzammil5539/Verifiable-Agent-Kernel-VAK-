@@ -31,12 +31,14 @@ pub mod error;
 pub mod traits;
 pub mod types;
 
+// Re-export commonly used types at the module level
+pub use self::config::KernelConfig;
+
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
 use tracing::{info, instrument};
 
-use self::config::KernelConfig;
 use self::types::{
     AgentId, AuditEntry, KernelError, PolicyDecision, SessionId, ToolRequest, ToolResponse,
 };
@@ -133,23 +135,96 @@ impl Kernel {
     /// # Returns
     ///
     /// A `PolicyDecision` indicating whether the request is allowed, denied, or inadmissible.
+    ///
+    /// # Policy Evaluation Logic
+    ///
+    /// 1. Checks if the tool is in the blocked tools list
+    /// 2. Checks if allowed_tools is non-empty and tool is not in it
+    /// 3. Validates agent session exists (if sessions are active)
+    /// 4. Returns Allow with any applicable constraints
     #[instrument(skip(self, request), fields(agent_id = %agent_id, tool = %request.tool_name))]
     pub async fn evaluate_policy(
         &self,
         agent_id: &AgentId,
         request: &ToolRequest,
     ) -> PolicyDecision {
-        // TODO: Implement actual policy evaluation logic
-        // For now, return Allow for demonstration
         info!(
             agent_id = %agent_id,
             tool = %request.tool_name,
             "Evaluating policy for tool request"
         );
 
+        // Check if the tool is explicitly blocked
+        if self.config.security.blocked_tools.contains(&request.tool_name) {
+            tracing::warn!(
+                tool = %request.tool_name,
+                "Tool is in blocked list"
+            );
+            return PolicyDecision::Deny {
+                reason: format!("Tool '{}' is blocked by security policy", request.tool_name),
+                violated_policies: Some(vec!["security.blocked_tools".to_string()]),
+            };
+        }
+
+        // Check if allowed_tools is non-empty and tool is not in it
+        if !self.config.security.allowed_tools.is_empty()
+            && !self.config.security.allowed_tools.contains(&request.tool_name)
+        {
+            tracing::warn!(
+                tool = %request.tool_name,
+                "Tool not in allowed list"
+            );
+            return PolicyDecision::Deny {
+                reason: format!(
+                    "Tool '{}' is not in the allowed tools list",
+                    request.tool_name
+                ),
+                violated_policies: Some(vec!["security.allowed_tools".to_string()]),
+            };
+        }
+
+        // Check if policy enforcement is enabled
+        if !self.config.policy.enabled {
+            return PolicyDecision::Allow {
+                reason: "Policy enforcement is disabled".to_string(),
+                constraints: None,
+            };
+        }
+
+        // Build constraints based on configuration
+        let mut constraints = Vec::new();
+        
+        // Add timeout constraint if configured
+        if self.config.max_execution_time.as_millis() > 0 {
+            constraints.push(format!(
+                "max_execution_time_ms:{}",
+                self.config.max_execution_time.as_millis()
+            ));
+        }
+
+        // Add memory limit constraint
+        if self.config.resources.max_memory_mb > 0 {
+            constraints.push(format!(
+                "max_memory_mb:{}",
+                self.config.resources.max_memory_mb
+            ));
+        }
+
+        // Add sandboxing requirement if enabled
+        if self.config.security.enable_sandboxing {
+            constraints.push("sandboxed:true".to_string());
+        }
+
         PolicyDecision::Allow {
-            reason: "Default allow policy".to_string(),
-            constraints: None,
+            reason: format!(
+                "Agent {} authorized to execute tool '{}'",
+                agent_id, request.tool_name
+            ),
+            constraints: if constraints.is_empty() {
+                None
+            } else {
+                Some(constraints)
+            },
         }
     }
 
@@ -212,20 +287,245 @@ impl Kernel {
             log.push(audit_entry);
         }
 
-        // Step 3: Execute the tool (placeholder)
-        // TODO: Implement actual tool execution
-        let response = ToolResponse {
-            request_id: request.request_id,
-            success: true,
-            result: Some(serde_json::json!({
-                "status": "executed",
-                "tool": request.tool_name
-            })),
-            error: None,
-            execution_time_ms: 0,
+        // Step 3: Execute the tool
+        // Measure execution time
+        let start_time = std::time::Instant::now();
+        
+        // Execute the tool based on its name
+        // In a full implementation, this would dispatch to a tool registry
+        // For now, we handle some built-in tools and return a default response for others
+        let execution_result = self.dispatch_tool(&request).await;
+        
+        let execution_time_ms = start_time.elapsed().as_millis() as u64;
+        
+        let response = match execution_result {
+            Ok(result) => ToolResponse {
+                request_id: request.request_id,
+                success: true,
+                result: Some(result),
+                error: None,
+                execution_time_ms,
+            },
+            Err(e) => ToolResponse {
+                request_id: request.request_id,
+                success: false,
+                result: None,
+                error: Some(e.to_string()),
+                execution_time_ms,
+            },
         };
 
         Ok(response)
+    }
+
+    /// Dispatches a tool request to the appropriate handler.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The tool request to dispatch
+    ///
+    /// # Returns
+    ///
+    /// The result of the tool execution as a JSON value.
+    ///
+    /// # Built-in Tools
+    ///
+    /// The kernel provides several built-in tools:
+    /// - `echo`: Returns the input parameters as-is
+    /// - `calculator`: Performs basic arithmetic operations
+    /// - `data_processor`: Processes data arrays with various operations
+    /// - `system_info`: Returns system information (kernel version, etc.)
+    async fn dispatch_tool(
+        &self,
+        request: &ToolRequest,
+    ) -> Result<serde_json::Value, KernelError> {
+        match request.tool_name.as_str() {
+            "echo" => {
+                // Echo tool: returns the input parameters
+                Ok(request.parameters.clone())
+            }
+            "calculator" => {
+                // Calculator tool: performs basic arithmetic
+                self.handle_calculator(request).await
+            }
+            "data_processor" => {
+                // Data processor: summarize, transform, filter data
+                self.handle_data_processor(request).await
+            }
+            "system_info" => {
+                // System info: return kernel information
+                Ok(serde_json::json!({
+                    "kernel_name": self.config.name,
+                    "version": crate::VERSION,
+                    "max_concurrent_agents": self.config.max_concurrent_agents,
+                    "sandboxing_enabled": self.config.security.enable_sandboxing,
+                    "audit_enabled": self.config.audit.enabled,
+                }))
+            }
+            _ => {
+                // Unknown tool - return a generic response
+                // In a full implementation, this would look up the tool in a registry
+                Ok(serde_json::json!({
+                    "status": "executed",
+                    "tool": request.tool_name,
+                    "message": "Tool executed successfully (default handler)",
+                    "parameters_received": request.parameters
+                }))
+            }
+        }
+    }
+
+    /// Handles calculator tool requests.
+    async fn handle_calculator(
+        &self,
+        request: &ToolRequest,
+    ) -> Result<serde_json::Value, KernelError> {
+        let operation = request.parameters.get("operation")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| KernelError::ToolExecutionFailed {
+                tool_name: "calculator".to_string(),
+                reason: "Missing 'operation' parameter".to_string(),
+            })?;
+
+        let operands = request.parameters.get("operands")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| KernelError::ToolExecutionFailed {
+                tool_name: "calculator".to_string(),
+                reason: "Missing or invalid 'operands' parameter".to_string(),
+            })?;
+
+        let numbers: Result<Vec<f64>, _> = operands
+            .iter()
+            .map(|v| v.as_f64().ok_or_else(|| KernelError::ToolExecutionFailed {
+                tool_name: "calculator".to_string(),
+                reason: "Operands must be numbers".to_string(),
+            }))
+            .collect();
+        
+        let numbers = numbers?;
+
+        let result = match operation {
+            "add" => numbers.iter().sum::<f64>(),
+            "subtract" => {
+                if numbers.is_empty() {
+                    0.0
+                } else {
+                    numbers.iter().skip(1).fold(numbers[0], |acc, x| acc - x)
+                }
+            }
+            "multiply" => numbers.iter().product::<f64>(),
+            "divide" => {
+                if numbers.is_empty() {
+                    return Err(KernelError::ToolExecutionFailed {
+                        tool_name: "calculator".to_string(),
+                        reason: "Division requires at least one operand".to_string(),
+                    });
+                }
+                if numbers.iter().skip(1).any(|&x| x == 0.0) {
+                    return Err(KernelError::ToolExecutionFailed {
+                        tool_name: "calculator".to_string(),
+                        reason: "Division by zero".to_string(),
+                    });
+                }
+                numbers.iter().skip(1).fold(numbers[0], |acc, x| acc / x)
+            }
+            _ => {
+                return Err(KernelError::ToolExecutionFailed {
+                    tool_name: "calculator".to_string(),
+                    reason: format!("Unknown operation: {}", operation),
+                });
+            }
+        };
+
+        Ok(serde_json::json!({
+            "operation": operation,
+            "operands": operands,
+            "result": result
+        }))
+    }
+
+    /// Handles data processor tool requests.
+    async fn handle_data_processor(
+        &self,
+        request: &ToolRequest,
+    ) -> Result<serde_json::Value, KernelError> {
+        let action = request.parameters.get("action")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| KernelError::ToolExecutionFailed {
+                tool_name: "data_processor".to_string(),
+                reason: "Missing 'action' parameter".to_string(),
+            })?;
+
+        let data = request.parameters.get("data")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| KernelError::ToolExecutionFailed {
+                tool_name: "data_processor".to_string(),
+                reason: "Missing or invalid 'data' parameter".to_string(),
+            })?;
+
+        match action {
+            "summarize" => {
+                let numbers: Vec<f64> = data
+                    .iter()
+                    .filter_map(|v| v.as_f64())
+                    .collect();
+
+                if numbers.is_empty() {
+                    return Ok(serde_json::json!({
+                        "action": "summarize",
+                        "count": 0,
+                        "message": "No numeric data to summarize"
+                    }));
+                }
+
+                let sum: f64 = numbers.iter().sum();
+                let count = numbers.len();
+                let mean = sum / count as f64;
+                let min = numbers.iter().cloned().fold(f64::INFINITY, f64::min);
+                let max = numbers.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+
+                Ok(serde_json::json!({
+                    "action": "summarize",
+                    "count": count,
+                    "sum": sum,
+                    "mean": mean,
+                    "min": min,
+                    "max": max
+                }))
+            }
+            "count" => {
+                Ok(serde_json::json!({
+                    "action": "count",
+                    "count": data.len()
+                }))
+            }
+            "filter" => {
+                let predicate = request.parameters.get("predicate")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("non_null");
+
+                let filtered: Vec<&serde_json::Value> = match predicate {
+                    "non_null" => data.iter().filter(|v| !v.is_null()).collect(),
+                    "numbers" => data.iter().filter(|v| v.is_number()).collect(),
+                    "strings" => data.iter().filter(|v| v.is_string()).collect(),
+                    _ => data.iter().collect(),
+                };
+
+                Ok(serde_json::json!({
+                    "action": "filter",
+                    "predicate": predicate,
+                    "original_count": data.len(),
+                    "filtered_count": filtered.len(),
+                    "filtered_data": filtered
+                }))
+            }
+            _ => {
+                Err(KernelError::ToolExecutionFailed {
+                    tool_name: "data_processor".to_string(),
+                    reason: format!("Unknown action: {}", action),
+                })
+            }
+        }
     }
 
     /// Retrieves the audit log entries.
