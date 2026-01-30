@@ -1,0 +1,554 @@
+# VAK Kernel API Protocol
+# Defines the interface between agents and the kernel
+
+version: "1.0.0"
+protocol_name: "VAK-Kernel-API"
+
+# =============================================================================
+# API OVERVIEW
+# =============================================================================
+
+overview:
+  description: |
+    The Kernel API is the primary interface for agents to interact with VAK.
+    All actions, queries, and state operations go through this API.
+    
+    The API is designed to be:
+    - Async-first (all operations return futures)
+    - Type-safe (strict schemas)
+    - Auditable (all calls logged)
+    - Consistent (same interface for all agent types)
+
+  base_url: "/api/v1"
+  content_type: "application/json"
+  authentication: "Bearer token (JWT) or mTLS"
+
+# =============================================================================
+# AGENT LIFECYCLE
+# =============================================================================
+
+endpoints:
+
+  register_agent:
+    method: "POST"
+    path: "/agents"
+    description: "Register a new agent with the kernel"
+    
+    request:
+      schema:
+        type: "object"
+        required: ["agent_id", "role"]
+        properties:
+          agent_id:
+            type: "string"
+            pattern: "^[a-z0-9-]+$"
+            description: "Unique agent identifier"
+          role:
+            type: "string"
+            description: "Agent's role for policy evaluation"
+          attributes:
+            type: "object"
+            description: "Custom attributes for ABAC"
+          capabilities:
+            type: "array"
+            items:
+              type: "string"
+            description: "Requested capabilities"
+      
+      example:
+        agent_id: "finance-bot-001"
+        role: "finance-agent"
+        attributes:
+          department: "accounting"
+          clearance_level: 2
+        capabilities: ["read_transactions", "process_refunds"]
+    
+    response:
+      success:
+        status: 201
+        schema:
+          type: "object"
+          properties:
+            agent_id:
+              type: "string"
+            session_id:
+              type: "string"
+            token:
+              type: "string"
+              description: "JWT for subsequent requests"
+            granted_capabilities:
+              type: "array"
+              items:
+                type: "string"
+            expires_at:
+              type: "string"
+              format: "date-time"
+      
+      errors:
+        - status: 400
+          code: "INVALID_REQUEST"
+          description: "Missing or invalid fields"
+        - status: 409
+          code: "AGENT_EXISTS"
+          description: "Agent ID already registered"
+        - status: 403
+          code: "ROLE_NOT_ALLOWED"
+          description: "Role not permitted"
+
+  deregister_agent:
+    method: "DELETE"
+    path: "/agents/{agent_id}"
+    description: "Deregister an agent and archive its state"
+    
+    response:
+      success:
+        status: 200
+        schema:
+          type: "object"
+          properties:
+            agent_id:
+              type: "string"
+            final_state_hash:
+              type: "string"
+            audit_entries_count:
+              type: "integer"
+
+# =============================================================================
+# TOOL EXECUTION
+# =============================================================================
+
+  execute_tool:
+    method: "POST"
+    path: "/tools/execute"
+    description: "Execute a tool through the kernel"
+    
+    request:
+      headers:
+        Authorization: "Bearer <token>"
+        X-Correlation-ID: "<optional correlation id>"
+      
+      schema:
+        type: "object"
+        required: ["tool", "args"]
+        properties:
+          tool:
+            type: "string"
+            description: "Tool name to execute"
+          args:
+            type: "object"
+            description: "Tool arguments"
+          context:
+            type: "object"
+            description: "Additional context for policy evaluation"
+          timeout_ms:
+            type: "integer"
+            description: "Custom timeout (max: 60000)"
+      
+      example:
+        tool: "refund_user"
+        args:
+          user_id: "U12345"
+          amount: 500
+          reason: "Product returned"
+        context:
+          approval_ticket: "TKT-789"
+    
+    response:
+      success:
+        status: 200
+        schema:
+          type: "object"
+          properties:
+            status:
+              type: "string"
+              enum: ["success"]
+            result:
+              type: "object"
+            audit_id:
+              type: "string"
+            execution_time_ms:
+              type: "number"
+            state_hash:
+              type: "string"
+              description: "New state hash after action"
+      
+      blocked:
+        status: 403
+        schema:
+          type: "object"
+          properties:
+            status:
+              type: "string"
+              enum: ["blocked"]
+            decision:
+              type: "string"
+              enum: ["DENY", "INADMISSIBLE"]
+            reason:
+              type: "string"
+            violated_policy:
+              type: "string"
+            audit_id:
+              type: "string"
+            suggestions:
+              type: "array"
+              items:
+                type: "string"
+      
+      errors:
+        - status: 400
+          code: "INVALID_TOOL"
+          description: "Tool does not exist"
+        - status: 400
+          code: "INVALID_ARGS"
+          description: "Arguments fail validation"
+        - status: 408
+          code: "TIMEOUT"
+          description: "Tool execution timed out"
+        - status: 500
+          code: "EXECUTION_ERROR"
+          description: "Tool failed during execution"
+
+# =============================================================================
+# POLICY OPERATIONS
+# =============================================================================
+
+  check_policy:
+    method: "POST"
+    path: "/policies/check"
+    description: "Check if an action would be allowed (dry run)"
+    
+    request:
+      schema:
+        type: "object"
+        required: ["action", "args"]
+        properties:
+          action:
+            type: "string"
+          args:
+            type: "object"
+          context:
+            type: "object"
+    
+    response:
+      success:
+        status: 200
+        schema:
+          type: "object"
+          properties:
+            would_allow:
+              type: "boolean"
+            decision:
+              type: "string"
+              enum: ["ALLOW", "DENY", "INADMISSIBLE"]
+            matched_rule:
+              type: "string"
+            conditions_evaluated:
+              type: "array"
+              items:
+                type: "object"
+                properties:
+                  condition:
+                    type: "string"
+                  passed:
+                    type: "boolean"
+
+  list_policies:
+    method: "GET"
+    path: "/policies"
+    description: "List policies applicable to current agent"
+    
+    query_params:
+      - name: "action"
+        type: "string"
+        description: "Filter by action"
+    
+    response:
+      success:
+        status: 200
+        schema:
+          type: "object"
+          properties:
+            policies:
+              type: "array"
+              items:
+                type: "object"
+                properties:
+                  id:
+                    type: "string"
+                  description:
+                    type: "string"
+                  applicable_actions:
+                    type: "array"
+                    items:
+                      type: "string"
+
+# =============================================================================
+# STATE OPERATIONS
+# =============================================================================
+
+  get_state:
+    method: "GET"
+    path: "/state"
+    description: "Get current agent state"
+    
+    query_params:
+      - name: "tier"
+        type: "string"
+        enum: ["working", "episodic", "semantic", "all"]
+        default: "working"
+      - name: "include_hash"
+        type: "boolean"
+        default: true
+    
+    response:
+      success:
+        status: 200
+        schema:
+          type: "object"
+          properties:
+            state_hash:
+              type: "string"
+            sequence:
+              type: "integer"
+            tiers:
+              type: "object"
+              properties:
+                working:
+                  type: "object"
+                episodic:
+                  type: "object"
+                semantic:
+                  type: "object"
+
+  snapshot_state:
+    method: "POST"
+    path: "/state/snapshot"
+    description: "Create a state snapshot for rollback"
+    
+    response:
+      success:
+        status: 201
+        schema:
+          type: "object"
+          properties:
+            snapshot_id:
+              type: "string"
+            state_hash:
+              type: "string"
+            timestamp:
+              type: "string"
+              format: "date-time"
+
+  rollback_state:
+    method: "POST"
+    path: "/state/rollback"
+    description: "Rollback to a previous state"
+    
+    request:
+      schema:
+        type: "object"
+        required: ["target"]
+        properties:
+          target:
+            oneOf:
+              - type: "string"
+                description: "Snapshot ID"
+              - type: "string"
+                description: "State hash"
+          reason:
+            type: "string"
+    
+    response:
+      success:
+        status: 200
+        schema:
+          type: "object"
+          properties:
+            previous_hash:
+              type: "string"
+            new_hash:
+              type: "string"
+            audit_id:
+              type: "string"
+
+# =============================================================================
+# AUDIT OPERATIONS
+# =============================================================================
+
+  query_audit:
+    method: "GET"
+    path: "/audit"
+    description: "Query audit log entries"
+    
+    query_params:
+      - name: "from"
+        type: "string"
+        format: "date-time"
+      - name: "to"
+        type: "string"
+        format: "date-time"
+      - name: "action"
+        type: "string"
+      - name: "decision"
+        type: "string"
+        enum: ["ALLOW", "DENY", "INADMISSIBLE"]
+      - name: "limit"
+        type: "integer"
+        default: 100
+        maximum: 1000
+    
+    response:
+      success:
+        status: 200
+        schema:
+          type: "object"
+          properties:
+            entries:
+              type: "array"
+              items:
+                $ref: "#/schemas/AuditEntry"
+            total_count:
+              type: "integer"
+            has_more:
+              type: "boolean"
+
+  get_audit_receipt:
+    method: "GET"
+    path: "/audit/{audit_id}/receipt"
+    description: "Get cryptographic receipt for audit entry"
+    
+    response:
+      success:
+        status: 200
+        schema:
+          type: "object"
+          properties:
+            audit_id:
+              type: "string"
+            entry_hash:
+              type: "string"
+            merkle_proof:
+              type: "array"
+              items:
+                type: "object"
+                properties:
+                  hash:
+                    type: "string"
+                  position:
+                    type: "string"
+                    enum: ["left", "right"]
+            root_hash:
+              type: "string"
+            timestamp:
+              type: "string"
+              format: "date-time"
+
+# =============================================================================
+# REASONING OPERATIONS
+# =============================================================================
+
+  evaluate_thought:
+    method: "POST"
+    path: "/reasoning/evaluate"
+    description: "Evaluate a reasoning step with PRM"
+    
+    request:
+      schema:
+        type: "object"
+        required: ["goal", "thought", "proposed_action"]
+        properties:
+          goal:
+            type: "string"
+          history:
+            type: "array"
+            items:
+              type: "object"
+          thought:
+            type: "string"
+          proposed_action:
+            type: "object"
+    
+    response:
+      success:
+        status: 200
+        schema:
+          type: "object"
+          properties:
+            logic_score:
+              type: "number"
+            safety_score:
+              type: "number"
+            relevance_score:
+              type: "number"
+            combined_score:
+              type: "number"
+            decision:
+              type: "string"
+              enum: ["proceed", "review", "backtrack"]
+            explanation:
+              type: "string"
+            alternative:
+              type: "string"
+
+  verify_action:
+    method: "POST"
+    path: "/reasoning/verify"
+    description: "Formally verify a high-stakes action"
+    
+    request:
+      schema:
+        type: "object"
+        required: ["action", "context"]
+        properties:
+          action:
+            type: "object"
+          context:
+            type: "object"
+          invariant_set:
+            type: "string"
+            description: "Which invariant set to check against"
+    
+    response:
+      success:
+        status: 200
+        schema:
+          type: "object"
+          properties:
+            result:
+              type: "string"
+              enum: ["SAFE", "UNSAFE", "UNKNOWN"]
+            verification_time_ms:
+              type: "integer"
+            violated_invariants:
+              type: "array"
+            proof_hash:
+              type: "string"
+
+# =============================================================================
+# SCHEMAS
+# =============================================================================
+
+schemas:
+  
+  AuditEntry:
+    type: "object"
+    properties:
+      id:
+        type: "string"
+      sequence:
+        type: "integer"
+      timestamp:
+        type: "string"
+        format: "date-time"
+      agent_id:
+        type: "string"
+      action:
+        type: "string"
+      args_hash:
+        type: "string"
+      decision:
+        type: "string"
+      entry_hash:
+        type: "string"
+      prev_hash:
+        type: "string"

@@ -1,0 +1,268 @@
+# VAK Policy Authoring Instructions
+# Guidelines for writing ABAC policies
+
+version: "1.0.0"
+applies_to: ["policy_engine_agent", "human_authors"]
+
+# =============================================================================
+# POLICY STRUCTURE
+# =============================================================================
+
+policy_structure:
+  
+  required_fields:
+    - id: "Unique identifier (kebab-case)"
+    - version: "Semantic version"
+    - description: "Human-readable purpose"
+    - rules: "Array of rule objects"
+  
+  optional_fields:
+    - effective_date: "When policy takes effect"
+    - expiry_date: "When policy expires"
+    - tags: "Categorization labels"
+    - owner: "Responsible party"
+  
+  example: |
+    {
+      "id": "finance-operations-v2",
+      "version": "2.1.0",
+      "description": "Controls financial operations for finance department agents",
+      "effective_date": "2026-01-01T00:00:00Z",
+      "owner": "finance-team@company.com",
+      "tags": ["finance", "production", "high-stakes"],
+      "rules": [...]
+    }
+
+# =============================================================================
+# RULE AUTHORING
+# =============================================================================
+
+rule_authoring:
+  
+  structure:
+    effect: "allow | deny"
+    subjects: "Who the rule applies to"
+    actions: "What actions are covered"
+    resources: "What resources are affected"
+    conditions: "Additional constraints"
+  
+  principles:
+    least_privilege:
+      description: "Grant minimum necessary permissions"
+      example: |
+        # BAD: Too broad
+        {"effect": "allow", "subjects": {"role": "employee"}, "actions": ["*"]}
+        
+        # GOOD: Specific
+        {"effect": "allow", "subjects": {"role": "analyst"}, 
+         "actions": ["read_report", "export_csv"], 
+         "resources": {"type": "report", "department": "own"}}
+    
+    explicit_deny:
+      description: "Use explicit deny for sensitive overrides"
+      example: |
+        # Deny takes precedence over allow
+        {"effect": "deny", "subjects": {"status": "probation"}, 
+         "actions": ["delete_*"], "conditions": []}
+    
+    condition_specificity:
+      description: "Make conditions as specific as possible"
+      example: |
+        # BAD: Vague
+        {"field": "amount", "op": "lt", "value": "high"}
+        
+        # GOOD: Precise
+        {"field": "amount", "op": "lt", "value": 10000}
+
+# =============================================================================
+# CONDITION OPERATORS
+# =============================================================================
+
+condition_operators:
+  
+  comparison:
+    - op: "eq"
+      description: "Equals"
+      types: ["string", "number", "boolean"]
+      example: {"field": "status", "op": "eq", "value": "active"}
+      
+    - op: "neq"
+      description: "Not equals"
+      types: ["string", "number", "boolean"]
+      example: {"field": "role", "op": "neq", "value": "guest"}
+      
+    - op: "lt"
+      description: "Less than"
+      types: ["number"]
+      example: {"field": "amount", "op": "lt", "value": 1000}
+      
+    - op: "lte"
+      description: "Less than or equal"
+      types: ["number"]
+      example: {"field": "attempts", "op": "lte", "value": 3}
+      
+    - op: "gt"
+      description: "Greater than"
+      types: ["number"]
+      example: {"field": "balance", "op": "gt", "value": 0}
+      
+    - op: "gte"
+      description: "Greater than or equal"
+      types: ["number"]
+      example: {"field": "tenure_days", "op": "gte", "value": 90}
+  
+  membership:
+    - op: "in"
+      description: "Value is in list"
+      types: ["string", "number"]
+      example: {"field": "department", "op": "in", "value": ["engineering", "product"]}
+      
+    - op: "not_in"
+      description: "Value is not in list"
+      types: ["string", "number"]
+      example: {"field": "country", "op": "not_in", "value": ["sanctioned_1", "sanctioned_2"]}
+  
+  string_operations:
+    - op: "contains"
+      description: "String contains substring"
+      types: ["string"]
+      example: {"field": "email", "op": "contains", "value": "@company.com"}
+      
+    - op: "starts_with"
+      description: "String starts with prefix"
+      types: ["string"]
+      example: {"field": "resource_id", "op": "starts_with", "value": "prod-"}
+      
+    - op: "matches"
+      description: "Regex match"
+      types: ["string"]
+      example: {"field": "filename", "op": "matches", "value": "^report_\\d{4}\\.pdf$"}
+  
+  existence:
+    - op: "exists"
+      description: "Field is present"
+      types: ["any"]
+      example: {"field": "approval.manager_id", "op": "exists", "value": true}
+      
+    - op: "is_null"
+      description: "Field is null/undefined"
+      types: ["any"]
+      example: {"field": "override_reason", "op": "is_null", "value": false}
+
+# =============================================================================
+# FIELD PATH NOTATION
+# =============================================================================
+
+field_paths:
+  
+  syntax:
+    description: "Dot notation for nested fields"
+    examples:
+      - "user.status"
+      - "request.amount"
+      - "context.session.authenticated"
+      - "resource.metadata.owner"
+  
+  special_fields:
+    - path: "agent.id"
+      description: "The requesting agent's ID"
+    - path: "agent.role"
+      description: "The requesting agent's role"
+    - path: "agent.attributes.*"
+      description: "Agent's custom attributes"
+    - path: "action.name"
+      description: "The action being requested"
+    - path: "action.category"
+      description: "Action category (read/write/delete/execute)"
+    - path: "resource.type"
+      description: "Type of resource being accessed"
+    - path: "context.timestamp"
+      description: "Request timestamp"
+    - path: "context.source_ip"
+      description: "Origin IP address"
+
+# =============================================================================
+# COMMON PATTERNS
+# =============================================================================
+
+common_patterns:
+  
+  time_based_access:
+    description: "Restrict actions to business hours"
+    example: |
+      {
+        "effect": "allow",
+        "subjects": {"role": "support"},
+        "actions": ["access_customer_data"],
+        "conditions": [
+          {"field": "context.hour_utc", "op": "gte", "value": 9},
+          {"field": "context.hour_utc", "op": "lt", "value": 17},
+          {"field": "context.day_of_week", "op": "in", "value": [1,2,3,4,5]}
+        ]
+      }
+  
+  approval_workflow:
+    description: "Require approval for high-value actions"
+    example: |
+      {
+        "effect": "allow",
+        "subjects": {"role": "finance-agent"},
+        "actions": ["process_refund"],
+        "conditions": [
+          {"field": "amount", "op": "gte", "value": 1000},
+          {"field": "approval.manager_approved", "op": "eq", "value": true},
+          {"field": "approval.timestamp", "op": "gte", "value": "$request_time - 24h"}
+        ]
+      }
+  
+  rate_limiting:
+    description: "Limit action frequency"
+    example: |
+      {
+        "effect": "allow",
+        "subjects": {"role": "api-agent"},
+        "actions": ["send_notification"],
+        "conditions": [
+          {"field": "context.actions_last_hour", "op": "lt", "value": 100}
+        ]
+      }
+  
+  resource_ownership:
+    description: "Agents can only access own resources"
+    example: |
+      {
+        "effect": "allow",
+        "subjects": {"role": "user-agent"},
+        "actions": ["read", "update"],
+        "resources": {"type": "document"},
+        "conditions": [
+          {"field": "resource.owner_id", "op": "eq", "value": "$agent.id"}
+        ]
+      }
+
+# =============================================================================
+# TESTING POLICIES
+# =============================================================================
+
+policy_testing:
+  
+  required_tests:
+    - "Positive case: authorized agent, valid conditions → Allow"
+    - "Negative case: unauthorized agent → Inadmissible"
+    - "Negative case: authorized agent, invalid conditions → Deny"
+    - "Edge case: boundary values for numeric conditions"
+    - "Edge case: empty/null field values"
+  
+  test_format: |
+    {
+      "test_name": "finance_agent_refund_under_limit",
+      "request": {
+        "agent_id": "finance-001",
+        "agent_role": "finance-agent",
+        "action": "refund_user",
+        "resource": {"type": "transaction"},
+        "context": {"amount": 500, "user.status": "verified"}
+      },
+      "expected_decision": "Allow",
+      "expected_rule": "finance-refund-policy#rule-1"
+    }

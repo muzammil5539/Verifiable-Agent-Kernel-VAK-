@@ -1,0 +1,162 @@
+# VAK Global Instructions
+# These instructions apply to ALL agents in the Verifiable Agent Kernel
+
+version: "1.0.0"
+last_updated: "2026-01-30"
+
+# =============================================================================
+# CORE PRINCIPLES (Non-Negotiable)
+# =============================================================================
+
+core_principles:
+  
+  safety_first:
+    description: "Safety is not a feature, it's the foundation"
+    rules:
+      - "Inadmissible actions are UNDEFINED, not just denied"
+      - "When in doubt, block and log"
+      - "Never assume trust - always verify"
+      - "Fail closed, not open"
+    
+  cryptographic_integrity:
+    description: "Every state change must be verifiable"
+    rules:
+      - "All state transitions produce a hash"
+      - "Audit logs are append-only and hash-chained"
+      - "Tampering must be detectable"
+      - "Proofs must be reproducible"
+    
+  deterministic_control:
+    description: "Probabilistic minds need deterministic guardrails"
+    rules:
+      - "LLMs propose, Kernel disposes"
+      - "Policy evaluation is deterministic"
+      - "Same input + state = same decision"
+      - "Randomness is logged and reproducible"
+    
+  isolation_principle:
+    description: "Compartmentalize to contain failures"
+    rules:
+      - "Tools run in WASM sandboxes"
+      - "Agents cannot access each other's working memory"
+      - "Permissions are explicit, never implicit"
+      - "Default deny for all capabilities"
+    
+  auditability:
+    description: "Every decision leaves a trail"
+    rules:
+      - "All actions are logged before execution"
+      - "Decisions include rationale"
+      - "Receipts can prove what happened"
+      - "Compliance queries are always answerable"
+
+# =============================================================================
+# FORBIDDEN ACTIONS (Hard Blocks)
+# =============================================================================
+
+forbidden_actions:
+  
+  - id: "bypass_policy"
+    description: "Any attempt to circumvent policy checks"
+    detection: "Direct tool calls without kernel routing"
+    response: "Immediate termination, security alert"
+    
+  - id: "modify_audit_log"
+    description: "Any attempt to alter historical records"
+    detection: "UPDATE/DELETE on audit tables, hash mismatches"
+    response: "Block, alert, forensic capture"
+    
+  - id: "escape_sandbox"
+    description: "WASM attempting to access host resources"
+    detection: "Unauthorized imports, syscall attempts"
+    response: "Terminate WASM instance, quarantine skill"
+    
+  - id: "self_elevation"
+    description: "Agent granting itself additional permissions"
+    detection: "Permission grants where agent_id == target_id"
+    response: "Block, flag for human review"
+    
+  - id: "infinite_loop"
+    description: "Repetitive actions without progress"
+    detection: "Same action > 3 times with same args"
+    response: "Pause, backtrack, human escalation if persists"
+
+# =============================================================================
+# RESPONSE FORMATS
+# =============================================================================
+
+response_formats:
+  
+  success:
+    schema:
+      status: "success"
+      data: "<result>"
+      audit_id: "<uuid>"
+      execution_time_ms: "<number>"
+      
+  blocked:
+    schema:
+      status: "blocked"
+      reason: "<human readable>"
+      violated_policy: "<policy_id>"
+      audit_id: "<uuid>"
+      suggestions: ["<alternative actions>"]
+      
+  error:
+    schema:
+      status: "error"
+      error_type: "<classification>"
+      message: "<details>"
+      audit_id: "<uuid>"
+      recovery_options: ["<options>"]
+
+# =============================================================================
+# COMMUNICATION STANDARDS
+# =============================================================================
+
+communication:
+  
+  inter_agent:
+    format: "JSON"
+    encoding: "UTF-8"
+    max_message_size_kb: 1024
+    required_fields:
+      - "message_id"
+      - "sender_agent_id"
+      - "timestamp"
+      - "message_type"
+      - "payload"
+    
+  logging:
+    level: "INFO"  # DEBUG in development
+    structured: true
+    include_context: true
+    pii_handling: "hash_and_mask"
+    
+  errors:
+    include_stack_trace: false  # Security
+    include_suggestions: true
+    human_readable: true
+
+# =============================================================================
+# PERFORMANCE EXPECTATIONS
+# =============================================================================
+
+performance:
+  
+  latency_targets:
+    policy_evaluation_p50_ms: 10
+    policy_evaluation_p99_ms: 50
+    tool_execution_p50_ms: 100
+    tool_execution_p99_ms: 1000
+    audit_write_ms: 5  # Async, non-blocking
+    
+  throughput_targets:
+    concurrent_agents: 1000
+    actions_per_second: 10000
+    audit_entries_per_second: 50000
+    
+  resource_limits:
+    max_memory_per_agent_mb: 256
+    max_cpu_per_action_ms: 30000
+    max_tool_timeout_ms: 60000

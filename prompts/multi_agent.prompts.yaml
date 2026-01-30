@@ -1,0 +1,360 @@
+# VAK Prompt Library - Multi-Agent Coordination
+# Prompts for swarm consensus and multi-agent collaboration
+
+version: "1.0.0"
+category: "multi_agent"
+
+# =============================================================================
+# CONSENSUS PROMPTS
+# =============================================================================
+
+prompts:
+
+  quadratic_vote_decision:
+    name: "Quadratic Vote Decision"
+    description: "Guide agent through quadratic voting decision"
+    template: |
+      You are participating in a quadratic voting decision.
+      
+      ## Topic
+      {{topic}}
+      
+      ## Options
+      {{#each options}}
+      {{@index}}. **{{this.name}}**: {{this.description}}
+      {{/each}}
+      
+      ## Your Token Budget
+      - Available tokens: {{token_budget}}
+      - Tokens spent so far: {{tokens_spent}}
+      - Remaining: {{tokens_remaining}}
+      
+      ## Voting Cost Structure
+      | Votes | Token Cost |
+      |-------|------------|
+      | 1     | 1          |
+      | 2     | 4          |
+      | 3     | 9          |
+      | 4     | 16         |
+      | 5     | 25         |
+      
+      ## Your Analysis
+      Consider:
+      1. What evidence supports each option?
+      2. How confident are you? (Strong votes = high cost)
+      3. What are the consequences of being wrong?
+      
+      ## Response Format
+      ```json
+      {
+        "chosen_option": <option_index>,
+        "votes_cast": <1-5>,
+        "tokens_spent": <cost>,
+        "confidence": <0.0-1.0>,
+        "reasoning": "<why this option>",
+        "evidence": ["<evidence 1>", "<evidence 2>"],
+        "uncertainty": "<what could change your mind>"
+      }
+      ```
+      
+      Remember: Strong votes require strong evidence!
+    parameters:
+      - name: "topic"
+        type: "string"
+        required: true
+      - name: "options"
+        type: "array"
+        required: true
+      - name: "token_budget"
+        type: "number"
+        default: 100
+      - name: "tokens_spent"
+        type: "number"
+        default: 0
+      - name: "tokens_remaining"
+        type: "number"
+        required: true
+
+  debate_proposer_turn:
+    name: "Debate - Proposer Turn"
+    description: "Prompt for proposer in adversarial debate"
+    template: |
+      You are the PROPOSER in an adversarial debate.
+      Your goal is to argue FOR the proposition.
+      
+      ## Proposition
+      {{proposition}}
+      
+      ## Debate Context
+      - Round: {{round_number}} of {{total_rounds}}
+      - Your previous arguments: {{previous_arguments}}
+      - Opponent's arguments: {{opponent_arguments}}
+      
+      ## Your Task
+      {{#if is_first_round}}
+      Present your opening argument for the proposition.
+      {{else}}
+      Respond to the opponent's arguments and strengthen your position.
+      {{/if}}
+      
+      ## Rules
+      1. Be specific and cite evidence
+      2. Address opponent's strongest points
+      3. No personal attacks
+      4. Acknowledge valid counterpoints
+      
+      ## Response Format
+      ```json
+      {
+        "argument": "<your argument>",
+        "evidence": [
+          {"type": "fact|example|study", "content": "<evidence>", "source": "<optional source>"}
+        ],
+        "addresses_opponent": ["<counterpoint 1>", "<counterpoint 2>"],
+        "acknowledged_weaknesses": ["<weakness>"],
+        "confidence_in_position": <0.0-1.0>
+      }
+      ```
+    parameters:
+      - name: "proposition"
+        type: "string"
+        required: true
+      - name: "round_number"
+        type: "number"
+        required: true
+      - name: "total_rounds"
+        type: "number"
+        required: true
+      - name: "previous_arguments"
+        type: "array"
+        required: false
+        default: []
+      - name: "opponent_arguments"
+        type: "array"
+        required: false
+        default: []
+      - name: "is_first_round"
+        type: "boolean"
+        required: true
+
+  debate_opponent_turn:
+    name: "Debate - Opponent Turn"
+    description: "Prompt for opponent in adversarial debate"
+    template: |
+      You are the OPPONENT in an adversarial debate.
+      Your goal is to argue AGAINST the proposition.
+      
+      ## Proposition
+      {{proposition}}
+      
+      ## Debate Context
+      - Round: {{round_number}} of {{total_rounds}}
+      - Proposer's arguments: {{proposer_arguments}}
+      - Your previous arguments: {{previous_arguments}}
+      
+      ## Your Task
+      Challenge the proposer's arguments and present counterarguments.
+      
+      ## Rules
+      1. Attack the argument, not the arguer
+      2. Provide evidence for counterpoints
+      3. Identify logical flaws
+      4. Present alternative explanations
+      
+      ## Response Format
+      ```json
+      {
+        "counterargument": "<your main counterargument>",
+        "rebuttals": [
+          {"targets": "<proposer's point>", "rebuttal": "<your response>"}
+        ],
+        "alternative_view": "<alternative explanation/perspective>",
+        "evidence": [
+          {"type": "fact|example|study", "content": "<evidence>", "source": "<optional>"}
+        ],
+        "strongest_proposer_point": "<what they got right>",
+        "confidence_in_position": <0.0-1.0>
+      }
+      ```
+    parameters:
+      - name: "proposition"
+        type: "string"
+        required: true
+      - name: "round_number"
+        type: "number"
+        required: true
+      - name: "total_rounds"
+        type: "number"
+        required: true
+      - name: "proposer_arguments"
+        type: "array"
+        required: true
+      - name: "previous_arguments"
+        type: "array"
+        required: false
+        default: []
+
+  debate_judge_decision:
+    name: "Debate - Judge Decision"
+    description: "Prompt for judge to evaluate debate"
+    template: |
+      You are the JUDGE in an adversarial debate.
+      Evaluate both sides fairly and determine the winner.
+      
+      ## Proposition
+      {{proposition}}
+      
+      ## Debate Transcript
+      {{#each rounds}}
+      ### Round {{this.number}}
+      **Proposer:** {{this.proposer_argument}}
+      **Opponent:** {{this.opponent_argument}}
+      {{/each}}
+      
+      ## Evaluation Criteria
+      1. **Evidence Quality (30%)**: Are claims supported by credible evidence?
+      2. **Logical Coherence (30%)**: Is the reasoning sound?
+      3. **Responsiveness (20%)**: Were opponent's points addressed?
+      4. **Clarity (20%)**: Was the argument clear and well-structured?
+      
+      ## Response Format
+      ```json
+      {
+        "winner": "proposer|opponent|tie",
+        "scores": {
+          "proposer": {
+            "evidence": <0-10>,
+            "logic": <0-10>,
+            "responsiveness": <0-10>,
+            "clarity": <0-10>,
+            "total": <weighted sum>
+          },
+          "opponent": {
+            "evidence": <0-10>,
+            "logic": <0-10>,
+            "responsiveness": <0-10>,
+            "clarity": <0-10>,
+            "total": <weighted sum>
+          }
+        },
+        "key_moments": [
+          {"round": <n>, "description": "<decisive moment>"}
+        ],
+        "final_verdict": "<paragraph explaining decision>",
+        "truth_assessment": "<what the judge believes is actually true, regardless of debate>",
+        "confidence": <0.0-1.0>
+      }
+      ```
+    parameters:
+      - name: "proposition"
+        type: "string"
+        required: true
+      - name: "rounds"
+        type: "array"
+        required: true
+
+  devils_advocate_challenge:
+    name: "Devil's Advocate Challenge"
+    description: "Force agent to argue against majority position"
+    template: |
+      You have been assigned as DEVIL'S ADVOCATE.
+      
+      ## Current Majority Position
+      {{majority_position}}
+      
+      ## Supporting Arguments (from other agents)
+      {{#each supporting_arguments}}
+      - {{this}}
+      {{/each}}
+      
+      ## Your Task
+      Challenge the majority position. Find weaknesses, present counterarguments.
+      This is not about what you believe—it's about stress-testing the consensus.
+      
+      ## Requirements
+      1. Present at least 3 substantive counterarguments
+      2. Identify assumptions that may be wrong
+      3. Present scenarios where majority is wrong
+      4. Be intellectually honest (not contrarian for its own sake)
+      
+      ## Response Format
+      ```json
+      {
+        "counterarguments": [
+          {
+            "argument": "<counterargument>",
+            "targets_assumption": "<what assumption this challenges>",
+            "evidence": "<supporting evidence if any>",
+            "severity": "minor|moderate|critical"
+          }
+        ],
+        "failure_scenarios": [
+          "<scenario where majority position fails>"
+        ],
+        "recommended_mitigations": [
+          "<how to address these concerns>"
+        ],
+        "still_recommend_majority": <true|false>,
+        "adjusted_confidence": <0.0-1.0>
+      }
+      ```
+    parameters:
+      - name: "majority_position"
+        type: "string"
+        required: true
+      - name: "supporting_arguments"
+        type: "array"
+        required: true
+
+# =============================================================================
+# ENSEMBLE COORDINATION PROMPTS
+# =============================================================================
+
+  ensemble_aggregation:
+    name: "Ensemble Result Aggregation"
+    description: "Aggregate results from multiple agents"
+    template: |
+      Aggregate the following results from {{agent_count}} agents working on the same task.
+      
+      ## Task
+      {{task_description}}
+      
+      ## Agent Results
+      {{#each results}}
+      ### Agent {{this.agent_id}}
+      - **Answer:** {{this.answer}}
+      - **Confidence:** {{this.confidence}}
+      - **Reasoning:** {{this.reasoning}}
+      {{/each}}
+      
+      ## Aggregation Strategy
+      1. Identify consensus (>50% agreement)
+      2. Identify outliers (significantly different answers)
+      3. Weight by confidence
+      4. Flag high-variance situations
+      
+      ## Response Format
+      ```json
+      {
+        "consensus_answer": "<aggregated result>",
+        "consensus_confidence": <0.0-1.0>,
+        "agreement_level": "strong|moderate|weak|none",
+        "agreeing_agents": ["<agent_id>", ...],
+        "dissenting_agents": [
+          {"agent_id": "<id>", "answer": "<different answer>", "reason": "<why different>"}
+        ],
+        "aggregation_method": "<how result was determined>",
+        "requires_human_review": <true|false>,
+        "review_reason": "<if requires review, why>"
+      }
+      ```
+    parameters:
+      - name: "agent_count"
+        type: "number"
+        required: true
+      - name: "task_description"
+        type: "string"
+        required: true
+      - name: "results"
+        type: "array"
+        required: true

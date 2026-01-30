@@ -1,0 +1,299 @@
+# VAK Prompt Library - Code Generation
+# Prompts for development-time agents generating code
+
+version: "1.0.0"
+category: "code_generation"
+
+# =============================================================================
+# RUST KERNEL CORE PROMPTS
+# =============================================================================
+
+prompts:
+
+  implement_kernel_module:
+    name: "Implement Kernel Module"
+    description: "Generate a new kernel module with proper structure"
+    template: |
+      You are implementing the {{module_name}} module for the VAK kernel.
+      
+      ## Module Purpose
+      {{module_description}}
+      
+      ## Requirements
+      {{#each requirements}}
+      - {{this}}
+      {{/each}}
+      
+      ## Interfaces to Implement
+      ```rust
+      {{interface_definition}}
+      ```
+      
+      ## Constraints
+      - Use async/await for all I/O operations
+      - Return Result<T, KernelError> for fallible functions
+      - Add #[tracing::instrument] for observability
+      - Include comprehensive rustdoc
+      
+      ## Expected Output Structure
+      ```
+      src/{{module_name}}/
+      ├── mod.rs           # Module exports
+      ├── types.rs         # Data structures
+      ├── {{module_name}}.rs  # Core implementation
+      └── tests.rs         # Unit tests
+      ```
+      
+      Generate the complete implementation following VAK code standards.
+    parameters:
+      - name: "module_name"
+        type: "string"
+        required: true
+      - name: "module_description"
+        type: "string"
+        required: true
+      - name: "requirements"
+        type: "array"
+        required: true
+      - name: "interface_definition"
+        type: "string"
+        required: true
+
+  implement_policy_evaluator:
+    name: "Implement Policy Evaluator"
+    description: "Generate ABAC policy evaluation logic"
+    template: |
+      Implement the policy evaluation function for VAK.
+      
+      ## Function Signature
+      ```rust
+      pub async fn evaluate(
+          &self,
+          request: &PolicyRequest,
+      ) -> Result<PolicyDecision, KernelError>
+      ```
+      
+      ## PolicyRequest Structure
+      ```rust
+      struct PolicyRequest {
+          agent_id: AgentId,
+          agent_attributes: HashMap<String, Value>,
+          action: String,
+          resource: Resource,
+          context: HashMap<String, Value>,
+      }
+      ```
+      
+      ## Evaluation Algorithm
+      1. Find all applicable rules (match subject, action, resource)
+      2. If no rules match → return Inadmissible
+      3. Evaluate conditions for each matching rule
+      4. Return first matching rule's effect (Allow/Deny)
+      5. If rules exist but conditions don't match → Deny
+      
+      ## Condition Operators to Support
+      {{#each operators}}
+      - {{this.op}}: {{this.description}}
+      {{/each}}
+      
+      ## Performance Requirements
+      - Cache compiled policies
+      - Index by action for O(1) lookup
+      - Short-circuit on first match
+      
+      Generate complete, tested implementation.
+    parameters:
+      - name: "operators"
+        type: "array"
+        required: true
+
+  implement_audit_logger:
+    name: "Implement Audit Logger"
+    description: "Generate immutable audit logging system"
+    template: |
+      Implement the audit logging system for VAK.
+      
+      ## Core Requirements
+      1. Append-only storage (no updates, no deletes)
+      2. Hash-chained entries (each entry includes prev_hash)
+      3. Async, non-blocking writes
+      4. Integrity verification capability
+      
+      ## Entry Schema
+      ```rust
+      struct AuditEntry {
+          id: Uuid,
+          sequence: u64,
+          timestamp: DateTime<Utc>,
+          agent_id: String,
+          action: String,
+          args_hash: [u8; 32],  // SHA256 of args
+          decision: PolicyDecision,
+          prev_hash: [u8; 32],
+          entry_hash: [u8; 32],
+      }
+      ```
+      
+      ## Hash Computation
+      ```
+      entry_hash = SHA256(
+          sequence || timestamp || agent_id || action ||
+          args_hash || decision || prev_hash
+      )
+      ```
+      
+      ## Required Methods
+      - `append(entry_data) -> AuditEntry`
+      - `verify_chain(from, to) -> IntegrityReport`
+      - `query(filters) -> Vec<AuditEntry>`
+      - `generate_receipt(id) -> CryptographicReceipt`
+      
+      ## Storage Backend
+      Use {{storage_backend}} with append-only mode.
+      
+      Generate complete implementation with tests.
+    parameters:
+      - name: "storage_backend"
+        type: "string"
+        default: "sled"
+
+  implement_wasm_sandbox:
+    name: "Implement WASM Sandbox"
+    description: "Generate WASM execution sandbox"
+    template: |
+      Implement the WASM sandbox for secure tool execution.
+      
+      ## Runtime: Wasmtime
+      
+      ## Security Requirements
+      1. No access to host filesystem
+      2. No access to network (except explicit imports)
+      3. Memory limit: {{memory_limit_mb}} MB
+      4. Execution timeout: {{timeout_ms}} ms
+      5. Verify skill signature before loading
+      
+      ## Sandbox Interface
+      ```rust
+      impl ToolSandbox {
+          pub fn new(limits: ResourceLimits) -> Self;
+          pub fn load_skill(&mut self, skill: &SignedSkill) -> Result<()>;
+          pub fn execute(&mut self, args: Value) -> Result<Value>;
+      }
+      ```
+      
+      ## Skill Manifest
+      ```toml
+      [skill]
+      name = "example_skill"
+      signature = "ed25519:..."
+      
+      [permissions]
+      network = []  # Allowlisted URLs
+      filesystem = []  # Always empty for now
+      
+      [io]
+      input_schema = "..."
+      output_schema = "..."
+      ```
+      
+      ## Signature Verification
+      - Use Ed25519 signatures
+      - Verify against trusted key store
+      - Reject unsigned or invalid skills
+      
+      Generate implementation with comprehensive security tests.
+    parameters:
+      - name: "memory_limit_mb"
+        type: "number"
+        default: 64
+      - name: "timeout_ms"
+        type: "number"
+        default: 30000
+
+# =============================================================================
+# PYTHON SDK PROMPTS
+# =============================================================================
+
+  implement_python_binding:
+    name: "Implement Python Binding"
+    description: "Generate PyO3 binding for Rust function"
+    template: |
+      Create Python bindings for the following Rust interface using PyO3.
+      
+      ## Rust Interface
+      ```rust
+      {{rust_interface}}
+      ```
+      
+      ## Python API Design
+      - Use async/await for async Rust functions
+      - Convert Rust errors to Python exceptions
+      - Use type hints in generated stubs
+      - Follow Pythonic naming (snake_case)
+      
+      ## Exception Hierarchy
+      ```python
+      class VAKError(Exception): pass
+      class PolicyViolationError(VAKError): pass
+      class ToolExecutionError(VAKError): pass
+      class AuditError(VAKError): pass
+      ```
+      
+      ## Expected Usage
+      ```python
+      from vak import Kernel
+      
+      kernel = Kernel(policy_path="./policies/")
+      
+      async with kernel.session(agent) as session:
+          result = await session.execute_tool("action", {"arg": "value"})
+      ```
+      
+      Generate:
+      1. Rust PyO3 bindings (lib.rs)
+      2. Python type stubs (.pyi)
+      3. Python wrapper module
+      4. Usage examples
+    parameters:
+      - name: "rust_interface"
+        type: "string"
+        required: true
+
+  implement_langchain_integration:
+    name: "Implement LangChain Integration"
+    description: "Generate LangChain toolkit wrapper"
+    template: |
+      Create a LangChain integration for VAK.
+      
+      ## Integration Points
+      1. Wrap existing LangChain tools with VAK enforcement
+      2. Route all tool calls through kernel
+      3. Handle policy violations gracefully
+      
+      ## VAKToolkit Class
+      ```python
+      from langchain.tools import BaseTool
+      from vak import Kernel
+      
+      class VAKToolkit:
+          def __init__(self, kernel: Kernel, tools: list[BaseTool]):
+              ...
+          
+          def get_tools(self) -> list[BaseTool]:
+              # Return wrapped tools
+              ...
+      ```
+      
+      ## Wrapped Tool Behavior
+      1. Before execution: Check policy
+      2. On allow: Execute original tool
+      3. On deny: Return policy violation message
+      4. Always: Log to audit trail
+      
+      ## Error Handling
+      - PolicyViolationError → Return helpful message to agent
+      - ToolExecutionError → Return error message
+      - Other errors → Log and re-raise
+      
+      Generate complete integration with examples.
+    parameters: []

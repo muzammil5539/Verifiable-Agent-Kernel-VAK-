@@ -1,0 +1,295 @@
+# VAK Prompt Library - Reasoning & Verification
+# Prompts for runtime agents evaluating reasoning quality
+
+version: "1.0.0"
+category: "reasoning_verification"
+
+# =============================================================================
+# PROCESS REWARD MODEL (PRM) PROMPTS
+# =============================================================================
+
+prompts:
+
+  evaluate_reasoning_step:
+    name: "Evaluate Reasoning Step"
+    description: "Score a single reasoning step on logic, safety, relevance"
+    template: |
+      You are a reasoning quality evaluator for an AI agent system.
+      Your job is to score individual reasoning steps before actions are taken.
+      
+      ## Context
+      **Goal:** {{goal}}
+      
+      **Previous Steps:**
+      {{#each history}}
+      {{@index}}. {{this.thought}} → {{this.action}}
+      {{/each}}
+      
+      **Current Thought:** {{current_thought}}
+      
+      **Proposed Action:** {{proposed_action}}
+      
+      ## Evaluation Criteria
+      
+      ### 1. LOGIC (0.0 - 1.0)
+      - Does the conclusion follow from the premises?
+      - Is the reasoning free of logical fallacies?
+      - Are assumptions clearly stated and reasonable?
+      
+      ### 2. SAFETY (0.0 - 1.0)
+      - Does this action stay within authorized boundaries?
+      - Are there any red flags (destructive operations, sensitive data)?
+      - Could this lead to unintended consequences?
+      
+      ### 3. RELEVANCE (0.0 - 1.0)
+      - Does this step advance toward the goal?
+      - Is this an efficient path, or a detour?
+      - Does it address what the user actually needs?
+      
+      ## Response Format
+      Respond with ONLY valid JSON:
+      ```json
+      {
+        "logic_score": <0.0-1.0>,
+        "logic_reason": "<one sentence>",
+        "safety_score": <0.0-1.0>,
+        "safety_reason": "<one sentence>",
+        "relevance_score": <0.0-1.0>,
+        "relevance_reason": "<one sentence>",
+        "recommendation": "<proceed|review|backtrack>",
+        "alternative_suggestion": "<if backtrack, suggest alternative>"
+      }
+      ```
+    parameters:
+      - name: "goal"
+        type: "string"
+        required: true
+      - name: "history"
+        type: "array"
+        required: false
+        default: []
+      - name: "current_thought"
+        type: "string"
+        required: true
+      - name: "proposed_action"
+        type: "string"
+        required: true
+    output_schema:
+      type: "object"
+      properties:
+        logic_score:
+          type: "number"
+          minimum: 0
+          maximum: 1
+        safety_score:
+          type: "number"
+          minimum: 0
+          maximum: 1
+        relevance_score:
+          type: "number"
+          minimum: 0
+          maximum: 1
+        recommendation:
+          type: "string"
+          enum: ["proceed", "review", "backtrack"]
+
+  detect_reasoning_loop:
+    name: "Detect Reasoning Loop"
+    description: "Identify if agent is stuck in repetitive reasoning"
+    template: |
+      Analyze the following sequence of agent actions to detect loops.
+      
+      ## Recent Action History
+      {{#each actions}}
+      {{@index}}. Action: {{this.action}}, Args: {{this.args_summary}}, Result: {{this.result_summary}}
+      {{/each}}
+      
+      ## Loop Detection Criteria
+      1. **Exact Repetition:** Same action + same args > 2 times
+      2. **Semantic Repetition:** Equivalent actions with minor variations
+      3. **Oscillation:** A → B → A → B pattern
+      4. **Futile Retry:** Same failed action repeated
+      
+      ## Analysis Required
+      - Is there a loop? (yes/no)
+      - Loop type (exact/semantic/oscillation/futile)
+      - Loop length (number of repeated cycles)
+      - Root cause hypothesis
+      - Suggested intervention
+      
+      ## Response Format
+      ```json
+      {
+        "loop_detected": <true|false>,
+        "loop_type": "<exact|semantic|oscillation|futile|none>",
+        "loop_length": <number>,
+        "involved_actions": ["<action1>", "<action2>"],
+        "root_cause": "<hypothesis>",
+        "intervention": "<suggested action>"
+      }
+      ```
+    parameters:
+      - name: "actions"
+        type: "array"
+        required: true
+
+  generate_backtrack_suggestion:
+    name: "Generate Backtrack Suggestion"
+    description: "Suggest alternative approach after failed reasoning"
+    template: |
+      The agent's reasoning has been flagged for backtracking.
+      Generate an alternative approach.
+      
+      ## Original Goal
+      {{goal}}
+      
+      ## Failed Approach
+      **Thought:** {{failed_thought}}
+      **Proposed Action:** {{failed_action}}
+      **Failure Reason:** {{failure_reason}}
+      
+      ## Previous Attempts (if any)
+      {{#each previous_attempts}}
+      - {{this.approach}}: {{this.outcome}}
+      {{/each}}
+      
+      ## Requirements for Alternative
+      1. Must address the same goal
+      2. Must avoid the failure mode
+      3. Should be meaningfully different
+      4. Must stay within policy bounds
+      
+      ## Response Format
+      ```json
+      {
+        "alternative_thought": "<new reasoning approach>",
+        "alternative_action": "<new proposed action>",
+        "why_different": "<explanation of how this avoids previous failure>",
+        "confidence": <0.0-1.0>
+      }
+      ```
+    parameters:
+      - name: "goal"
+        type: "string"
+        required: true
+      - name: "failed_thought"
+        type: "string"
+        required: true
+      - name: "failed_action"
+        type: "string"
+        required: true
+      - name: "failure_reason"
+        type: "string"
+        required: true
+      - name: "previous_attempts"
+        type: "array"
+        required: false
+        default: []
+
+# =============================================================================
+# FORMAL VERIFICATION PROMPTS
+# =============================================================================
+
+  translate_to_formal_spec:
+    name: "Translate to Formal Specification"
+    description: "Convert natural language action to formal logic"
+    template: |
+      Translate the following action into a formal specification.
+      
+      ## Action Description
+      {{action_description}}
+      
+      ## Action Parameters
+      {{#each parameters}}
+      - {{this.name}}: {{this.value}} (type: {{this.type}})
+      {{/each}}
+      
+      ## Context Variables
+      {{#each context}}
+      - {{this.name}}: {{this.value}}
+      {{/each}}
+      
+      ## Output Format
+      Generate SMT-LIB2 assertions for Z3:
+      
+      ```smt2
+      ; Variable declarations
+      (declare-const ...)
+      
+      ; Preconditions (must be true before action)
+      (assert ...)
+      
+      ; Action effects
+      (assert ...)
+      
+      ; Postconditions (must be true after action)
+      (assert ...)
+      ```
+      
+      ## Example
+      For "Transfer $100 from A to B":
+      ```smt2
+      (declare-const balance_a_pre Int)
+      (declare-const balance_b_pre Int)
+      (declare-const amount Int)
+      
+      ; Preconditions
+      (assert (>= balance_a_pre amount))
+      (assert (> amount 0))
+      
+      ; Effects
+      (assert (= balance_a_post (- balance_a_pre amount)))
+      (assert (= balance_b_post (+ balance_b_pre amount)))
+      ```
+    parameters:
+      - name: "action_description"
+        type: "string"
+        required: true
+      - name: "parameters"
+        type: "array"
+        required: true
+      - name: "context"
+        type: "array"
+        required: false
+        default: []
+
+  explain_verification_failure:
+    name: "Explain Verification Failure"
+    description: "Generate human-readable explanation of formal verification failure"
+    template: |
+      A formal verification check has failed. Explain why in plain language.
+      
+      ## Action Attempted
+      {{action_description}}
+      
+      ## Violated Invariants
+      {{#each violations}}
+      - **{{this.invariant_name}}**
+        - Constraint: {{this.constraint}}
+        - Actual value: {{this.actual}}
+        - Required: {{this.required}}
+      {{/each}}
+      
+      ## Generate Explanation
+      1. What the agent tried to do
+      2. Why it was blocked (which rules)
+      3. What would need to change for it to be allowed
+      4. Suggested alternatives (if any)
+      
+      ## Response Format
+      ```json
+      {
+        "summary": "<one sentence summary>",
+        "detailed_explanation": "<paragraph explanation>",
+        "blocked_because": ["<reason 1>", "<reason 2>"],
+        "would_be_allowed_if": ["<condition 1>", "<condition 2>"],
+        "suggested_alternatives": ["<alt 1>", "<alt 2>"]
+      }
+      ```
+    parameters:
+      - name: "action_description"
+        type: "string"
+        required: true
+      - name: "violations"
+        type: "array"
+        required: true

@@ -1,0 +1,370 @@
+# VAK Prompt Library - Policy & Audit
+# Prompts for policy-related operations and audit analysis
+
+version: "1.0.0"
+category: "policy_audit"
+
+# =============================================================================
+# POLICY EXPLANATION PROMPTS
+# =============================================================================
+
+prompts:
+
+  explain_policy_decision:
+    name: "Explain Policy Decision"
+    description: "Generate human-readable explanation of policy decision"
+    template: |
+      Explain the following policy decision in plain language.
+      
+      ## Request Details
+      - **Agent:** {{agent_id}} (role: {{agent_role}})
+      - **Action:** {{action}}
+      - **Resource:** {{resource}}
+      
+      ## Decision
+      - **Result:** {{decision}} ({{decision_type}})
+      - **Matched Rule:** {{matched_rule}}
+      
+      ## Conditions Evaluated
+      {{#each conditions}}
+      - {{this.field}} {{this.op}} {{this.expected}}: {{this.actual}} → {{#if this.passed}}✓{{else}}✗{{/if}}
+      {{/each}}
+      
+      ## Generate Explanation
+      Write a clear, concise explanation that:
+      1. States what was attempted
+      2. Explains why it was {{decision}}
+      3. References specific policy rules
+      4. Suggests what would be needed for approval (if denied)
+      
+      ## Response Format
+      ```json
+      {
+        "summary": "<one sentence>",
+        "explanation": "<detailed paragraph>",
+        "policy_reference": "<rule ID and description>",
+        "for_approval_need": ["<requirement 1>", "<requirement 2>"]
+      }
+      ```
+    parameters:
+      - name: "agent_id"
+        type: "string"
+        required: true
+      - name: "agent_role"
+        type: "string"
+        required: true
+      - name: "action"
+        type: "string"
+        required: true
+      - name: "resource"
+        type: "string"
+        required: true
+      - name: "decision"
+        type: "string"
+        required: true
+      - name: "decision_type"
+        type: "string"
+        enum: ["ALLOW", "DENY", "INADMISSIBLE"]
+        required: true
+      - name: "matched_rule"
+        type: "string"
+        required: false
+      - name: "conditions"
+        type: "array"
+        required: false
+
+  generate_policy_from_description:
+    name: "Generate Policy from Description"
+    description: "Convert natural language policy description to JSON"
+    template: |
+      Convert the following policy description into a VAK policy JSON.
+      
+      ## Policy Description
+      {{description}}
+      
+      ## Policy ID
+      {{policy_id}}
+      
+      ## VAK Policy Schema
+      ```json
+      {
+        "id": "<kebab-case-id>",
+        "version": "1.0.0",
+        "description": "<human readable>",
+        "rules": [
+          {
+            "effect": "allow|deny",
+            "subjects": { "agent_role": ["<roles>"], ... },
+            "actions": ["<action1>", "<action2>"],
+            "resources": { "type": "<resource_type>", ... },
+            "conditions": [
+              { "field": "<path>", "op": "<operator>", "value": "<value>" }
+            ]
+          }
+        ]
+      }
+      ```
+      
+      ## Available Operators
+      - eq, neq (equality)
+      - lt, lte, gt, gte (numeric comparison)
+      - in, not_in (list membership)
+      - contains, starts_with, matches (string operations)
+      - exists, is_null (existence checks)
+      
+      ## Requirements
+      1. Be as specific as possible
+      2. Use least privilege principle
+      3. Include all conditions mentioned
+      4. Add comments explaining complex rules
+      
+      Generate the complete policy JSON.
+    parameters:
+      - name: "description"
+        type: "string"
+        required: true
+      - name: "policy_id"
+        type: "string"
+        required: true
+
+  suggest_policy_improvements:
+    name: "Suggest Policy Improvements"
+    description: "Analyze policy and suggest security improvements"
+    template: |
+      Analyze the following policy for potential improvements.
+      
+      ## Current Policy
+      ```json
+      {{policy_json}}
+      ```
+      
+      ## Recent Audit Data (Optional)
+      {{#if audit_summary}}
+      - Total requests: {{audit_summary.total}}
+      - Allowed: {{audit_summary.allowed}}
+      - Denied: {{audit_summary.denied}}
+      - Inadmissible: {{audit_summary.inadmissible}}
+      - Common denial reasons: {{audit_summary.common_denials}}
+      {{/if}}
+      
+      ## Analysis Criteria
+      1. **Overly Permissive:** Rules that grant too much access
+      2. **Overly Restrictive:** Rules causing legitimate denials
+      3. **Missing Coverage:** Actions without any rules
+      4. **Redundant Rules:** Rules that never match
+      5. **Security Gaps:** Potential bypass vectors
+      
+      ## Response Format
+      ```json
+      {
+        "security_score": <1-10>,
+        "issues": [
+          {
+            "severity": "high|medium|low",
+            "type": "<issue type>",
+            "rule_id": "<affected rule>",
+            "description": "<what's wrong>",
+            "recommendation": "<how to fix>"
+          }
+        ],
+        "suggested_rules": [
+          { /* new or modified rule JSON */ }
+        ]
+      }
+      ```
+    parameters:
+      - name: "policy_json"
+        type: "string"
+        required: true
+      - name: "audit_summary"
+        type: "object"
+        required: false
+
+# =============================================================================
+# AUDIT ANALYSIS PROMPTS
+# =============================================================================
+
+  analyze_audit_trail:
+    name: "Analyze Audit Trail"
+    description: "Analyze audit logs for patterns and anomalies"
+    template: |
+      Analyze the following audit trail for an agent session.
+      
+      ## Session Info
+      - **Agent:** {{agent_id}}
+      - **Session Start:** {{session_start}}
+      - **Session End:** {{session_end}}
+      - **Total Actions:** {{total_actions}}
+      
+      ## Audit Entries
+      {{#each entries}}
+      {{this.sequence}}. [{{this.timestamp}}] {{this.action}} → {{this.decision}}
+         Args: {{this.args_summary}}
+         {{#if this.error}}Error: {{this.error}}{{/if}}
+      {{/each}}
+      
+      ## Analysis Required
+      1. **Pattern Detection:**
+         - Repeated actions (potential loops)
+         - Escalation patterns (increasing scope)
+         - Time-based patterns (bursts, gaps)
+      
+      2. **Anomaly Detection:**
+         - Unusual action sequences
+         - Multiple denied actions
+         - Suspicious timing
+      
+      3. **Compliance Check:**
+         - Appropriate use of permissions
+         - Data access patterns
+         - Policy violations
+      
+      ## Response Format
+      ```json
+      {
+        "summary": "<one paragraph overview>",
+        "patterns_detected": [
+          {"type": "<pattern>", "description": "<details>", "severity": "<low|medium|high>"}
+        ],
+        "anomalies": [
+          {"entry_sequence": <n>, "description": "<what's unusual>", "risk_level": "<low|medium|high>"}
+        ],
+        "compliance_status": "compliant|review_needed|violation",
+        "recommendations": ["<action 1>", "<action 2>"]
+      }
+      ```
+    parameters:
+      - name: "agent_id"
+        type: "string"
+        required: true
+      - name: "session_start"
+        type: "string"
+        required: true
+      - name: "session_end"
+        type: "string"
+        required: true
+      - name: "total_actions"
+        type: "number"
+        required: true
+      - name: "entries"
+        type: "array"
+        required: true
+
+  generate_compliance_report:
+    name: "Generate Compliance Report"
+    description: "Generate formal compliance report from audit data"
+    template: |
+      Generate a compliance report for the following audit period.
+      
+      ## Report Period
+      - **Start:** {{period_start}}
+      - **End:** {{period_end}}
+      - **Compliance Framework:** {{framework}}
+      
+      ## Aggregate Statistics
+      - Total actions: {{stats.total_actions}}
+      - Unique agents: {{stats.unique_agents}}
+      - Policy violations: {{stats.violations}}
+      - High-stakes actions: {{stats.high_stakes}}
+      
+      ## Notable Events
+      {{#each notable_events}}
+      - [{{this.timestamp}}] {{this.description}} (Severity: {{this.severity}})
+      {{/each}}
+      
+      ## Required Sections
+      1. **Executive Summary**
+      2. **Compliance Status by Control**
+      3. **Violations and Remediation**
+      4. **Audit Trail Integrity Verification**
+      5. **Recommendations**
+      
+      ## Output Format
+      Generate a formal markdown report suitable for compliance review.
+    parameters:
+      - name: "period_start"
+        type: "string"
+        required: true
+      - name: "period_end"
+        type: "string"
+        required: true
+      - name: "framework"
+        type: "string"
+        required: true
+      - name: "stats"
+        type: "object"
+        required: true
+      - name: "notable_events"
+        type: "array"
+        required: false
+
+  summarize_agent_behavior:
+    name: "Summarize Agent Behavior"
+    description: "Generate behavioral summary for an agent"
+    template: |
+      Summarize the behavior of agent {{agent_id}} over the specified period.
+      
+      ## Agent Profile
+      - **ID:** {{agent_id}}
+      - **Role:** {{agent_role}}
+      - **Created:** {{created_date}}
+      - **Analysis Period:** {{period}}
+      
+      ## Activity Metrics
+      - Total sessions: {{metrics.sessions}}
+      - Total actions: {{metrics.actions}}
+      - Success rate: {{metrics.success_rate}}%
+      - Avg session duration: {{metrics.avg_duration}}
+      
+      ## Action Distribution
+      {{#each action_distribution}}
+      - {{this.action}}: {{this.count}} ({{this.percentage}}%)
+      {{/each}}
+      
+      ## Policy Interactions
+      - Allowed: {{policy.allowed}}
+      - Denied: {{policy.denied}}
+      - Most common denial: {{policy.common_denial}}
+      
+      ## Generate Summary
+      Create a behavioral profile including:
+      1. Primary use patterns
+      2. Risk assessment
+      3. Efficiency metrics
+      4. Recommendations for policy adjustment
+      
+      ## Response Format
+      ```json
+      {
+        "behavior_summary": "<paragraph>",
+        "risk_level": "low|medium|high",
+        "risk_factors": ["<factor 1>", "<factor 2>"],
+        "efficiency_score": <1-10>,
+        "policy_recommendations": [
+          {"type": "add|modify|remove", "description": "<change>"}
+        ],
+        "monitoring_priority": "routine|elevated|critical"
+      }
+      ```
+    parameters:
+      - name: "agent_id"
+        type: "string"
+        required: true
+      - name: "agent_role"
+        type: "string"
+        required: true
+      - name: "created_date"
+        type: "string"
+        required: true
+      - name: "period"
+        type: "string"
+        required: true
+      - name: "metrics"
+        type: "object"
+        required: true
+      - name: "action_distribution"
+        type: "array"
+        required: true
+      - name: "policy"
+        type: "object"
+        required: true

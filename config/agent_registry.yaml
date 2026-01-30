@@ -1,0 +1,447 @@
+# VAK Agent Registry Configuration
+# Central registry of all agents, their configurations, and relationships
+
+version: "1.0.0"
+registry_name: "VAK-Agent-Registry"
+
+# =============================================================================
+# DEVELOPMENT AGENTS
+# =============================================================================
+
+development_agents:
+
+  - id: "kernel_core_agent"
+    name: "Kernel Core Development Agent"
+    category: "development"
+    definition_file: "agents/development/kernel_core_agent.yaml"
+    description: "Generates and maintains core Rust kernel components"
+    
+    config:
+      language: "rust"
+      output_paths:
+        - "src/kernel/"
+        - "src/lib.rs"
+      test_paths:
+        - "tests/kernel/"
+      
+    dependencies:
+      tools:
+        - "rust_analyzer"
+        - "cargo"
+        - "clippy"
+      crates:
+        - "tokio"
+        - "tracing"
+        - "thiserror"
+        - "serde"
+    
+    triggers:
+      - event: "kernel_module_request"
+        action: "generate_module"
+      - event: "kernel_bug_report"
+        action: "investigate_and_fix"
+
+  - id: "crypto_memory_agent"
+    name: "Cryptographic Memory Fabric Agent"
+    category: "development"
+    definition_file: "agents/development/crypto_memory_agent.yaml"
+    description: "Builds hierarchical Merkle DAG memory system"
+    
+    config:
+      language: "rust"
+      output_paths:
+        - "src/memory/"
+      
+    dependencies:
+      crates:
+        - "sha2"
+        - "sled"
+        - "lancedb"
+    
+    triggers:
+      - event: "memory_module_request"
+        action: "implement_memory_tier"
+
+  - id: "neurosymbolic_agent"
+    name: "Neuro-Symbolic Reasoner Agent"
+    category: "development"
+    definition_file: "agents/development/neurosymbolic_agent.yaml"
+    description: "Builds verification and constraint system"
+    
+    config:
+      language: "rust"
+      output_paths:
+        - "src/reasoner/"
+      
+    dependencies:
+      external:
+        - "z3"
+        - "huggingface-hub"
+    
+    triggers:
+      - event: "prm_integration_request"
+        action: "implement_prm"
+      - event: "invariant_request"
+        action: "add_invariant"
+
+  - id: "wasm_sandbox_agent"
+    name: "WASM Sandbox Agent"
+    category: "development"
+    definition_file: "agents/development/wasm_sandbox_agent.yaml"
+    description: "Creates sandboxed execution environment"
+    
+    config:
+      language: "rust"
+      output_paths:
+        - "src/sandbox/"
+        - "skills/"
+      
+    dependencies:
+      crates:
+        - "wasmtime"
+        - "ed25519-dalek"
+    
+    triggers:
+      - event: "skill_creation_request"
+        action: "create_wasm_skill"
+
+  - id: "policy_engine_agent"
+    name: "Policy Engine Agent"
+    category: "development"
+    definition_file: "agents/development/policy_engine_agent.yaml"
+    description: "Builds ABAC policy evaluation system"
+    
+    config:
+      language: "rust"
+      output_paths:
+        - "src/policy/"
+        - "policies/"
+    
+    triggers:
+      - event: "policy_feature_request"
+        action: "implement_feature"
+
+  - id: "python_sdk_agent"
+    name: "Python SDK Agent"
+    category: "development"
+    definition_file: "agents/development/python_sdk_agent.yaml"
+    description: "Creates Python bindings and integrations"
+    
+    config:
+      languages: ["rust", "python"]
+      output_paths:
+        - "bindings/python/"
+        - "sdk/python/"
+      
+    dependencies:
+      crates:
+        - "pyo3"
+      python_packages:
+        - "maturin"
+        - "langchain"
+    
+    triggers:
+      - event: "python_binding_request"
+        action: "generate_binding"
+
+  - id: "testing_agent"
+    name: "Testing & Quality Agent"
+    category: "development"
+    definition_file: "agents/development/testing_agent.yaml"
+    description: "Adversarial testing and validation"
+    
+    config:
+      languages: ["rust", "python"]
+      output_paths:
+        - "tests/"
+      
+    triggers:
+      - event: "new_code_merged"
+        action: "run_test_suite"
+      - event: "security_audit_request"
+        action: "run_adversarial_tests"
+
+# =============================================================================
+# RUNTIME AGENTS
+# =============================================================================
+
+runtime_agents:
+
+  - id: "policy_enforcement_runtime"
+    name: "Policy Enforcement Agent"
+    category: "runtime"
+    definition_file: "agents/runtime/policy_enforcement_agent.yaml"
+    description: "Real-time action interception and policy checking"
+    
+    runtime_config:
+      instances: "auto_scale"
+      min_instances: 2
+      max_instances: 10
+      
+    performance:
+      target_latency_p99_ms: 50
+      max_concurrent_requests: 10000
+    
+    health_check:
+      endpoint: "/health"
+      interval_seconds: 10
+    
+    dependencies:
+      requires:
+        - "policy_store"
+        - "audit_logging_runtime"
+
+  - id: "audit_logging_runtime"
+    name: "Audit Logging Agent"
+    category: "runtime"
+    definition_file: "agents/runtime/audit_logging_agent.yaml"
+    description: "Immutable cryptographic record keeping"
+    
+    runtime_config:
+      instances: 1  # Single writer for consistency
+      
+    storage:
+      backend: "sled"
+      path: "./data/audit/"
+      retention_days: 2555
+    
+    dependencies:
+      requires: []
+
+  - id: "prm_scoring_runtime"
+    name: "PRM Scoring Agent"
+    category: "runtime"
+    definition_file: "agents/runtime/prm_scoring_agent.yaml"
+    description: "Evaluate reasoning quality at each step"
+    
+    runtime_config:
+      instances: "auto_scale"
+      min_instances: 1
+      max_instances: 4
+      
+    model_config:
+      model_path: "./models/llama-3-8b-prm.gguf"
+      quantization: "q8_0"
+      gpu_layers: 32
+    
+    dependencies:
+      requires:
+        - "model_store"
+
+  - id: "formal_verification_runtime"
+    name: "Formal Verification Agent"
+    category: "runtime"
+    definition_file: "agents/runtime/formal_verification_agent.yaml"
+    description: "Mathematical safety guarantees via Z3"
+    
+    runtime_config:
+      instances: 2
+      
+    solver_config:
+      timeout_ms: 5000
+      max_memory_mb: 512
+    
+    dependencies:
+      requires:
+        - "invariant_store"
+        - "z3_solver"
+
+  - id: "swarm_consensus_runtime"
+    name: "Swarm Consensus Agent"
+    category: "runtime"
+    definition_file: "agents/runtime/swarm_consensus_agent.yaml"
+    description: "Multi-agent coordination with quadratic voting"
+    
+    runtime_config:
+      instances: 1
+      
+    consensus_config:
+      default_token_budget: 100
+      voting_timeout_ms: 30000
+      min_participation_rate: 0.5
+    
+    dependencies:
+      requires:
+        - "message_broker"
+
+  - id: "state_manager_runtime"
+    name: "State Manager Agent"
+    category: "runtime"
+    definition_file: "agents/runtime/state_manager_agent.yaml"
+    description: "Agent memory and context orchestration"
+    
+    runtime_config:
+      instances: "auto_scale"
+      min_instances: 1
+      max_instances: 4
+      
+    storage_config:
+      working_memory: "in_memory"
+      episodic: "redis"
+      semantic: "postgres"
+    
+    dependencies:
+      requires:
+        - "redis"
+        - "postgres"
+        - "lancedb"
+
+# =============================================================================
+# AGENT RELATIONSHIPS
+# =============================================================================
+
+relationships:
+
+  communication_graph:
+    description: "Defines which agents can communicate with which"
+    
+    edges:
+      - from: "*"  # All agents
+        to: "policy_enforcement_runtime"
+        via: "tool_request"
+      
+      - from: "policy_enforcement_runtime"
+        to: "audit_logging_runtime"
+        via: "audit_event"
+      
+      - from: "policy_enforcement_runtime"
+        to: "formal_verification_runtime"
+        via: "verification_request"
+        condition: "action.is_high_stakes"
+      
+      - from: "*"
+        to: "prm_scoring_runtime"
+        via: "evaluate_thought"
+      
+      - from: "*"
+        to: "state_manager_runtime"
+        via: "state_operations"
+      
+      - from: "swarm_consensus_runtime"
+        to: "*"
+        via: "consensus_broadcast"
+
+  supervision_hierarchy:
+    description: "Defines supervision relationships"
+    
+    levels:
+      - level: 0
+        name: "Kernel Core"
+        agents: ["policy_enforcement_runtime", "audit_logging_runtime"]
+      
+      - level: 1
+        name: "Verification Layer"
+        agents: ["formal_verification_runtime", "prm_scoring_runtime"]
+        supervised_by: ["Kernel Core"]
+      
+      - level: 2
+        name: "Coordination Layer"
+        agents: ["swarm_consensus_runtime", "state_manager_runtime"]
+        supervised_by: ["Kernel Core"]
+      
+      - level: 3
+        name: "User Agents"
+        agents: ["*"]  # All registered user agents
+        supervised_by: ["Kernel Core", "Verification Layer"]
+
+# =============================================================================
+# INSTRUCTION ASSIGNMENTS
+# =============================================================================
+
+instruction_assignments:
+  
+  global:
+    all_agents:
+      - "instructions/global.instructions.yaml"
+      - "instructions/safety.instructions.yaml"
+  
+  by_category:
+    development:
+      - "instructions/code_generation.instructions.yaml"
+    runtime:
+      - "instructions/safety.instructions.yaml"
+  
+  by_agent:
+    policy_engine_agent:
+      - "instructions/policy_authoring.instructions.yaml"
+    python_sdk_agent:
+      - "instructions/code_generation.instructions.yaml"
+
+# =============================================================================
+# PROMPT ASSIGNMENTS
+# =============================================================================
+
+prompt_assignments:
+  
+  by_agent:
+    kernel_core_agent:
+      prompts:
+        - "prompts/code_generation.prompts.yaml#implement_kernel_module"
+        - "prompts/code_generation.prompts.yaml#implement_policy_evaluator"
+        - "prompts/code_generation.prompts.yaml#implement_audit_logger"
+    
+    wasm_sandbox_agent:
+      prompts:
+        - "prompts/code_generation.prompts.yaml#implement_wasm_sandbox"
+    
+    python_sdk_agent:
+      prompts:
+        - "prompts/code_generation.prompts.yaml#implement_python_binding"
+        - "prompts/code_generation.prompts.yaml#implement_langchain_integration"
+    
+    prm_scoring_runtime:
+      prompts:
+        - "prompts/reasoning_verification.prompts.yaml#evaluate_reasoning_step"
+        - "prompts/reasoning_verification.prompts.yaml#detect_reasoning_loop"
+        - "prompts/reasoning_verification.prompts.yaml#generate_backtrack_suggestion"
+    
+    formal_verification_runtime:
+      prompts:
+        - "prompts/reasoning_verification.prompts.yaml#translate_to_formal_spec"
+        - "prompts/reasoning_verification.prompts.yaml#explain_verification_failure"
+    
+    policy_enforcement_runtime:
+      prompts:
+        - "prompts/policy_audit.prompts.yaml#explain_policy_decision"
+    
+    audit_logging_runtime:
+      prompts:
+        - "prompts/policy_audit.prompts.yaml#analyze_audit_trail"
+        - "prompts/policy_audit.prompts.yaml#generate_compliance_report"
+    
+    swarm_consensus_runtime:
+      prompts:
+        - "prompts/multi_agent.prompts.yaml#quadratic_vote_decision"
+        - "prompts/multi_agent.prompts.yaml#debate_proposer_turn"
+        - "prompts/multi_agent.prompts.yaml#debate_opponent_turn"
+        - "prompts/multi_agent.prompts.yaml#debate_judge_decision"
+        - "prompts/multi_agent.prompts.yaml#devils_advocate_challenge"
+        - "prompts/multi_agent.prompts.yaml#ensemble_aggregation"
+
+# =============================================================================
+# DEPLOYMENT CONFIGURATION
+# =============================================================================
+
+deployment:
+  
+  environments:
+    development:
+      log_level: "DEBUG"
+      shadow_mode: true
+      mock_external_services: true
+      
+    staging:
+      log_level: "INFO"
+      shadow_mode: false
+      mock_external_services: false
+      
+    production:
+      log_level: "WARN"
+      shadow_mode: false
+      mock_external_services: false
+      require_formal_verification: true
+  
+  resource_defaults:
+    cpu_limit: "2"
+    memory_limit: "4Gi"
+    disk_limit: "10Gi"

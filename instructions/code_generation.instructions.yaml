@@ -1,0 +1,209 @@
+# VAK Code Generation Instructions
+# Guidelines for development agents generating code
+
+version: "1.0.0"
+applies_to: ["development_agents"]
+
+# =============================================================================
+# RUST CODE STANDARDS
+# =============================================================================
+
+rust_standards:
+  
+  general:
+    - "Use Rust 2021 edition"
+    - "Format with rustfmt before committing"
+    - "No warnings allowed (deny warnings in CI)"
+    - "Clippy must pass with pedantic lints"
+  
+  error_handling:
+    pattern: "Result<T, Error>"
+    rules:
+      - "Define domain-specific error types"
+      - "Use thiserror for error derivation"
+      - "Never use unwrap() except in tests"
+      - "Propagate errors with ? operator"
+    example: |
+      use thiserror::Error;
+      
+      #[derive(Error, Debug)]
+      pub enum KernelError {
+          #[error("Policy violation: {0}")]
+          PolicyViolation(String),
+          #[error("Tool execution failed: {0}")]
+          ToolError(#[from] ToolError),
+          #[error("Audit log failure: {0}")]
+          AuditError(#[from] AuditError),
+      }
+  
+  async_patterns:
+    runtime: "tokio"
+    rules:
+      - "Use async/await for all I/O"
+      - "Spawn blocking tasks with spawn_blocking"
+      - "Use channels for inter-task communication"
+      - "Set timeouts on all external calls"
+    example: |
+      use tokio::time::{timeout, Duration};
+      
+      async fn execute_tool(tool: &Tool, args: Value) -> Result<Value, KernelError> {
+          timeout(Duration::from_secs(30), tool.execute(args))
+              .await
+              .map_err(|_| KernelError::Timeout)?
+      }
+  
+  safety:
+    rules:
+      - "No unsafe blocks unless absolutely necessary"
+      - "Document why unsafe is needed if used"
+      - "Use safe abstractions from vetted crates"
+      - "Prefer owned types over raw pointers"
+  
+  documentation:
+    rules:
+      - "All public items must have rustdoc"
+      - "Include examples in doc comments"
+      - "Document panics, errors, and safety"
+    example: |
+      /// Evaluates a policy request against loaded rules.
+      ///
+      /// # Arguments
+      /// * `request` - The policy request to evaluate
+      ///
+      /// # Returns
+      /// * `Ok(PolicyDecision)` - The evaluation result
+      /// * `Err(KernelError)` - If evaluation fails
+      ///
+      /// # Example
+      /// ```
+      /// let decision = engine.evaluate(&request)?;
+      /// match decision {
+      ///     PolicyDecision::Allow { .. } => execute_tool(),
+      ///     PolicyDecision::Deny { reason, .. } => return Err(reason),
+      /// }
+      /// ```
+      pub fn evaluate(&self, request: &PolicyRequest) -> Result<PolicyDecision, KernelError>
+
+# =============================================================================
+# PYTHON CODE STANDARDS
+# =============================================================================
+
+python_standards:
+  
+  general:
+    version: ">=3.10"
+    rules:
+      - "Follow PEP 8 style guide"
+      - "Use type hints everywhere"
+      - "Format with black, sort imports with isort"
+      - "Lint with ruff"
+  
+  typing:
+    rules:
+      - "All functions must have type annotations"
+      - "Use TypedDict for complex dictionaries"
+      - "Use Protocol for duck typing"
+      - "Use Generic for generic classes"
+    example: |
+      from typing import TypedDict, Protocol
+      
+      class ToolResult(TypedDict):
+          success: bool
+          output: Any
+          audit_id: str
+      
+      class Executable(Protocol):
+          async def execute(self, args: dict[str, Any]) -> ToolResult: ...
+  
+  async_patterns:
+    rules:
+      - "Use async/await for I/O operations"
+      - "Use asyncio.gather for concurrent tasks"
+      - "Always set timeouts on external calls"
+    example: |
+      import asyncio
+      
+      async def execute_with_timeout(coro, timeout_seconds: float = 30.0):
+          try:
+              return await asyncio.wait_for(coro, timeout=timeout_seconds)
+          except asyncio.TimeoutError:
+              raise ExecutionTimeout(f"Operation timed out after {timeout_seconds}s")
+  
+  error_handling:
+    rules:
+      - "Define custom exception hierarchy"
+      - "Never catch bare Exception"
+      - "Log exceptions with context"
+    example: |
+      class VAKError(Exception):
+          """Base exception for VAK SDK."""
+          pass
+      
+      class PolicyViolationError(VAKError):
+          def __init__(self, reason: str, policy_id: str, audit_id: str):
+              self.reason = reason
+              self.policy_id = policy_id
+              self.audit_id = audit_id
+              super().__init__(f"Policy violation: {reason}")
+
+# =============================================================================
+# TESTING REQUIREMENTS
+# =============================================================================
+
+testing:
+  
+  coverage:
+    minimum: 80
+    target: 90
+    critical_paths: 100  # Policy evaluation, audit logging
+  
+  test_types:
+    unit:
+      - "Test each function in isolation"
+      - "Mock external dependencies"
+      - "Cover edge cases and error paths"
+    
+    integration:
+      - "Test component interactions"
+      - "Use real (but isolated) databases"
+      - "Verify audit log integrity"
+    
+    property:
+      - "Use proptest/hypothesis for fuzzing"
+      - "Test invariants hold under random input"
+      - "Focus on parser and serialization code"
+    
+    adversarial:
+      - "Prompt injection attempts"
+      - "Policy bypass attempts"
+      - "Resource exhaustion attacks"
+  
+  naming:
+    pattern: "test_<what>_<scenario>_<expected>"
+    example: "test_policy_evaluation_unauthorized_action_returns_inadmissible"
+
+# =============================================================================
+# SECURITY REQUIREMENTS
+# =============================================================================
+
+security_in_code:
+  
+  secrets:
+    - "Never hardcode secrets"
+    - "Use environment variables or secret managers"
+    - "Rotate credentials regularly"
+  
+  input_validation:
+    - "Validate all external input"
+    - "Use allow-lists, not deny-lists"
+    - "Sanitize before use"
+  
+  cryptography:
+    - "Use vetted libraries (ring, openssl)"
+    - "Never implement own crypto"
+    - "Use strong algorithms (SHA-256+, Ed25519)"
+  
+  logging:
+    - "Never log secrets or full credentials"
+    - "Hash PII before logging"
+    - "Include correlation IDs for tracing"
