@@ -1,0 +1,227 @@
+# =============================================================================
+# VAK Admin Policies
+# 
+# Policies governing administrative operations and system management.
+# These rules control access to sensitive admin functions.
+# =============================================================================
+
+rules:
+  # ---------------------------------------------------------------------------
+  # Super Admin - Full System Access
+  # ---------------------------------------------------------------------------
+  - id: admin-super-full-access
+    effect: allow
+    resource_pattern: "*"
+    action_pattern: "*"
+    conditions:
+      - attribute: role
+        operator: equals
+        value: "super_admin"
+      - attribute: attr.mfa_verified
+        operator: equals
+        value: true
+    priority: 1000
+    description: "Super administrators have unrestricted access when MFA is verified"
+
+  # ---------------------------------------------------------------------------
+  # System Admin - Configuration Management
+  # ---------------------------------------------------------------------------
+  - id: admin-config-management
+    effect: allow
+    resource_pattern: "config/*"
+    action_pattern: "*"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["admin", "super_admin"]
+    priority: 900
+    description: "Administrators can manage system configuration"
+
+  - id: admin-config-read-only
+    effect: allow
+    resource_pattern: "config/*"
+    action_pattern: "read"
+    conditions:
+      - attribute: role
+        operator: equals
+        value: "operator"
+    priority: 800
+    description: "Operators can read configuration but not modify"
+
+  # ---------------------------------------------------------------------------
+  # User Management
+  # ---------------------------------------------------------------------------
+  - id: admin-user-management
+    effect: allow
+    resource_pattern: "users/*"
+    action_pattern: "*"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["admin", "super_admin"]
+      - attribute: attr.user_management_enabled
+        operator: equals
+        value: true
+    priority: 850
+    description: "Administrators can manage user accounts"
+
+  - id: admin-user-create-restrict
+    effect: deny
+    resource_pattern: "users/admin/*"
+    action_pattern: "create"
+    conditions:
+      - attribute: role
+        operator: equals
+        value: "admin"
+    priority: 860
+    description: "Regular admins cannot create other admin accounts"
+
+  # ---------------------------------------------------------------------------
+  # Agent Management
+  # ---------------------------------------------------------------------------
+  - id: admin-agent-register
+    effect: allow
+    resource_pattern: "agents/*"
+    action_pattern: "register"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["admin", "super_admin", "agent_manager"]
+    priority: 700
+    description: "Authorized roles can register new agents"
+
+  - id: admin-agent-terminate
+    effect: allow
+    resource_pattern: "agents/*"
+    action_pattern: "terminate"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["admin", "super_admin"]
+      - attribute: attr.termination_authority
+        operator: equals
+        value: true
+    priority: 750
+    description: "Only admins with termination authority can terminate agents"
+
+  - id: admin-agent-suspend
+    effect: allow
+    resource_pattern: "agents/*"
+    action_pattern: "suspend"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["admin", "super_admin", "security"]
+    priority: 740
+    description: "Admins and security can suspend agents"
+
+  # ---------------------------------------------------------------------------
+  # Audit Log Access
+  # ---------------------------------------------------------------------------
+  - id: admin-audit-full-access
+    effect: allow
+    resource_pattern: "audit/*"
+    action_pattern: "*"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["super_admin", "compliance"]
+    priority: 600
+    description: "Super admins and compliance can fully access audit logs"
+
+  - id: admin-audit-read
+    effect: allow
+    resource_pattern: "audit/logs/*"
+    action_pattern: "read"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["admin", "security", "auditor"]
+    priority: 590
+    description: "Admins, security, and auditors can read audit logs"
+
+  - id: admin-audit-export
+    effect: allow
+    resource_pattern: "audit/export"
+    action_pattern: "execute"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["compliance", "super_admin"]
+      - attribute: env.audit_export_enabled
+        operator: equals
+        value: true
+    priority: 580
+    description: "Only compliance team can export audit logs when enabled"
+
+  # ---------------------------------------------------------------------------
+  # Policy Management
+  # ---------------------------------------------------------------------------
+  - id: admin-policy-management
+    effect: allow
+    resource_pattern: "policies/*"
+    action_pattern: "*"
+    conditions:
+      - attribute: role
+        operator: equals
+        value: "super_admin"
+    priority: 950
+    description: "Only super admins can manage policies"
+
+  - id: admin-policy-view
+    effect: allow
+    resource_pattern: "policies/*"
+    action_pattern: "read"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["admin", "security", "compliance"]
+    priority: 940
+    description: "Authorized roles can view policies"
+
+  # ---------------------------------------------------------------------------
+  # System Maintenance
+  # ---------------------------------------------------------------------------
+  - id: admin-maintenance-mode
+    effect: allow
+    resource_pattern: "system/maintenance"
+    action_pattern: "*"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["super_admin", "system"]
+      - attribute: env.maintenance_window
+        operator: equals
+        value: true
+    priority: 500
+    description: "System maintenance only during maintenance windows"
+
+  - id: admin-backup-operations
+    effect: allow
+    resource_pattern: "system/backup/*"
+    action_pattern: "*"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["admin", "super_admin", "backup_operator"]
+    priority: 510
+    description: "Backup operations for authorized roles"
+
+  # ---------------------------------------------------------------------------
+  # Deny Rules
+  # ---------------------------------------------------------------------------
+  - id: admin-deny-delete-audit
+    effect: deny
+    resource_pattern: "audit/*"
+    action_pattern: "delete"
+    conditions: []
+    priority: 10000
+    description: "No one can delete audit logs - immutable by design"
+
+  - id: admin-deny-modify-audit
+    effect: deny
+    resource_pattern: "audit/logs/*"
+    action_pattern: "write"
+    conditions: []
+    priority: 10000
+    description: "Audit logs cannot be modified - append only"

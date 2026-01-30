@@ -2,7 +2,7 @@
 //!
 //! This example demonstrates the fundamental operations of the Verifiable Agent Kernel:
 //! - Creating and configuring a kernel instance
-//! - Registering an agent with capabilities
+//! - Creating tool requests
 //! - Executing tools through the kernel
 //! - Inspecting the audit log
 //!
@@ -11,7 +11,7 @@
 // Import from the VAK crate
 // The prelude module provides convenient re-exports of common types
 use vak::prelude::*;
-use vak::kernel::kernel::{Kernel, ToolCall, KernelError};
+use vak::kernel::config::KernelConfig;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -36,14 +36,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Step 1: Creating kernel instance...");
     
     // Option A: Create kernel with default configuration
-    let kernel = Kernel::new().await;
+    let config = KernelConfig::default();
+    let kernel = Kernel::new(config).await?;
     
     // Option B: Create kernel with custom configuration (alternative)
     // let config = KernelConfig::builder()
     //     .name("my-custom-kernel")
     //     .max_concurrent_agents(50)
     //     .build();
-    // let kernel = Kernel::from_config(config).await;
+    // let kernel = Kernel::new(config).await?;
     
     println!("✓ Kernel initialized successfully\n");
 
@@ -56,29 +57,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // - A human-readable name
     // - A list of capabilities that define what it can do
     
-    println!("Step 2: Registering agent...");
+    println!("Step 2: Creating agent and session...");
     
-    // Create a unique agent ID (can use AgentId::new() for UUID-based IDs)
-    let agent_id = "data-analysis-agent-001".to_string();
+    // Create a unique agent ID
+    let agent_id = AgentId::new();
     
-    // Define the agent's capabilities
-    // Capabilities are strings that can be checked by policies
-    let capabilities = vec![
-        "read".to_string(),      // Can read data
-        "compute".to_string(),   // Can perform calculations
-        "network".to_string(),   // Can make network requests
-    ];
+    // Create a session ID for tracking
+    let session_id = SessionId::new();
     
-    // Register the agent with the kernel
-    kernel
-        .register_agent(
-            agent_id.clone(),
-            "DataAnalysisAgent".to_string(),
-            capabilities,
-        )
-        .await?;
-    
-    println!("✓ Agent '{}' registered with capabilities: read, compute, network\n", agent_id);
+    println!("✓ Agent ID: {}", agent_id);
+    println!("✓ Session ID: {}\n", session_id);
 
     // =========================================================================
     // Step 4: Execute a Tool Request
@@ -88,28 +76,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     println!("Step 3: Executing tool request...");
     
-    // Create a tool call request
+    // Create a tool request
     // This represents an agent's intention to use a specific tool
-    let tool_call = ToolCall {
-        tool_name: "calculator".to_string(),
-        parameters: serde_json::json!({
+    let tool_request = ToolRequest::new(
+        "calculator",
+        serde_json::json!({
             "operation": "add",
             "operands": [42, 58]
         }),
-    };
+    );
     
     // Execute the tool through the kernel
     // The kernel will:
-    // 1. Verify the agent is registered
-    // 2. Check policies to ensure the action is allowed
-    // 3. Execute the tool in a sandboxed environment
-    // 4. Log the action to the audit trail
-    let result = kernel.execute_tool(agent_id.clone(), tool_call).await?;
+    // 1. Check policies to ensure the action is allowed
+    // 2. Execute the tool in a sandboxed environment
+    // 3. Log the action to the audit trail
+    let result = kernel.execute(&agent_id, &session_id, tool_request).await?;
     
     println!("✓ Tool executed successfully");
-    println!("  Tool: {}", result.tool_name);
-    println!("  Output: {}", result.output);
-    println!("  Success: {}\n", result.success);
+    println!("  Request ID: {}", result.request_id);
+    println!("  Success: {}", result.success);
+    if let Some(res) = &result.result {
+        println!("  Output: {}\n", res);
+    }
 
     // =========================================================================
     // Step 5: Execute Another Tool (Demonstrating Multiple Operations)
@@ -117,18 +106,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     println!("Step 4: Executing another tool...");
     
-    let data_tool_call = ToolCall {
-        tool_name: "data_processor".to_string(),
-        parameters: serde_json::json!({
+    let data_tool_request = ToolRequest::new(
+        "data_processor",
+        serde_json::json!({
             "action": "summarize",
             "data": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
         }),
-    };
+    );
     
-    let data_result = kernel.execute_tool(agent_id.clone(), data_tool_call).await?;
+    let data_result = kernel.execute(&agent_id, &session_id, data_tool_request).await?;
     
     println!("✓ Data processing tool executed");
-    println!("  Output: {}\n", data_result.output);
+    if let Some(res) = &data_result.result {
+        println!("  Output: {}\n", res);
+    }
 
     // =========================================================================
     // Step 6: Inspect the Audit Log
@@ -138,34 +129,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     println!("Step 5: Checking audit logs...");
     
-    // Get access to the audit logger
-    let audit_logger = kernel.audit_logger();
-    let logger = audit_logger.read().await;
-    
     // Retrieve all audit entries
-    let entries = logger.entries();
+    let entries = kernel.get_audit_log().await;
     
     println!("✓ Found {} audit entries:\n", entries.len());
     
     for (i, entry) in entries.iter().enumerate() {
         println!("  Entry {}:", i + 1);
+        println!("    Audit ID: {}", entry.audit_id);
         println!("    Timestamp: {}", entry.timestamp);
         println!("    Agent: {}", entry.agent_id);
         println!("    Action: {}", entry.action);
-        println!("    Details: {}", entry.details);
-        println!("    Success: {}", entry.success);
+        println!("    Hash: {}...", &entry.hash[..16]);
         println!();
     }
-
-    // =========================================================================
-    // Step 7: Graceful Shutdown
-    // =========================================================================
-    // Always shutdown the kernel properly to ensure all resources are released
-    // and final audit entries are written.
-    
-    println!("Step 6: Shutting down kernel...");
-    kernel.shutdown().await?;
-    println!("✓ Kernel shutdown complete\n");
 
     println!("=== Example Complete ===");
     
@@ -179,37 +156,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// Demonstrates handling common error cases
 #[allow(dead_code)]
 async fn error_handling_examples() -> Result<(), Box<dyn std::error::Error>> {
-    use vak::kernel::kernel::{Kernel, ToolCall};
+    let config = KernelConfig::default();
+    let kernel = Kernel::new(config).await?;
     
-    let kernel = Kernel::new().await;
+    let agent_id = AgentId::new();
+    let session_id = SessionId::new();
     
-    // Example 1: Trying to execute a tool with an unregistered agent
-    let unknown_agent = "unknown-agent-999".to_string();
-    let tool_call = ToolCall {
-        tool_name: "some_tool".to_string(),
-        parameters: serde_json::json!({}),
-    };
+    // Example: Trying to execute a tool
+    let tool_request = ToolRequest::new(
+        "some_tool",
+        serde_json::json!({}),
+    );
     
-    match kernel.execute_tool(unknown_agent, tool_call).await {
-        Ok(_) => println!("Tool executed"),
+    match kernel.execute(&agent_id, &session_id, tool_request).await {
+        Ok(result) => println!("Tool executed: success={}", result.success),
         Err(e) => {
-            // This will print: "Agent 'agent-xxx' is not registered"
-            eprintln!("Expected error: {}", e);
+            eprintln!("Error executing tool: {}", e);
         }
     }
     
-    // Example 2: Trying to register an agent twice
-    let agent_id = "duplicate-agent".to_string();
-    kernel.register_agent(agent_id.clone(), "Agent1".to_string(), vec![]).await?;
-    
-    match kernel.register_agent(agent_id.clone(), "Agent1Duplicate".to_string(), vec![]).await {
-        Ok(_) => println!("Agent registered"),
-        Err(e) => {
-            // This will print: "Agent 'agent-xxx' is already registered"
-            eprintln!("Expected error: {}", e);
-        }
-    }
-    
-    kernel.shutdown().await?;
     Ok(())
 }

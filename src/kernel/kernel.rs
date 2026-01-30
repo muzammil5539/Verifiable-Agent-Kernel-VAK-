@@ -2,8 +2,47 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn, error, instrument};
+use chrono::{DateTime, Utc};
 
-use crate::kernel::types::{AgentId, ToolCall, ToolResult, Policy, AuditEntry};
+use crate::kernel::types::AgentId;
+
+/// Tool call request structure
+#[derive(Debug, Clone)]
+pub struct ToolCall {
+    pub tool_name: String,
+    pub parameters: serde_json::Value,
+}
+
+/// Tool execution result
+#[derive(Debug, Clone)]
+pub struct ToolResult {
+    pub tool_name: String,
+    pub output: serde_json::Value,
+    pub success: bool,
+}
+
+/// Simple policy rule
+#[derive(Debug, Clone)]
+pub struct Policy {
+    pub name: String,
+    pub allow_all: bool,
+}
+
+impl Policy {
+    pub fn allows(&self, _agent_id: &AgentId, _tool_call: &ToolCall) -> bool {
+        self.allow_all
+    }
+}
+
+/// Audit entry for this kernel module
+#[derive(Debug, Clone)]
+pub struct SimpleAuditEntry {
+    pub timestamp: DateTime<Utc>,
+    pub agent_id: AgentId,
+    pub action: String,
+    pub details: String,
+    pub success: bool,
+}
 
 /// Policy engine for validating tool executions
 #[derive(Debug, Default)]
@@ -31,7 +70,7 @@ impl PolicyEngine {
 /// Audit logger for recording kernel operations
 #[derive(Debug, Default)]
 pub struct AuditLogger {
-    entries: Vec<AuditEntry>,
+    entries: Vec<SimpleAuditEntry>,
 }
 
 impl AuditLogger {
@@ -39,12 +78,12 @@ impl AuditLogger {
         Self { entries: Vec::new() }
     }
 
-    pub fn log(&mut self, entry: AuditEntry) {
+    pub fn log(&mut self, entry: SimpleAuditEntry) {
         info!(agent_id = %entry.agent_id, action = %entry.action, "Audit log entry");
         self.entries.push(entry);
     }
 
-    pub fn entries(&self) -> &[AuditEntry] {
+    pub fn entries(&self) -> &[SimpleAuditEntry] {
         &self.entries
     }
 }
@@ -63,14 +102,14 @@ pub struct AgentInfo {
     pub capabilities: Vec<String>,
 }
 
-/// Main Verifiable Agent Kernel
-pub struct Kernel {
+/// Alternative Kernel implementation for simpler use cases
+pub struct SimpleKernel {
     policy_engine: Arc<RwLock<PolicyEngine>>,
     audit_logger: Arc<RwLock<AuditLogger>>,
     state: Arc<RwLock<KernelState>>,
 }
 
-impl Kernel {
+impl SimpleKernel {
     /// Create a new Kernel instance with initialized components
     #[instrument(name = "kernel_init")]
     pub async fn new() -> Self {
@@ -99,14 +138,14 @@ impl Kernel {
         agent_id: AgentId,
         name: String,
         capabilities: Vec<String>,
-    ) -> Result<(), KernelError> {
+    ) -> Result<(), SimpleKernelError> {
         info!("Registering agent");
 
         let mut state = self.state.write().await;
         
         if state.agents.contains_key(&agent_id) {
             warn!("Agent already registered");
-            return Err(KernelError::AgentAlreadyRegistered(agent_id));
+            return Err(SimpleKernelError::AgentAlreadyRegistered(agent_id.to_string()));
         }
 
         let agent_info = AgentInfo {
@@ -119,7 +158,7 @@ impl Kernel {
 
         // Log the registration
         let mut logger = self.audit_logger.write().await;
-        logger.log(AuditEntry {
+        logger.log(SimpleAuditEntry {
             timestamp: chrono::Utc::now(),
             agent_id,
             action: "register".to_string(),
@@ -137,20 +176,20 @@ impl Kernel {
         &self,
         agent_id: AgentId,
         tool_call: ToolCall,
-    ) -> Result<ToolResult, KernelError> {
+    ) -> Result<ToolResult, SimpleKernelError> {
         info!("Processing tool execution request");
 
         // Check if kernel is running
         let state = self.state.read().await;
         if !state.running {
             error!("Kernel is shutting down");
-            return Err(KernelError::KernelShuttingDown);
+            return Err(SimpleKernelError::KernelShuttingDown);
         }
 
         // Verify agent is registered
         if !state.agents.contains_key(&agent_id) {
             warn!("Unregistered agent attempted tool execution");
-            return Err(KernelError::AgentNotRegistered(agent_id));
+            return Err(SimpleKernelError::AgentNotRegistered(agent_id.to_string()));
         }
         drop(state);
 
@@ -160,7 +199,7 @@ impl Kernel {
             warn!("Policy check failed for tool execution");
             
             let mut logger = self.audit_logger.write().await;
-            logger.log(AuditEntry {
+            logger.log(SimpleAuditEntry {
                 timestamp: chrono::Utc::now(),
                 agent_id: agent_id.clone(),
                 action: format!("execute:{}", tool_call.tool_name),
@@ -168,7 +207,7 @@ impl Kernel {
                 success: false,
             });
 
-            return Err(KernelError::PolicyViolation(tool_call.tool_name));
+            return Err(SimpleKernelError::PolicyViolation(tool_call.tool_name));
         }
         drop(policy_engine);
 
@@ -182,7 +221,7 @@ impl Kernel {
 
         // Log successful execution
         let mut logger = self.audit_logger.write().await;
-        logger.log(AuditEntry {
+        logger.log(SimpleAuditEntry {
             timestamp: chrono::Utc::now(),
             agent_id,
             action: format!("execute:{}", tool_call.tool_name),
@@ -196,7 +235,7 @@ impl Kernel {
 
     /// Shutdown the kernel gracefully
     #[instrument(skip(self))]
-    pub async fn shutdown(&self) -> Result<(), KernelError> {
+    pub async fn shutdown(&self) -> Result<(), SimpleKernelError> {
         info!("Initiating kernel shutdown");
 
         let mut state = self.state.write().await;
@@ -204,9 +243,9 @@ impl Kernel {
 
         // Log shutdown
         let mut logger = self.audit_logger.write().await;
-        logger.log(AuditEntry {
+        logger.log(SimpleAuditEntry {
             timestamp: chrono::Utc::now(),
-            agent_id: "kernel".to_string(),
+            agent_id: AgentId::new(),
             action: "shutdown".to_string(),
             details: format!("Kernel shutdown with {} agents", state.agents.len()),
             success: true,
@@ -229,12 +268,12 @@ impl Kernel {
 
 /// Kernel operation errors
 #[derive(Debug, thiserror::Error)]
-pub enum KernelError {
+pub enum SimpleKernelError {
     #[error("Agent '{0}' is already registered")]
-    AgentAlreadyRegistered(AgentId),
+    AgentAlreadyRegistered(String),
 
     #[error("Agent '{0}' is not registered")]
-    AgentNotRegistered(AgentId),
+    AgentNotRegistered(String),
 
     #[error("Policy violation for tool '{0}'")]
     PolicyViolation(String),
@@ -249,11 +288,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_kernel_lifecycle() {
-        let kernel = Kernel::new().await;
+        let kernel = SimpleKernel::new().await;
         
         // Register an agent
+        let agent_id = AgentId::new();
         kernel
-            .register_agent("agent-1".to_string(), "TestAgent".to_string(), vec!["read".to_string()])
+            .register_agent(agent_id.clone(), "TestAgent".to_string(), vec!["read".to_string()])
             .await
             .unwrap();
 
@@ -263,7 +303,7 @@ mod tests {
             parameters: serde_json::json!({}),
         };
         
-        let result = kernel.execute_tool("agent-1".to_string(), tool_call).await;
+        let result = kernel.execute_tool(agent_id, tool_call).await;
         assert!(result.is_ok());
 
         // Shutdown

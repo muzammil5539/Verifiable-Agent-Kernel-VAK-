@@ -18,9 +18,10 @@ pub struct PolicyContext {
     pub metadata: std::collections::HashMap<String, String>,
 }
 
-/// Result of a policy evaluation.
+/// Result of a policy evaluation specific to the traits module.
+/// This is a simplified version for trait implementations.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PolicyDecision {
+pub enum TraitPolicyDecision {
     /// The request is allowed to proceed.
     Allow,
     /// The request is denied with a reason.
@@ -29,9 +30,10 @@ pub enum PolicyDecision {
     Escalate(String),
 }
 
-/// An entry in the audit log.
+/// An entry in the audit log for trait implementations.
+/// This is a simplified version for trait implementations.
 #[derive(Debug, Clone)]
-pub struct AuditEntry {
+pub struct TraitAuditEntry {
     /// Unique identifier for this audit entry.
     pub id: String,
     /// Timestamp when the event occurred.
@@ -56,7 +58,7 @@ pub struct AuditEntry {
 ///
 /// ```ignore
 /// use async_trait::async_trait;
-/// use vak::kernel::traits::{PolicyEvaluator, PolicyContext, PolicyDecision};
+/// use vak::kernel::traits::{PolicyEvaluator, PolicyContext, TraitPolicyDecision};
 ///
 /// struct MyPolicyEvaluator;
 ///
@@ -66,9 +68,9 @@ pub struct AuditEntry {
 ///         &self,
 ///         request: &ToolRequest,
 ///         context: &PolicyContext,
-///     ) -> Result<PolicyDecision, KernelError> {
+///     ) -> Result<TraitPolicyDecision, KernelError> {
 ///         // Custom policy logic here
-///         Ok(PolicyDecision::Allow)
+///         Ok(TraitPolicyDecision::Allow)
 ///     }
 /// }
 /// ```
@@ -83,12 +85,12 @@ pub trait PolicyEvaluator: Send + Sync {
     ///
     /// # Returns
     ///
-    /// A `PolicyDecision` indicating whether the request is allowed, denied, or escalated.
+    /// A `TraitPolicyDecision` indicating whether the request is allowed, denied, or escalated.
     async fn evaluate(
         &self,
         request: &ToolRequest,
         context: &PolicyContext,
-    ) -> Result<PolicyDecision, KernelError>;
+    ) -> Result<TraitPolicyDecision, KernelError>;
 }
 
 /// Writes audit entries to a persistent audit log.
@@ -101,13 +103,13 @@ pub trait PolicyEvaluator: Send + Sync {
 ///
 /// ```ignore
 /// use async_trait::async_trait;
-/// use vak::kernel::traits::{AuditWriter, AuditEntry};
+/// use vak::kernel::traits::{AuditWriter, TraitAuditEntry};
 ///
 /// struct FileAuditWriter;
 ///
 /// #[async_trait]
 /// impl AuditWriter for FileAuditWriter {
-///     async fn write_entry(&self, entry: AuditEntry) -> Result<(), KernelError> {
+///     async fn write_entry(&self, entry: TraitAuditEntry) -> Result<(), KernelError> {
 ///         // Write to file or external system
 ///         Ok(())
 ///     }
@@ -124,7 +126,7 @@ pub trait AuditWriter: Send + Sync {
     /// # Returns
     ///
     /// `Ok(())` if the entry was successfully written, or an error otherwise.
-    async fn write_entry(&self, entry: AuditEntry) -> Result<(), KernelError>;
+    async fn write_entry(&self, entry: TraitAuditEntry) -> Result<(), KernelError>;
 }
 
 /// Manages persistent state for agents.
@@ -258,20 +260,20 @@ mod tests {
 
     #[test]
     fn test_policy_decision_equality() {
-        assert_eq!(PolicyDecision::Allow, PolicyDecision::Allow);
+        assert_eq!(TraitPolicyDecision::Allow, TraitPolicyDecision::Allow);
         assert_eq!(
-            PolicyDecision::Deny("reason".to_string()),
-            PolicyDecision::Deny("reason".to_string())
+            TraitPolicyDecision::Deny("reason".to_string()),
+            TraitPolicyDecision::Deny("reason".to_string())
         );
-        assert_ne!(PolicyDecision::Allow, PolicyDecision::Deny("denied".to_string()));
+        assert_ne!(TraitPolicyDecision::Allow, TraitPolicyDecision::Deny("denied".to_string()));
     }
 
     #[test]
     fn test_audit_entry_creation() {
-        let entry = AuditEntry {
+        let entry = TraitAuditEntry {
             id: "test-001".to_string(),
             timestamp: 1234567890,
-            agent_id: AgentId("agent-1".to_string()),
+            agent_id: AgentId::new(),
             event_type: "tool_execution".to_string(),
             details: "Executed read_file tool".to_string(),
             outcome: Some("success".to_string()),

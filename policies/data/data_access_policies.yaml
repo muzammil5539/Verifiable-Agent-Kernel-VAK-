@@ -1,0 +1,318 @@
+# =============================================================================
+# VAK Data Access Policies
+# 
+# Policies governing data access, processing, and storage operations.
+# Implements data classification, access control, and privacy rules.
+# =============================================================================
+
+rules:
+  # ---------------------------------------------------------------------------
+  # Data Classification Levels
+  # Public < Internal < Confidential < Secret < Top Secret
+  # ---------------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------
+  # Public Data Access
+  # ---------------------------------------------------------------------------
+  - id: data-public-read
+    effect: allow
+    resource_pattern: "data/public/*"
+    action_pattern: "read"
+    conditions: []
+    priority: 100
+    description: "Anyone can read public data"
+
+  - id: data-public-write
+    effect: allow
+    resource_pattern: "data/public/*"
+    action_pattern: "write"
+    conditions:
+      - attribute: role
+        operator: not_equals
+        value: "guest"
+    priority: 100
+    description: "Registered users can write to public data"
+
+  # ---------------------------------------------------------------------------
+  # Internal Data Access
+  # ---------------------------------------------------------------------------
+  - id: data-internal-read
+    effect: allow
+    resource_pattern: "data/internal/*"
+    action_pattern: "read"
+    conditions:
+      - attribute: attr.employee_status
+        operator: equals
+        value: "active"
+    priority: 200
+    description: "Active employees can read internal data"
+
+  - id: data-internal-write
+    effect: allow
+    resource_pattern: "data/internal/*"
+    action_pattern: "write"
+    conditions:
+      - attribute: attr.employee_status
+        operator: equals
+        value: "active"
+      - attribute: attr.data_write_authorized
+        operator: equals
+        value: true
+    priority: 200
+    description: "Authorized employees can write internal data"
+
+  # ---------------------------------------------------------------------------
+  # Confidential Data Access
+  # ---------------------------------------------------------------------------
+  - id: data-confidential-read
+    effect: allow
+    resource_pattern: "data/confidential/*"
+    action_pattern: "read"
+    conditions:
+      - attribute: attr.clearance_level
+        operator: greater_than
+        value: 1
+      - attribute: attr.nda_signed
+        operator: equals
+        value: true
+    priority: 300
+    description: "Users with appropriate clearance can read confidential data"
+
+  - id: data-confidential-write
+    effect: allow
+    resource_pattern: "data/confidential/*"
+    action_pattern: "write"
+    conditions:
+      - attribute: attr.clearance_level
+        operator: greater_than
+        value: 2
+      - attribute: role
+        operator: in
+        value: ["data_owner", "data_steward", "admin"]
+    priority: 310
+    description: "Data owners and stewards can write confidential data"
+
+  # ---------------------------------------------------------------------------
+  # Secret Data Access
+  # ---------------------------------------------------------------------------
+  - id: data-secret-read
+    effect: allow
+    resource_pattern: "data/secret/*"
+    action_pattern: "read"
+    conditions:
+      - attribute: attr.clearance_level
+        operator: greater_than
+        value: 3
+      - attribute: attr.nda_signed
+        operator: equals
+        value: true
+      - attribute: attr.background_check_passed
+        operator: equals
+        value: true
+    priority: 400
+    description: "High-clearance users with background checks can access secret data"
+
+  - id: data-secret-write
+    effect: allow
+    resource_pattern: "data/secret/*"
+    action_pattern: "write"
+    conditions:
+      - attribute: attr.clearance_level
+        operator: greater_than
+        value: 4
+      - attribute: role
+        operator: in
+        value: ["security", "super_admin"]
+    priority: 410
+    description: "Only security team and super admins can write secret data"
+
+  # ---------------------------------------------------------------------------
+  # Top Secret Data Access
+  # ---------------------------------------------------------------------------
+  - id: data-top-secret-access
+    effect: allow
+    resource_pattern: "data/top_secret/*"
+    action_pattern: "*"
+    conditions:
+      - attribute: attr.clearance_level
+        operator: equals
+        value: 5
+      - attribute: attr.mfa_verified
+        operator: equals
+        value: true
+      - attribute: env.secure_terminal
+        operator: equals
+        value: true
+    priority: 500
+    description: "Top secret access requires max clearance, MFA, and secure terminal"
+
+  # ---------------------------------------------------------------------------
+  # Data Processing Rules
+  # ---------------------------------------------------------------------------
+  - id: data-process-analytics
+    effect: allow
+    resource_pattern: "data/*/analytics"
+    action_pattern: "process"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["analyst", "data_scientist", "admin"]
+      - attribute: attr.department
+        operator: in
+        value: ["analytics", "research", "data-science"]
+    priority: 250
+    description: "Analytics team can process data for analysis"
+
+  - id: data-process-batch
+    effect: allow
+    resource_pattern: "data/batch/*"
+    action_pattern: "process"
+    conditions:
+      - attribute: attr.batch_processing_enabled
+        operator: equals
+        value: true
+      - attribute: env.business_hours
+        operator: equals
+        value: false
+    priority: 240
+    description: "Batch processing only outside business hours"
+
+  - id: data-export-allowed
+    effect: allow
+    resource_pattern: "data/exportable/*"
+    action_pattern: "export"
+    conditions:
+      - attribute: attr.export_authorized
+        operator: equals
+        value: true
+      - attribute: attr.export_destination_approved
+        operator: equals
+        value: true
+    priority: 260
+    description: "Data export requires authorization and approved destination"
+
+  # ---------------------------------------------------------------------------
+  # PII (Personally Identifiable Information) Rules
+  # ---------------------------------------------------------------------------
+  - id: data-pii-read
+    effect: allow
+    resource_pattern: "data/pii/*"
+    action_pattern: "read"
+    conditions:
+      - attribute: attr.pii_access_trained
+        operator: equals
+        value: true
+      - attribute: attr.purpose_limitation_acknowledged
+        operator: equals
+        value: true
+    priority: 350
+    description: "PII access requires training and purpose acknowledgment"
+
+  - id: data-pii-write
+    effect: allow
+    resource_pattern: "data/pii/*"
+    action_pattern: "write"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["data_steward", "hr", "legal"]
+      - attribute: attr.pii_modification_authorized
+        operator: equals
+        value: true
+    priority: 360
+    description: "PII modification restricted to authorized personnel"
+
+  - id: data-pii-delete
+    effect: allow
+    resource_pattern: "data/pii/*"
+    action_pattern: "delete"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["data_steward", "legal"]
+      - attribute: attr.deletion_request_approved
+        operator: equals
+        value: true
+    priority: 370
+    description: "PII deletion requires approved deletion request"
+
+  # ---------------------------------------------------------------------------
+  # Data Retention Rules
+  # ---------------------------------------------------------------------------
+  - id: data-archive-execute
+    effect: allow
+    resource_pattern: "data/archive/*"
+    action_pattern: "execute"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["admin", "compliance", "backup_operator"]
+    priority: 220
+    description: "Data archival for compliance and admin"
+
+  - id: data-purge-execute
+    effect: allow
+    resource_pattern: "data/purge/*"
+    action_pattern: "execute"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["compliance", "legal"]
+      - attribute: attr.retention_period_expired
+        operator: equals
+        value: true
+    priority: 230
+    description: "Data purge only when retention period has expired"
+
+  # ---------------------------------------------------------------------------
+  # Cross-Border Data Transfer
+  # ---------------------------------------------------------------------------
+  - id: data-cross-border-transfer
+    effect: allow
+    resource_pattern: "data/transfer/international/*"
+    action_pattern: "execute"
+    conditions:
+      - attribute: attr.cross_border_approval
+        operator: equals
+        value: true
+      - attribute: attr.destination_adequacy_assessed
+        operator: equals
+        value: true
+      - attribute: env.transfer_mechanism_valid
+        operator: equals
+        value: true
+    priority: 450
+    description: "International data transfer requires multiple approvals"
+
+  # ---------------------------------------------------------------------------
+  # Deny Rules
+  # ---------------------------------------------------------------------------
+  - id: data-deny-bulk-export-pii
+    effect: deny
+    resource_pattern: "data/pii/bulk/*"
+    action_pattern: "export"
+    conditions: []
+    priority: 10000
+    description: "Bulk PII export is prohibited"
+
+  - id: data-deny-secret-external
+    effect: deny
+    resource_pattern: "data/secret/*"
+    action_pattern: "export"
+    conditions:
+      - attribute: env.network_type
+        operator: equals
+        value: "external"
+    priority: 10000
+    description: "Secret data cannot be exported to external networks"
+
+  - id: data-deny-guest-write
+    effect: deny
+    resource_pattern: "data/*"
+    action_pattern: "write"
+    conditions:
+      - attribute: role
+        operator: equals
+        value: "guest"
+    priority: 9000
+    description: "Guests cannot write any data"

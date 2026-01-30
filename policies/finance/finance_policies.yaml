@@ -1,0 +1,433 @@
+# =============================================================================
+# VAK Finance Policies
+# 
+# Policies governing financial operations, transactions, and reporting.
+# Implements SOX compliance, transaction limits, and approval workflows.
+# =============================================================================
+
+rules:
+  # ---------------------------------------------------------------------------
+  # Transaction Authorization Levels
+  # Based on amount thresholds and role hierarchy
+  # ---------------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------
+  # View Financial Data
+  # ---------------------------------------------------------------------------
+  - id: finance-view-summary
+    effect: allow
+    resource_pattern: "finance/summary/*"
+    action_pattern: "read"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["finance", "accounting", "executive", "manager", "admin"]
+    priority: 100
+    description: "Finance team and management can view financial summaries"
+
+  - id: finance-view-detailed
+    effect: allow
+    resource_pattern: "finance/detailed/*"
+    action_pattern: "read"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["finance", "accounting", "auditor", "compliance"]
+      - attribute: attr.finance_clearance
+        operator: greater_than
+        value: 1
+    priority: 150
+    description: "Detailed financial data requires finance clearance"
+
+  - id: finance-view-confidential
+    effect: allow
+    resource_pattern: "finance/confidential/*"
+    action_pattern: "read"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["cfo", "controller", "finance_director"]
+      - attribute: attr.executive_access
+        operator: equals
+        value: true
+    priority: 200
+    description: "Confidential financial data restricted to executives"
+
+  # ---------------------------------------------------------------------------
+  # Transaction Processing - Amount-Based Controls
+  # ---------------------------------------------------------------------------
+  - id: finance-transaction-small
+    effect: allow
+    resource_pattern: "finance/transactions/*"
+    action_pattern: "execute"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["finance", "accounting", "ap_clerk"]
+      - attribute: attr.transaction_amount
+        operator: less_than
+        value: 1000
+    priority: 300
+    description: "Small transactions under $1,000 - clerk level"
+
+  - id: finance-transaction-medium
+    effect: allow
+    resource_pattern: "finance/transactions/*"
+    action_pattern: "execute"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["finance_manager", "controller"]
+      - attribute: attr.transaction_amount
+        operator: less_than
+        value: 10000
+    priority: 310
+    description: "Medium transactions under $10,000 - manager level"
+
+  - id: finance-transaction-large
+    effect: allow
+    resource_pattern: "finance/transactions/*"
+    action_pattern: "execute"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["finance_director", "cfo"]
+      - attribute: attr.transaction_amount
+        operator: less_than
+        value: 100000
+      - attribute: attr.dual_approval
+        operator: equals
+        value: true
+    priority: 320
+    description: "Large transactions under $100,000 - director with dual approval"
+
+  - id: finance-transaction-executive
+    effect: allow
+    resource_pattern: "finance/transactions/*"
+    action_pattern: "execute"
+    conditions:
+      - attribute: role
+        operator: equals
+        value: "cfo"
+      - attribute: attr.transaction_amount
+        operator: less_than
+        value: 1000000
+      - attribute: attr.board_notification
+        operator: equals
+        value: true
+    priority: 330
+    description: "Executive transactions under $1M - CFO with board notification"
+
+  - id: finance-transaction-board
+    effect: allow
+    resource_pattern: "finance/transactions/*"
+    action_pattern: "execute"
+    conditions:
+      - attribute: role
+        operator: equals
+        value: "board_member"
+      - attribute: attr.board_approval
+        operator: equals
+        value: true
+      - attribute: attr.quorum_reached
+        operator: equals
+        value: true
+    priority: 340
+    description: "Transactions over $1M require board approval with quorum"
+
+  # ---------------------------------------------------------------------------
+  # Payment Processing
+  # ---------------------------------------------------------------------------
+  - id: finance-payment-initiate
+    effect: allow
+    resource_pattern: "finance/payments/*"
+    action_pattern: "initiate"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["ap_clerk", "finance", "accounting"]
+      - attribute: attr.payment_authorized
+        operator: equals
+        value: true
+    priority: 350
+    description: "Authorized personnel can initiate payments"
+
+  - id: finance-payment-approve
+    effect: allow
+    resource_pattern: "finance/payments/*"
+    action_pattern: "approve"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["finance_manager", "controller", "cfo"]
+      - attribute: attr.not_initiator
+        operator: equals
+        value: true
+    priority: 360
+    description: "Managers can approve payments (segregation of duties)"
+
+  - id: finance-payment-release
+    effect: allow
+    resource_pattern: "finance/payments/*"
+    action_pattern: "release"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["treasury", "controller", "cfo"]
+      - attribute: attr.payment_approved
+        operator: equals
+        value: true
+      - attribute: attr.funding_verified
+        operator: equals
+        value: true
+    priority: 370
+    description: "Treasury releases approved and funded payments"
+
+  # ---------------------------------------------------------------------------
+  # Invoice Management
+  # ---------------------------------------------------------------------------
+  - id: finance-invoice-create
+    effect: allow
+    resource_pattern: "finance/invoices/*"
+    action_pattern: "create"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["ar_clerk", "finance", "sales"]
+    priority: 250
+    description: "Authorized roles can create invoices"
+
+  - id: finance-invoice-approve
+    effect: allow
+    resource_pattern: "finance/invoices/*"
+    action_pattern: "approve"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["finance_manager", "sales_manager"]
+      - attribute: attr.credit_check_passed
+        operator: equals
+        value: true
+    priority: 260
+    description: "Managers approve invoices after credit check"
+
+  - id: finance-invoice-void
+    effect: allow
+    resource_pattern: "finance/invoices/*"
+    action_pattern: "void"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["controller", "cfo"]
+      - attribute: attr.void_justification_provided
+        operator: equals
+        value: true
+    priority: 270
+    description: "Controllers can void invoices with justification"
+
+  # ---------------------------------------------------------------------------
+  # Budget Management
+  # ---------------------------------------------------------------------------
+  - id: finance-budget-view
+    effect: allow
+    resource_pattern: "finance/budgets/*"
+    action_pattern: "read"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["finance", "manager", "executive"]
+    priority: 400
+    description: "Finance and management can view budgets"
+
+  - id: finance-budget-create
+    effect: allow
+    resource_pattern: "finance/budgets/*"
+    action_pattern: "create"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["finance_manager", "controller", "cfo"]
+      - attribute: env.budget_season
+        operator: equals
+        value: true
+    priority: 410
+    description: "Budget creation during budget season"
+
+  - id: finance-budget-modify
+    effect: allow
+    resource_pattern: "finance/budgets/*"
+    action_pattern: "write"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["cfo", "controller"]
+      - attribute: attr.budget_revision_approved
+        operator: equals
+        value: true
+    priority: 420
+    description: "Budget modifications require approval"
+
+  # ---------------------------------------------------------------------------
+  # Financial Reporting
+  # ---------------------------------------------------------------------------
+  - id: finance-report-generate
+    effect: allow
+    resource_pattern: "finance/reports/*"
+    action_pattern: "generate"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["finance", "accounting", "analyst"]
+    priority: 450
+    description: "Finance team can generate reports"
+
+  - id: finance-report-publish
+    effect: allow
+    resource_pattern: "finance/reports/external/*"
+    action_pattern: "publish"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["cfo", "controller"]
+      - attribute: attr.legal_review_complete
+        operator: equals
+        value: true
+      - attribute: attr.audit_sign_off
+        operator: equals
+        value: true
+    priority: 460
+    description: "External reports require legal review and audit sign-off"
+
+  - id: finance-report-regulatory
+    effect: allow
+    resource_pattern: "finance/reports/regulatory/*"
+    action_pattern: "submit"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["compliance", "cfo"]
+      - attribute: attr.regulatory_deadline_approaching
+        operator: equals
+        value: true
+    priority: 470
+    description: "Regulatory submissions by compliance team"
+
+  # ---------------------------------------------------------------------------
+  # Audit Access
+  # ---------------------------------------------------------------------------
+  - id: finance-audit-full
+    effect: allow
+    resource_pattern: "finance/audit/*"
+    action_pattern: "*"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["external_auditor", "internal_auditor"]
+      - attribute: attr.audit_engagement_active
+        operator: equals
+        value: true
+    priority: 500
+    description: "Auditors have full access during active engagements"
+
+  - id: finance-audit-internal
+    effect: allow
+    resource_pattern: "finance/audit/internal/*"
+    action_pattern: "read"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["compliance", "risk"]
+    priority: 490
+    description: "Compliance and risk can access internal audit data"
+
+  # ---------------------------------------------------------------------------
+  # Treasury Operations
+  # ---------------------------------------------------------------------------
+  - id: finance-treasury-view
+    effect: allow
+    resource_pattern: "finance/treasury/*"
+    action_pattern: "read"
+    conditions:
+      - attribute: role
+        operator: in
+        value: ["treasury", "cfo", "controller"]
+    priority: 550
+    description: "Treasury operations viewing"
+
+  - id: finance-treasury-execute
+    effect: allow
+    resource_pattern: "finance/treasury/*"
+    action_pattern: "execute"
+    conditions:
+      - attribute: role
+        operator: equals
+        value: "treasury"
+      - attribute: attr.treasury_certified
+        operator: equals
+        value: true
+      - attribute: attr.dual_control
+        operator: equals
+        value: true
+    priority: 560
+    description: "Treasury execution requires certification and dual control"
+
+  # ---------------------------------------------------------------------------
+  # Segregation of Duties Controls
+  # ---------------------------------------------------------------------------
+  - id: finance-segregation-check
+    effect: deny
+    resource_pattern: "finance/transactions/*"
+    action_pattern: "approve"
+    conditions:
+      - attribute: attr.is_initiator
+        operator: equals
+        value: true
+    priority: 9500
+    description: "Cannot approve own transactions (segregation of duties)"
+
+  - id: finance-segregation-payment
+    effect: deny
+    resource_pattern: "finance/payments/*"
+    action_pattern: "release"
+    conditions:
+      - attribute: attr.is_approver
+        operator: equals
+        value: true
+    priority: 9500
+    description: "Approver cannot release payments"
+
+  # ---------------------------------------------------------------------------
+  # Deny Rules
+  # ---------------------------------------------------------------------------
+  - id: finance-deny-retroactive
+    effect: deny
+    resource_pattern: "finance/transactions/closed/*"
+    action_pattern: "write"
+    conditions:
+      - attribute: attr.period_closed
+        operator: equals
+        value: true
+    priority: 10000
+    description: "No modifications to closed period transactions"
+
+  - id: finance-deny-unauthorized-transfer
+    effect: deny
+    resource_pattern: "finance/wire-transfer/*"
+    action_pattern: "execute"
+    conditions:
+      - attribute: attr.beneficiary_verified
+        operator: equals
+        value: false
+    priority: 10000
+    description: "Wire transfers require verified beneficiary"
+
+  - id: finance-deny-guest
+    effect: deny
+    resource_pattern: "finance/*"
+    action_pattern: "*"
+    conditions:
+      - attribute: role
+        operator: equals
+        value: "guest"
+    priority: 9000
+    description: "Guests have no access to financial systems"

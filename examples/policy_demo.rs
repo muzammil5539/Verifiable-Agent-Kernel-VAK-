@@ -11,10 +11,9 @@
 use std::collections::HashMap;
 
 // Import policy types from the VAK policy module
-// Note: The policy module is defined in src/policy/mod.rs
 use vak::policy::{
     PolicyEngine, PolicyRule, PolicyEffect, PolicyCondition, 
-    ConditionOperator, PolicyContext, PolicyConfig,
+    ConditionOperator, PolicyContext, PolicyConfig, PolicyDecision,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -311,7 +310,7 @@ rules:
 #[allow(dead_code)]
 fn print_decision(
     description: &str,
-    decision: &vak::policy::PolicyDecision,
+    decision: &PolicyDecision,
 ) {
     let icon = if decision.allowed { "✓" } else { "✗" };
     let status = if decision.allowed { "ALLOWED" } else { "DENIED" };
