@@ -1,0 +1,1192 @@
+# =============================================================================
+# VAK (Verifiable Agent Kernel) - API & External Operations Policies
+# =============================================================================
+# ABAC policy definitions for external API calls, network operations,
+# and third-party service integrations.
+# =============================================================================
+
+metadata:
+  policy_domain: "api_external"
+  version: "1.0.0"
+  created: "2026-01-30"
+  last_modified: "2026-01-30"
+  owner: "vak-security-team"
+  classification: "internal"
+  description: |
+    Comprehensive ABAC policies governing external API interactions,
+    network operations, and third-party service integrations within
+    the VAK ecosystem. Enforces security controls including domain
+    allowlisting, rate limiting, PII protection, and audit logging.
+
+# =============================================================================
+# GLOBAL SETTINGS
+# =============================================================================
+
+global_settings:
+  default_effect: "deny"
+  audit_all_external_calls: true
+  require_tls: true
+  minimum_tls_version: "1.2"
+  connection_timeout_ms: 30000
+  read_timeout_ms: 60000
+  max_retries: 3
+  retry_backoff_ms: 1000
+
+# =============================================================================
+# DOMAIN ALLOWLISTS
+# =============================================================================
+
+domain_allowlists:
+  trusted_apis:
+    - "api.github.com"
+    - "api.gitlab.com"
+    - "api.openai.com"
+    - "api.anthropic.com"
+    - "api.azure.com"
+    - "*.amazonaws.com"
+    - "*.googleapis.com"
+    - "api.stripe.com"
+    - "api.twilio.com"
+    - "api.sendgrid.com"
+    - "api.slack.com"
+    - "hooks.slack.com"
+    - "api.notion.com"
+    - "api.linear.app"
+
+  internal_services:
+    - "*.vak-internal.local"
+    - "localhost"
+    - "127.0.0.1"
+    - "*.kubernetes.local"
+
+  blocked_domains:
+    - "*.onion"
+    - "*.tor2web.*"
+    - "*.i2p"
+    - "pastebin.com"
+    - "hastebin.com"
+
+# =============================================================================
+# POLICIES
+# =============================================================================
+
+policies:
+
+  # ===========================================================================
+  # HTTP/HTTPS REQUEST POLICIES
+  # ===========================================================================
+
+  - id: "api-ext-001"
+    version: "1.0.0"
+    name: "HTTPS Outbound Requests - Trusted Domains"
+    description: |
+      Allow HTTPS requests to trusted/allowlisted domains for authorized agents.
+      All requests must use TLS 1.2+ and are subject to rate limiting.
+    enabled: true
+    priority: 100
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "integration_agent"
+            - "api_gateway_agent"
+            - "data_sync_agent"
+            - "notification_agent"
+          trust_level:
+            minimum: 3
+        actions:
+          - "http:request"
+          - "https:request"
+          - "http:get"
+          - "http:post"
+          - "http:put"
+          - "http:patch"
+          - "http:delete"
+        resources:
+          type: "external_api"
+          domain_pattern: "${domain_allowlists.trusted_apis}"
+        conditions:
+          - type: "protocol"
+            operator: "equals"
+            value: "https"
+            on_failure: "deny_with_message"
+            failure_message: "HTTP requests are not allowed; use HTTPS only"
+          - type: "tls_version"
+            operator: "gte"
+            value: "1.2"
+          - type: "rate_limit"
+            operator: "lte"
+            value:
+              requests_per_minute: 100
+              requests_per_hour: 2000
+              requests_per_day: 20000
+            scope: "per_agent"
+          - type: "payload_size"
+            operator: "lte"
+            value: "10MB"
+          - type: "pii_scan"
+            operator: "not_contains"
+            value:
+              - "ssn"
+              - "credit_card"
+              - "password"
+              - "api_key"
+              - "secret"
+            action_on_detection: "redact_and_log"
+        audit:
+          log_level: "info"
+          include_headers: true
+          include_response_status: true
+          redact_sensitive_headers:
+            - "Authorization"
+            - "X-API-Key"
+            - "Cookie"
+
+  - id: "api-ext-002"
+    version: "1.0.0"
+    name: "HTTP Requests - Blocked Domains"
+    description: "Explicitly deny requests to known malicious or high-risk domains"
+    enabled: true
+    priority: 10  # High priority to ensure early evaluation
+
+    rules:
+      - effect: "deny"
+        subjects:
+          agent_role: ["*"]  # Applies to all agents
+        actions:
+          - "http:*"
+          - "https:*"
+        resources:
+          type: "external_api"
+          domain_pattern: "${domain_allowlists.blocked_domains}"
+        conditions: []
+        audit:
+          log_level: "critical"
+          alert: true
+          alert_channels:
+            - "security_team"
+            - "incident_response"
+        denial_response:
+          code: "BLOCKED_DOMAIN"
+          message: "Request to blocked domain is prohibited"
+
+  - id: "api-ext-003"
+    version: "1.0.0"
+    name: "Internal Service Communication"
+    description: "Allow internal service-to-service communication with elevated permissions"
+    enabled: true
+    priority: 90
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "kernel_core_agent"
+            - "state_manager_agent"
+            - "swarm_consensus_agent"
+          service_mesh_identity: true
+        actions:
+          - "http:*"
+          - "https:*"
+          - "grpc:*"
+        resources:
+          type: "internal_service"
+          domain_pattern: "${domain_allowlists.internal_services}"
+        conditions:
+          - type: "mutual_tls"
+            operator: "equals"
+            value: true
+          - type: "service_account_valid"
+            operator: "equals"
+            value: true
+        audit:
+          log_level: "debug"
+          sample_rate: 0.1  # Log 10% of internal calls
+
+  # ===========================================================================
+  # EMAIL SENDING POLICIES
+  # ===========================================================================
+
+  - id: "api-ext-010"
+    version: "1.0.0"
+    name: "Email Sending - Standard Operations"
+    description: |
+      Control email sending operations with rate limits, recipient validation,
+      and content scanning for sensitive data.
+    enabled: true
+    priority: 80
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "notification_agent"
+            - "communication_agent"
+            - "alert_agent"
+          trust_level:
+            minimum: 4
+        actions:
+          - "email:send"
+          - "email:send_bulk"
+          - "email:send_template"
+        resources:
+          type: "email_service"
+          providers:
+            - "sendgrid"
+            - "ses"
+            - "mailgun"
+            - "smtp_internal"
+        conditions:
+          - type: "rate_limit"
+            operator: "lte"
+            value:
+              emails_per_minute: 10
+              emails_per_hour: 100
+              emails_per_day: 500
+            scope: "per_agent"
+          - type: "recipient_validation"
+            operator: "match"
+            value:
+              allowed_domains:
+                - "*"  # Allow all domains for now
+              blocked_domains:
+                - "*.test"
+                - "*.example"
+                - "mailinator.com"
+                - "guerrillamail.com"
+                - "tempmail.com"
+              max_recipients_per_email: 50
+              require_valid_mx: true
+          - type: "content_scan"
+            operator: "not_contains"
+            value:
+              patterns:
+                - "password"
+                - "api_key"
+                - "secret_key"
+                - "private_key"
+                - "credentials"
+              action_on_detection: "block_and_alert"
+          - type: "attachment_policy"
+            operator: "match"
+            value:
+              max_total_size: "25MB"
+              allowed_extensions:
+                - ".pdf"
+                - ".doc"
+                - ".docx"
+                - ".xls"
+                - ".xlsx"
+                - ".csv"
+                - ".txt"
+                - ".png"
+                - ".jpg"
+                - ".jpeg"
+              blocked_extensions:
+                - ".exe"
+                - ".bat"
+                - ".cmd"
+                - ".ps1"
+                - ".sh"
+                - ".js"
+                - ".vbs"
+        audit:
+          log_level: "info"
+          include_recipient_count: true
+          include_subject: true
+          redact_body: true
+
+  - id: "api-ext-011"
+    version: "1.0.0"
+    name: "Email Sending - Bulk Operations"
+    description: "Stricter controls for bulk email operations"
+    enabled: true
+    priority: 75
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "marketing_agent"
+            - "bulk_notification_agent"
+          trust_level:
+            minimum: 5
+          requires_approval: true
+        actions:
+          - "email:send_bulk"
+          - "email:send_campaign"
+        resources:
+          type: "email_service"
+          providers:
+            - "sendgrid"
+            - "ses"
+        conditions:
+          - type: "rate_limit"
+            operator: "lte"
+            value:
+              emails_per_hour: 1000
+              emails_per_day: 10000
+            scope: "per_campaign"
+          - type: "time_window"
+            operator: "within"
+            value:
+              start_hour: 8
+              end_hour: 20
+              timezone: "UTC"
+              allowed_days:
+                - "monday"
+                - "tuesday"
+                - "wednesday"
+                - "thursday"
+                - "friday"
+          - type: "unsubscribe_link"
+            operator: "contains"
+            value: true
+            requirement: "mandatory"
+          - type: "approval_workflow"
+            operator: "completed"
+            value:
+              approvers:
+                - "marketing_lead"
+                - "compliance_officer"
+              min_approvals: 1
+        audit:
+          log_level: "warn"
+          full_audit_trail: true
+
+  # ===========================================================================
+  # WEBHOOK POLICIES
+  # ===========================================================================
+
+  - id: "api-ext-020"
+    version: "1.0.0"
+    name: "Outbound Webhook Calls"
+    description: |
+      Control outbound webhook calls with signature requirements,
+      retry policies, and destination validation.
+    enabled: true
+    priority: 85
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "webhook_dispatcher_agent"
+            - "event_publisher_agent"
+            - "integration_agent"
+          trust_level:
+            minimum: 3
+        actions:
+          - "webhook:send"
+          - "webhook:retry"
+        resources:
+          type: "webhook_endpoint"
+          registered: true
+        conditions:
+          - type: "signature_required"
+            operator: "equals"
+            value: true
+            signature_config:
+              algorithm: "HMAC-SHA256"
+              header_name: "X-VAK-Signature"
+              timestamp_header: "X-VAK-Timestamp"
+              timestamp_tolerance_seconds: 300
+          - type: "endpoint_validation"
+            operator: "match"
+            value:
+              require_https: true
+              require_valid_certificate: true
+              allow_self_signed: false
+              allowed_ports:
+                - 443
+                - 8443
+          - type: "rate_limit"
+            operator: "lte"
+            value:
+              calls_per_minute: 60
+              calls_per_hour: 1000
+            scope: "per_endpoint"
+          - type: "payload_size"
+            operator: "lte"
+            value: "1MB"
+          - type: "retry_policy"
+            value:
+              max_retries: 5
+              backoff_type: "exponential"
+              initial_delay_ms: 1000
+              max_delay_ms: 60000
+              retry_on_status:
+                - 429
+                - 500
+                - 502
+                - 503
+                - 504
+        audit:
+          log_level: "info"
+          include_response_status: true
+          include_retry_count: true
+
+  - id: "api-ext-021"
+    version: "1.0.0"
+    name: "Inbound Webhook Reception"
+    description: "Validate and process incoming webhook requests"
+    enabled: true
+    priority: 85
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "webhook_receiver_agent"
+            - "event_processor_agent"
+          external_source:
+            verified: true
+        actions:
+          - "webhook:receive"
+          - "webhook:process"
+        resources:
+          type: "webhook_endpoint"
+          direction: "inbound"
+        conditions:
+          - type: "signature_verification"
+            operator: "valid"
+            value:
+              algorithms:
+                - "HMAC-SHA256"
+                - "HMAC-SHA512"
+              timestamp_required: true
+              timestamp_tolerance_seconds: 300
+          - type: "source_ip_validation"
+            operator: "in_allowlist"
+            value:
+              allowlist_name: "webhook_source_ips"
+              allow_if_no_list: false
+          - type: "content_type"
+            operator: "in"
+            value:
+              - "application/json"
+              - "application/x-www-form-urlencoded"
+          - type: "payload_size"
+            operator: "lte"
+            value: "5MB"
+          - type: "idempotency"
+            operator: "check"
+            value:
+              header_name: "X-Idempotency-Key"
+              dedup_window_seconds: 86400
+        audit:
+          log_level: "info"
+          include_source_ip: true
+          include_headers: true
+
+  # ===========================================================================
+  # THIRD-PARTY API INTEGRATION POLICIES
+  # ===========================================================================
+
+  - id: "api-ext-030"
+    version: "1.0.0"
+    name: "OAuth-Protected API Access"
+    description: |
+      Control access to third-party APIs requiring OAuth authentication,
+      with scope validation and token management.
+    enabled: true
+    priority: 80
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "integration_agent"
+            - "data_sync_agent"
+            - "oauth_client_agent"
+          trust_level:
+            minimum: 4
+        actions:
+          - "oauth:request_token"
+          - "oauth:refresh_token"
+          - "oauth:api_call"
+        resources:
+          type: "oauth_protected_api"
+          providers:
+            - "github"
+            - "google"
+            - "microsoft"
+            - "slack"
+            - "salesforce"
+        conditions:
+          - type: "scope_validation"
+            operator: "subset_of"
+            value:
+              github:
+                allowed_scopes:
+                  - "repo:read"
+                  - "repo:write"
+                  - "user:read"
+                  - "org:read"
+                blocked_scopes:
+                  - "admin:org"
+                  - "delete_repo"
+              google:
+                allowed_scopes:
+                  - "https://www.googleapis.com/auth/drive.readonly"
+                  - "https://www.googleapis.com/auth/calendar.readonly"
+                  - "https://www.googleapis.com/auth/gmail.readonly"
+                blocked_scopes:
+                  - "https://www.googleapis.com/auth/admin.directory.user"
+              microsoft:
+                allowed_scopes:
+                  - "User.Read"
+                  - "Mail.Read"
+                  - "Calendars.Read"
+                  - "Files.Read"
+                blocked_scopes:
+                  - "Directory.ReadWrite.All"
+                  - "User.ReadWrite.All"
+              slack:
+                allowed_scopes:
+                  - "channels:read"
+                  - "chat:write"
+                  - "users:read"
+                blocked_scopes:
+                  - "admin"
+                  - "admin.users:write"
+          - type: "token_storage"
+            operator: "encrypted"
+            value:
+              encryption_algorithm: "AES-256-GCM"
+              key_rotation_days: 90
+          - type: "rate_limit"
+            operator: "lte"
+            value:
+              requests_per_minute: 60
+              respect_provider_limits: true
+        audit:
+          log_level: "info"
+          include_scopes_used: true
+          redact_tokens: true
+
+  - id: "api-ext-031"
+    version: "1.0.0"
+    name: "API Key Authentication"
+    description: "Control API access using API key authentication"
+    enabled: true
+    priority: 80
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "integration_agent"
+            - "api_consumer_agent"
+          trust_level:
+            minimum: 3
+        actions:
+          - "api:call"
+          - "api:query"
+        resources:
+          type: "api_key_protected_api"
+          services:
+            - "stripe"
+            - "twilio"
+            - "sendgrid"
+            - "openai"
+            - "anthropic"
+        conditions:
+          - type: "api_key_management"
+            operator: "compliant"
+            value:
+              storage: "vault"
+              rotation_required: true
+              rotation_days: 90
+              never_log_key: true
+              never_include_in_url: true
+          - type: "environment_restriction"
+            operator: "match"
+            value:
+              production_keys:
+                allowed_environments:
+                  - "production"
+                  - "staging"
+              test_keys:
+                allowed_environments:
+                  - "development"
+                  - "testing"
+                  - "staging"
+          - type: "rate_limit"
+            operator: "lte"
+            value:
+              respect_provider_limits: true
+              buffer_percentage: 10  # Stay 10% below provider limits
+        audit:
+          log_level: "info"
+          mask_api_key: true
+
+  # ===========================================================================
+  # DNS LOOKUP POLICIES
+  # ===========================================================================
+
+  - id: "api-ext-040"
+    version: "1.0.0"
+    name: "DNS Lookup Operations"
+    description: |
+      Control and audit DNS lookup operations with rate limiting
+      and security validations.
+    enabled: true
+    priority: 70
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "network_agent"
+            - "integration_agent"
+            - "security_scanner_agent"
+          trust_level:
+            minimum: 2
+        actions:
+          - "dns:lookup"
+          - "dns:resolve_a"
+          - "dns:resolve_aaaa"
+          - "dns:resolve_mx"
+          - "dns:resolve_txt"
+          - "dns:resolve_cname"
+        resources:
+          type: "dns_service"
+          resolvers:
+            - "system"
+            - "cloudflare"
+            - "google"
+        conditions:
+          - type: "rate_limit"
+            operator: "lte"
+            value:
+              lookups_per_second: 10
+              lookups_per_minute: 300
+              lookups_per_hour: 5000
+            scope: "per_agent"
+          - type: "domain_validation"
+            operator: "not_in"
+            value: "${domain_allowlists.blocked_domains}"
+          - type: "record_type_restriction"
+            operator: "in"
+            value:
+              allowed_types:
+                - "A"
+                - "AAAA"
+                - "MX"
+                - "TXT"
+                - "CNAME"
+                - "NS"
+              blocked_types:
+                - "AXFR"  # Zone transfer
+                - "ANY"   # Amplification risk
+          - type: "dnssec_validation"
+            operator: "when_available"
+            value: true
+        audit:
+          log_level: "debug"
+          include_query_type: true
+          include_response_ips: true
+          sample_rate: 1.0  # Log all DNS lookups
+
+  - id: "api-ext-041"
+    version: "1.0.0"
+    name: "DNS Lookup - Security Scanning"
+    description: "Enhanced DNS capabilities for security scanning operations"
+    enabled: true
+    priority: 65
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "security_scanner_agent"
+            - "threat_intelligence_agent"
+          trust_level:
+            minimum: 5
+          security_clearance: "elevated"
+        actions:
+          - "dns:lookup"
+          - "dns:reverse_lookup"
+          - "dns:enumerate_subdomains"
+        resources:
+          type: "dns_service"
+        conditions:
+          - type: "rate_limit"
+            operator: "lte"
+            value:
+              lookups_per_second: 50
+              lookups_per_minute: 1000
+            scope: "per_scan_job"
+          - type: "scan_authorization"
+            operator: "valid"
+            value:
+              require_ticket: true
+              require_scope_definition: true
+          - type: "time_window"
+            operator: "within"
+            value:
+              start_hour: 0
+              end_hour: 6
+              timezone: "UTC"
+              rationale: "Perform intensive scans during low-traffic hours"
+        audit:
+          log_level: "warn"
+          full_audit_trail: true
+          alert_on_anomaly: true
+
+  # ===========================================================================
+  # FILE UPLOAD/DOWNLOAD POLICIES
+  # ===========================================================================
+
+  - id: "api-ext-050"
+    version: "1.0.0"
+    name: "File Upload Operations"
+    description: |
+      Control file upload operations to external services with size limits,
+      type restrictions, and malware scanning.
+    enabled: true
+    priority: 80
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "file_transfer_agent"
+            - "backup_agent"
+            - "data_export_agent"
+          trust_level:
+            minimum: 4
+        actions:
+          - "file:upload"
+          - "file:upload_multipart"
+        resources:
+          type: "external_storage"
+          providers:
+            - "s3"
+            - "azure_blob"
+            - "gcs"
+            - "dropbox"
+            - "sharepoint"
+        conditions:
+          - type: "file_size"
+            operator: "lte"
+            value:
+              max_single_file: "100MB"
+              max_batch_total: "1GB"
+              max_daily_upload: "10GB"
+            scope: "per_agent"
+          - type: "file_type_restriction"
+            operator: "match"
+            value:
+              allowed_extensions:
+                - ".pdf"
+                - ".doc"
+                - ".docx"
+                - ".xls"
+                - ".xlsx"
+                - ".csv"
+                - ".json"
+                - ".xml"
+                - ".txt"
+                - ".md"
+                - ".png"
+                - ".jpg"
+                - ".jpeg"
+                - ".gif"
+                - ".zip"
+                - ".tar"
+                - ".gz"
+              blocked_extensions:
+                - ".exe"
+                - ".dll"
+                - ".bat"
+                - ".cmd"
+                - ".ps1"
+                - ".sh"
+                - ".msi"
+                - ".vbs"
+                - ".js"
+                - ".jar"
+                - ".py"
+                - ".rb"
+              verify_magic_bytes: true
+          - type: "malware_scan"
+            operator: "passed"
+            value:
+              scan_engine: "clamav"
+              block_on_detection: true
+              quarantine_suspicious: true
+          - type: "content_scan"
+            operator: "compliant"
+            value:
+              scan_for_pii: true
+              scan_for_secrets: true
+              action_on_detection: "block_and_alert"
+              pii_patterns:
+                - "ssn"
+                - "credit_card"
+                - "bank_account"
+                - "passport"
+              secret_patterns:
+                - "api_key"
+                - "password"
+                - "private_key"
+                - "aws_secret"
+          - type: "encryption"
+            operator: "required"
+            value:
+              in_transit: "TLS_1.2+"
+              at_rest: "AES-256"
+        audit:
+          log_level: "info"
+          include_file_hash: true
+          include_destination: true
+
+  - id: "api-ext-051"
+    version: "1.0.0"
+    name: "File Download Operations"
+    description: |
+      Control file download operations from external sources with
+      validation, scanning, and size limits.
+    enabled: true
+    priority: 80
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "file_transfer_agent"
+            - "data_import_agent"
+            - "backup_restore_agent"
+          trust_level:
+            minimum: 3
+        actions:
+          - "file:download"
+          - "file:stream"
+        resources:
+          type: "external_source"
+          providers:
+            - "s3"
+            - "azure_blob"
+            - "gcs"
+            - "https_url"
+        conditions:
+          - type: "source_validation"
+            operator: "match"
+            value:
+              require_https: true
+              domain_allowlist: "${domain_allowlists.trusted_apis}"
+              verify_certificate: true
+          - type: "file_size"
+            operator: "lte"
+            value:
+              max_single_file: "500MB"
+              max_daily_download: "50GB"
+            scope: "per_agent"
+          - type: "file_type_restriction"
+            operator: "match"
+            value:
+              allowed_extensions:
+                - ".pdf"
+                - ".doc"
+                - ".docx"
+                - ".xls"
+                - ".xlsx"
+                - ".csv"
+                - ".json"
+                - ".xml"
+                - ".txt"
+                - ".png"
+                - ".jpg"
+                - ".jpeg"
+                - ".gif"
+                - ".zip"
+                - ".tar"
+                - ".gz"
+              blocked_extensions:
+                - ".exe"
+                - ".dll"
+                - ".bat"
+                - ".cmd"
+                - ".ps1"
+                - ".sh"
+                - ".msi"
+              verify_content_type: true
+          - type: "malware_scan"
+            operator: "passed"
+            value:
+              scan_before_processing: true
+              scan_engine: "clamav"
+              block_on_detection: true
+          - type: "checksum_validation"
+            operator: "when_provided"
+            value:
+              algorithms:
+                - "SHA-256"
+                - "SHA-512"
+              fail_on_mismatch: true
+        audit:
+          log_level: "info"
+          include_file_hash: true
+          include_source_url: true
+
+  # ===========================================================================
+  # RATE LIMITING GLOBAL POLICIES
+  # ===========================================================================
+
+  - id: "api-ext-060"
+    version: "1.0.0"
+    name: "Global Rate Limiting"
+    description: "Enforce global rate limits across all external API operations"
+    enabled: true
+    priority: 200  # High priority - evaluated early
+
+    rules:
+      - effect: "deny"
+        subjects:
+          agent_role: ["*"]
+        actions:
+          - "http:*"
+          - "https:*"
+          - "email:*"
+          - "webhook:*"
+          - "file:*"
+        resources:
+          type: "*"
+        conditions:
+          - type: "global_rate_exceeded"
+            operator: "true"
+            value:
+              system_wide:
+                requests_per_second: 1000
+                requests_per_minute: 30000
+              per_agent:
+                requests_per_second: 100
+                requests_per_minute: 3000
+        denial_response:
+          code: "RATE_LIMIT_EXCEEDED"
+          message: "Global rate limit exceeded. Please retry later."
+          retry_after_header: true
+        audit:
+          log_level: "warn"
+          alert: true
+
+  # ===========================================================================
+  # TIME-BASED RESTRICTION POLICIES
+  # ===========================================================================
+
+  - id: "api-ext-070"
+    version: "1.0.0"
+    name: "Business Hours Restrictions"
+    description: "Restrict certain high-risk operations to business hours"
+    enabled: true
+    priority: 150
+
+    rules:
+      - effect: "deny"
+        subjects:
+          agent_role:
+            - "data_export_agent"
+            - "bulk_notification_agent"
+            - "migration_agent"
+        actions:
+          - "file:upload"
+          - "file:download"
+          - "email:send_bulk"
+          - "data:export"
+        resources:
+          type: "*"
+        conditions:
+          - type: "time_window"
+            operator: "outside"
+            value:
+              business_hours:
+                start_hour: 6
+                end_hour: 22
+                timezone: "UTC"
+              exceptions:
+                - type: "emergency_override"
+                  requires_approval: true
+                  approvers:
+                    - "ops_lead"
+                    - "security_lead"
+        denial_response:
+          code: "OUTSIDE_BUSINESS_HOURS"
+          message: "This operation is restricted to business hours (06:00-22:00 UTC)"
+        audit:
+          log_level: "info"
+
+  # ===========================================================================
+  # EMERGENCY / INCIDENT RESPONSE POLICIES
+  # ===========================================================================
+
+  - id: "api-ext-080"
+    version: "1.0.0"
+    name: "Emergency Lockdown Mode"
+    description: |
+      When activated, severely restricts all external API operations.
+      Used during security incidents or system emergencies.
+    enabled: false  # Activated manually during incidents
+    priority: 1     # Highest priority when enabled
+
+    rules:
+      - effect: "deny"
+        subjects:
+          agent_role: ["*"]
+          exceptions:
+            - "incident_response_agent"
+            - "security_admin_agent"
+        actions:
+          - "http:*"
+          - "https:*"
+          - "email:*"
+          - "webhook:*"
+          - "file:*"
+          - "dns:*"
+        resources:
+          type: "*"
+        conditions: []
+        denial_response:
+          code: "EMERGENCY_LOCKDOWN"
+          message: "System is in emergency lockdown mode. All external operations suspended."
+        audit:
+          log_level: "critical"
+          alert: true
+          alert_channels:
+            - "security_team"
+            - "executive_team"
+            - "incident_response"
+
+  # ===========================================================================
+  # AUDIT AND COMPLIANCE POLICIES
+  # ===========================================================================
+
+  - id: "api-ext-090"
+    version: "1.0.0"
+    name: "Comprehensive Audit Trail"
+    description: "Ensure all external API operations are properly audited"
+    enabled: true
+    priority: 250  # Highest - always log
+
+    rules:
+      - effect: "audit"  # Special effect type for logging without allow/deny
+        subjects:
+          agent_role: ["*"]
+        actions:
+          - "http:*"
+          - "https:*"
+          - "email:*"
+          - "webhook:*"
+          - "file:*"
+          - "dns:*"
+          - "oauth:*"
+          - "api:*"
+        resources:
+          type: "*"
+        conditions: []
+        audit:
+          log_level: "info"
+          retention_days: 365
+          include_fields:
+            - "timestamp"
+            - "agent_id"
+            - "agent_role"
+            - "action"
+            - "resource_type"
+            - "resource_id"
+            - "source_ip"
+            - "destination"
+            - "request_id"
+            - "correlation_id"
+            - "response_status"
+            - "latency_ms"
+            - "bytes_transferred"
+          redact_fields:
+            - "authorization_header"
+            - "api_key"
+            - "password"
+            - "token"
+            - "secret"
+          compliance_tags:
+            - "SOC2"
+            - "GDPR"
+            - "HIPAA"
+
+# =============================================================================
+# POLICY EVALUATION ORDER
+# =============================================================================
+
+evaluation_order:
+  description: |
+    Policies are evaluated in the following order:
+    1. Emergency/lockdown policies (if enabled)
+    2. Global rate limiting
+    3. Time-based restrictions
+    4. Explicit deny rules (blocked domains, etc.)
+    5. Specific allow rules with conditions
+    6. Default deny (if no rule matches)
+
+  precedence:
+    - priority: 1
+      policies: ["api-ext-080"]
+      description: "Emergency lockdown"
+    - priority: 10
+      policies: ["api-ext-002"]
+      description: "Blocked domains"
+    - priority: 65-100
+      policies: ["api-ext-001", "api-ext-003", "api-ext-010", "api-ext-020", "api-ext-030", "api-ext-040", "api-ext-050", "api-ext-051"]
+      description: "Standard operation policies"
+    - priority: 150
+      policies: ["api-ext-070"]
+      description: "Time-based restrictions"
+    - priority: 200
+      policies: ["api-ext-060"]
+      description: "Global rate limiting"
+    - priority: 250
+      policies: ["api-ext-090"]
+      description: "Audit trail (always executed)"
+
+# =============================================================================
+# APPENDIX: CONDITION OPERATORS
+# =============================================================================
+
+condition_operators_reference:
+  comparison:
+    - "equals"
+    - "not_equals"
+    - "gt"
+    - "gte"
+    - "lt"
+    - "lte"
+  membership:
+    - "in"
+    - "not_in"
+    - "contains"
+    - "not_contains"
+    - "subset_of"
+    - "superset_of"
+  pattern:
+    - "match"
+    - "regex"
+    - "glob"
+  validation:
+    - "valid"
+    - "invalid"
+    - "exists"
+    - "not_exists"
+    - "passed"
+    - "failed"
+  temporal:
+    - "within"
+    - "outside"
+    - "before"
+    - "after"
+  logical:
+    - "and"
+    - "or"
+    - "not"
+    - "all"
+    - "any"
+    - "none"

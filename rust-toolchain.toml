@@ -1,0 +1,7 @@
+# VAK Rust Toolchain Configuration
+# Pin to stable Rust for reproducible builds
+
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy", "rust-analyzer"]
+targets = ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc", "aarch64-apple-darwin"]

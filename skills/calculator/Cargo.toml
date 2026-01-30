@@ -1,0 +1,27 @@
+[package]
+name = "calculator_skill"
+version = "0.1.0"
+edition = "2021"
+description = "A simple calculator skill for VAK demonstrating the skill interface pattern"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Minimal JSON parsing without std
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+
+[features]
+default = []
+
+[profile.release]
+opt-level = "s"          # Optimize for size
+lto = true               # Link-time optimization
+codegen-units = 1        # Better optimization
+panic = "abort"          # Smaller binary, no unwinding
+strip = true             # Strip symbols
+
+[profile.dev]
+panic = "abort"

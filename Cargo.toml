@@ -1,0 +1,108 @@
+[workspace]
+members = ["kernel", "sdk", "skills"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["VAK Team"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/vak-project/verifiable-agent-kernel"
+description = "Verifiable Agent Kernel - A secure, auditable AI agent execution environment"
+keywords = ["ai", "agents", "kernel", "verification", "security"]
+categories = ["development-tools", "asynchronous"]
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full", "tracing"] }
+async-trait = "0.1"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging and observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Cryptography and hashing
+sha2 = "0.10"
+
+# WASM runtime
+wasmtime = "27.0"
+
+# Identifiers
+uuid = { version = "1.6", features = ["v4", "v7", "serde"] }
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Configuration
+config = "0.14"
+
+# Testing
+proptest = "1.4"
+criterion = "0.5"
+
+[package]
+name = "vak"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description.workspace = true
+
+[dependencies]
+tokio.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+sha2.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+config.workspace = true
+wasmtime.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+criterion.workspace = true
+tokio-test = "0.4"
+
+[[bench]]
+name = "kernel_benchmarks"
+harness = false
+
+# Build profiles
+[profile.dev]
+opt-level = 0
+debug = true
+debug-assertions = true
+overflow-checks = true
+lto = false
+incremental = true
+
+[profile.release]
+opt-level = 3
+debug = false
+debug-assertions = false
+overflow-checks = false
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[profile.bench]
+inherits = "release"
+debug = true
+strip = "none"
+
+# Profile for faster builds during development
+[profile.dev.package."*"]
+opt-level = 2

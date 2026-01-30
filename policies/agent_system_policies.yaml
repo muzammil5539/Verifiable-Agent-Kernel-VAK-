@@ -1,0 +1,1611 @@
+# =============================================================================
+# VAK (Verifiable Agent Kernel) - Agent System Policies
+# =============================================================================
+# ABAC policy definitions for agent lifecycle management, inter-agent
+# operations, state management, and consensus participation.
+# =============================================================================
+
+metadata:
+  policy_domain: "agent_system"
+  version: "1.0.0"
+  created: "2026-01-30"
+  last_modified: "2026-01-30"
+  owner: "vak-security-team"
+  classification: "internal"
+  description: |
+    Comprehensive ABAC policies governing agent lifecycle operations,
+    inter-agent communication, state management, consensus participation,
+    and escalation procedures within the VAK ecosystem. Enforces trust
+    hierarchies, capability boundaries, and supervision requirements.
+
+# =============================================================================
+# GLOBAL SETTINGS
+# =============================================================================
+
+global_settings:
+  default_effect: "deny"
+  require_session_validity: true
+  require_audit_logging: true
+  max_concurrent_agents: 100
+  max_agents_per_session: 10
+  default_trust_level: 1
+  max_trust_level: 5
+  session_timeout_minutes: 60
+  heartbeat_interval_seconds: 30
+
+# =============================================================================
+# TRUST LEVEL DEFINITIONS
+# =============================================================================
+
+trust_levels:
+  level_0:
+    name: "Untrusted"
+    description: "New or unverified agents with no track record"
+    capabilities: ["read_public_state"]
+    restrictions:
+      - "Cannot participate in consensus"
+      - "Cannot access sensitive resources"
+      - "Cannot communicate with other agents"
+      - "Requires immediate human supervision"
+    
+  level_1:
+    name: "Basic"
+    description: "Verified agents with limited operational history"
+    capabilities:
+      - "read_public_state"
+      - "write_own_state"
+      - "inter_agent_query"
+    restrictions:
+      - "Limited action quota"
+      - "Requires supervisor approval for sensitive actions"
+      
+  level_2:
+    name: "Standard"
+    description: "Established agents with proven reliability"
+    capabilities:
+      - "read_public_state"
+      - "write_own_state"
+      - "inter_agent_query"
+      - "inter_agent_command"
+      - "consensus_vote"
+    restrictions:
+      - "Cannot modify kernel state"
+      - "Cannot terminate other agents"
+      
+  level_3:
+    name: "Elevated"
+    description: "Trusted agents with expanded privileges"
+    capabilities:
+      - "read_public_state"
+      - "read_shared_state"
+      - "write_own_state"
+      - "write_shared_state"
+      - "inter_agent_query"
+      - "inter_agent_command"
+      - "consensus_vote"
+      - "consensus_propose"
+      - "state_snapshot"
+    restrictions:
+      - "Cannot modify kernel core state"
+      
+  level_4:
+    name: "Privileged"
+    description: "Highly trusted agents with administrative capabilities"
+    capabilities:
+      - "full_state_access"
+      - "inter_agent_all"
+      - "consensus_all"
+      - "state_management"
+      - "agent_supervision"
+    restrictions:
+      - "Actions logged at DEBUG level"
+      
+  level_5:
+    name: "Kernel"
+    description: "Kernel-level agents with full system access"
+    capabilities: ["*"]
+    restrictions:
+      - "Subject to formal verification"
+      - "Requires consensus for destructive actions"
+
+# =============================================================================
+# SUPERVISION HIERARCHY
+# =============================================================================
+
+supervision_hierarchy:
+  levels:
+    - tier: 0
+      name: "Kernel Core"
+      agents:
+        - "policy_enforcement_runtime"
+        - "audit_logging_runtime"
+      can_supervise: ["*"]
+      
+    - tier: 1
+      name: "Verification Tier"
+      agents:
+        - "formal_verification_runtime"
+        - "prm_scoring_runtime"
+      can_supervise: ["tier_2", "tier_3"]
+      
+    - tier: 2
+      name: "Coordination Tier"
+      agents:
+        - "swarm_consensus_runtime"
+        - "state_manager_runtime"
+      can_supervise: ["tier_3"]
+      
+    - tier: 3
+      name: "Worker Tier"
+      agents: ["*"]
+      can_supervise: []
+
+# =============================================================================
+# POLICIES
+# =============================================================================
+
+policies:
+
+  # ===========================================================================
+  # AGENT REGISTRATION POLICIES
+  # ===========================================================================
+
+  - id: "agent-sys-001"
+    version: "1.0.0"
+    name: "Agent Registration - Standard"
+    description: |
+      Allow new agents to register with the kernel after validation.
+      Agents must provide valid credentials and pass capability verification.
+    enabled: true
+    priority: 100
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "kernel_core_agent"
+            - "policy_enforcement_runtime"
+          trust_level:
+            minimum: 5
+        actions:
+          - "agent:register"
+          - "agent:validate"
+          - "agent:assign_trust_level"
+        resources:
+          type: "agent_registry"
+        conditions:
+          - type: "request_contains"
+            operator: "contains"
+            value:
+              required_fields:
+                - "agent_id"
+                - "agent_role"
+                - "capabilities_requested"
+                - "cryptographic_identity"
+          - type: "identity_verified"
+            operator: "equals"
+            value: true
+          - type: "capability_check"
+            operator: "within_bounds"
+            value: "${supervision_hierarchy}"
+        audit:
+          log_level: "info"
+          include_payload: true
+          retention_days: 365
+
+  - id: "agent-sys-002"
+    version: "1.0.0"
+    name: "Agent Self-Registration"
+    description: |
+      Allow agents to request registration with restricted initial capabilities.
+      Subject to human approval for trust levels above basic.
+    enabled: true
+    priority: 90
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role: ["*"]
+          is_new_agent: true
+        actions:
+          - "agent:request_registration"
+        resources:
+          type: "agent_registry"
+        conditions:
+          - type: "requested_trust_level"
+            operator: "lte"
+            value: 1
+          - type: "capabilities_requested"
+            operator: "subset_of"
+            value: "${trust_levels.level_1.capabilities}"
+          - type: "rate_limit"
+            operator: "lte"
+            value:
+              registrations_per_hour: 10
+              registrations_per_day: 50
+            scope: "global"
+        audit:
+          log_level: "info"
+          alert_channels:
+            - "agent_operations"
+
+  # ===========================================================================
+  # AGENT DEREGISTRATION POLICIES
+  # ===========================================================================
+
+  - id: "agent-sys-010"
+    version: "1.0.0"
+    name: "Agent Deregistration - Self"
+    description: "Allow agents to voluntarily deregister themselves"
+    enabled: true
+    priority: 100
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role: ["*"]
+          session_valid: true
+        actions:
+          - "agent:deregister_self"
+        resources:
+          type: "agent_registry"
+          target: "${subject.agent_id}"
+        conditions:
+          - type: "pending_tasks"
+            operator: "equals"
+            value: 0
+          - type: "consensus_participation"
+            operator: "not_active"
+        audit:
+          log_level: "info"
+          include_payload: true
+
+  - id: "agent-sys-011"
+    version: "1.0.0"
+    name: "Agent Deregistration - Administrative"
+    description: "Allow privileged agents to deregister other agents"
+    enabled: true
+    priority: 95
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "kernel_core_agent"
+            - "policy_enforcement_runtime"
+            - "state_manager_runtime"
+          trust_level:
+            minimum: 4
+        actions:
+          - "agent:deregister"
+          - "agent:force_deregister"
+        resources:
+          type: "agent_registry"
+        conditions:
+          - type: "target_trust_level"
+            operator: "lt"
+            value: "${subject.trust_level}"
+          - type: "reason_provided"
+            operator: "equals"
+            value: true
+          - type: "human_approval"
+            operator: "required_if"
+            value:
+              condition: "target.trust_level >= 3"
+        audit:
+          log_level: "warning"
+          alert: true
+          alert_channels:
+            - "security_team"
+            - "agent_operations"
+
+  # ===========================================================================
+  # AGENT CAPABILITY POLICIES
+  # ===========================================================================
+
+  - id: "agent-sys-020"
+    version: "1.0.0"
+    name: "Capability Request - Within Trust Level"
+    description: |
+      Allow agents to request capabilities within their trust level bounds.
+    enabled: true
+    priority: 100
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role: ["*"]
+          session_valid: true
+        actions:
+          - "capability:request"
+          - "capability:query_available"
+        resources:
+          type: "capability_registry"
+        conditions:
+          - type: "capability_within_trust_level"
+            operator: "subset_of"
+            value: "${trust_levels[subject.trust_level].capabilities}"
+          - type: "capability_quota"
+            operator: "lte"
+            value:
+              max_capabilities_per_agent: 20
+        audit:
+          log_level: "debug"
+
+  - id: "agent-sys-021"
+    version: "1.0.0"
+    name: "Capability Request - Elevation"
+    description: |
+      Handle requests for capabilities above current trust level.
+      Requires approval through escalation workflow.
+    enabled: true
+    priority: 90
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role: ["*"]
+          session_valid: true
+          trust_level:
+            minimum: 2
+        actions:
+          - "capability:request_elevation"
+        resources:
+          type: "capability_registry"
+        conditions:
+          - type: "capability_elevation_limit"
+            operator: "lte"
+            value: 1  # Can only request one level up
+          - type: "elevation_cooldown"
+            operator: "gte"
+            value:
+              minutes_since_last_request: 60
+          - type: "prm_score"
+            operator: "gte"
+            value: 0.7
+          - type: "pending_elevation_requests"
+            operator: "lte"
+            value: 1
+        audit:
+          log_level: "info"
+          alert_channels:
+            - "agent_operations"
+        escalation:
+          required: true
+          escalation_target: "human_supervisor"
+          timeout_minutes: 30
+
+  - id: "agent-sys-022"
+    version: "1.0.0"
+    name: "Capability Revocation"
+    description: "Allow supervisors to revoke agent capabilities"
+    enabled: true
+    priority: 95
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "kernel_core_agent"
+            - "policy_enforcement_runtime"
+          trust_level:
+            minimum: 4
+        actions:
+          - "capability:revoke"
+          - "capability:suspend"
+        resources:
+          type: "capability_registry"
+        conditions:
+          - type: "supervision_authority"
+            operator: "can_supervise"
+            value: "${target.agent_role}"
+          - type: "reason_provided"
+            operator: "equals"
+            value: true
+        audit:
+          log_level: "warning"
+          include_payload: true
+          alert: true
+          alert_channels:
+            - "security_team"
+
+  # ===========================================================================
+  # INTER-AGENT COMMUNICATION POLICIES
+  # ===========================================================================
+
+  - id: "agent-sys-030"
+    version: "1.0.0"
+    name: "Inter-Agent Query - Standard"
+    description: |
+      Allow agents to query other agents for information.
+      All queries must pass through the kernel for policy enforcement.
+    enabled: true
+    priority: 100
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role: ["*"]
+          trust_level:
+            minimum: 1
+          session_valid: true
+        actions:
+          - "ipc:query"
+          - "ipc:request_info"
+        resources:
+          type: "inter_agent_channel"
+          routing: "kernel_mediated"
+        conditions:
+          - type: "message_format"
+            operator: "conforms_to"
+            value: "vak-ipc-envelope"
+          - type: "payload_size"
+            operator: "lte"
+            value: "1MB"
+          - type: "rate_limit"
+            operator: "lte"
+            value:
+              queries_per_minute: 60
+              queries_per_hour: 1000
+            scope: "per_agent"
+          - type: "target_accepts_queries"
+            operator: "equals"
+            value: true
+        audit:
+          log_level: "debug"
+          sample_rate: 0.1
+
+  - id: "agent-sys-031"
+    version: "1.0.0"
+    name: "Inter-Agent Command - Authorized"
+    description: |
+      Allow trusted agents to send commands to other agents.
+      Commands are directives that may trigger actions in the target agent.
+    enabled: true
+    priority: 95
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role: ["*"]
+          trust_level:
+            minimum: 2
+          session_valid: true
+        actions:
+          - "ipc:command"
+          - "ipc:delegate_task"
+        resources:
+          type: "inter_agent_channel"
+          routing: "kernel_mediated"
+        conditions:
+          - type: "command_in_capability_scope"
+            operator: "equals"
+            value: true
+          - type: "target_trust_level"
+            operator: "lte"
+            value: "${subject.trust_level}"
+          - type: "supervision_relationship"
+            operator: "valid"
+            value:
+              - "same_tier"
+              - "supervises"
+          - type: "command_quota"
+            operator: "lte"
+            value:
+              commands_per_minute: 10
+              commands_per_hour: 100
+            scope: "per_agent"
+          - type: "payload_size"
+            operator: "lte"
+            value: "5MB"
+        audit:
+          log_level: "info"
+          include_payload: true
+
+  - id: "agent-sys-032"
+    version: "1.0.0"
+    name: "Inter-Agent Broadcast - Restricted"
+    description: |
+      Allow coordination agents to broadcast messages to multiple agents.
+      Broadcasts are rate-limited and audited.
+    enabled: true
+    priority: 90
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "swarm_consensus_runtime"
+            - "state_manager_runtime"
+            - "kernel_core_agent"
+          trust_level:
+            minimum: 3
+        actions:
+          - "ipc:broadcast"
+          - "ipc:multicast"
+        resources:
+          type: "inter_agent_channel"
+          routing: "kernel_mediated"
+          broadcast: true
+        conditions:
+          - type: "broadcast_scope"
+            operator: "within"
+            value:
+              max_recipients: 50
+              allowed_topics:
+                - "consensus_request"
+                - "state_sync"
+                - "heartbeat"
+                - "system_notification"
+          - type: "rate_limit"
+            operator: "lte"
+            value:
+              broadcasts_per_minute: 5
+              broadcasts_per_hour: 50
+            scope: "per_agent"
+        audit:
+          log_level: "info"
+
+  - id: "agent-sys-033"
+    version: "1.0.0"
+    name: "Inter-Agent Communication - Blocked Pairs"
+    description: "Deny direct communication between specific agent types"
+    enabled: true
+    priority: 10
+
+    rules:
+      - effect: "deny"
+        subjects:
+          agent_role: ["*"]
+        actions:
+          - "ipc:*"
+        resources:
+          type: "inter_agent_channel"
+        conditions:
+          - type: "blocked_communication_pair"
+            operator: "in"
+            value:
+              - ["untrusted_agent", "*"]
+              - ["external_agent", "audit_logging_runtime"]
+              - ["external_agent", "policy_enforcement_runtime"]
+        audit:
+          log_level: "warning"
+          alert: true
+        denial_response:
+          code: "BLOCKED_COMMUNICATION"
+          message: "Communication between these agent types is prohibited"
+
+  # ===========================================================================
+  # STATE MANAGEMENT POLICIES
+  # ===========================================================================
+
+  - id: "agent-sys-040"
+    version: "1.0.0"
+    name: "State Read - Own State"
+    description: "Allow agents to read their own state"
+    enabled: true
+    priority: 100
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role: ["*"]
+          session_valid: true
+        actions:
+          - "state:read_own"
+          - "state:query_own"
+        resources:
+          type: "agent_state"
+          owner: "${subject.agent_id}"
+        conditions: []
+        audit:
+          log_level: "trace"
+          sample_rate: 0.01
+
+  - id: "agent-sys-041"
+    version: "1.0.0"
+    name: "State Write - Own State"
+    description: "Allow agents to modify their own state within limits"
+    enabled: true
+    priority: 100
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role: ["*"]
+          trust_level:
+            minimum: 1
+          session_valid: true
+        actions:
+          - "state:write_own"
+          - "state:update_own"
+          - "state:delete_own"
+        resources:
+          type: "agent_state"
+          owner: "${subject.agent_id}"
+        conditions:
+          - type: "state_size"
+            operator: "lte"
+            value: "100MB"
+          - type: "write_rate"
+            operator: "lte"
+            value:
+              writes_per_second: 10
+              writes_per_minute: 100
+            scope: "per_agent"
+        audit:
+          log_level: "debug"
+
+  - id: "agent-sys-042"
+    version: "1.0.0"
+    name: "State Read - Shared State"
+    description: "Allow qualified agents to read shared state"
+    enabled: true
+    priority: 95
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role: ["*"]
+          trust_level:
+            minimum: 2
+          session_valid: true
+        actions:
+          - "state:read_shared"
+          - "state:query_shared"
+        resources:
+          type: "shared_state"
+          access_level: "read"
+        conditions:
+          - type: "has_capability"
+            operator: "contains"
+            value: "read_shared_state"
+          - type: "state_classification"
+            operator: "lte"
+            value: "${subject.trust_level}"
+        audit:
+          log_level: "debug"
+          sample_rate: 0.1
+
+  - id: "agent-sys-043"
+    version: "1.0.0"
+    name: "State Write - Shared State"
+    description: "Allow privileged agents to modify shared state"
+    enabled: true
+    priority: 90
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "state_manager_runtime"
+            - "swarm_consensus_runtime"
+            - "kernel_core_agent"
+          trust_level:
+            minimum: 3
+          session_valid: true
+        actions:
+          - "state:write_shared"
+          - "state:update_shared"
+        resources:
+          type: "shared_state"
+          access_level: "write"
+        conditions:
+          - type: "has_capability"
+            operator: "contains"
+            value: "write_shared_state"
+          - type: "consensus_required"
+            operator: "if_true_then"
+            value:
+              condition: "resource.requires_consensus"
+              action: "require_consensus_approval"
+          - type: "conflict_check"
+            operator: "no_concurrent_writes"
+        audit:
+          log_level: "info"
+          include_payload: true
+
+  - id: "agent-sys-044"
+    version: "1.0.0"
+    name: "State Snapshot - Create"
+    description: "Allow creation of state snapshots for rollback capability"
+    enabled: true
+    priority: 90
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "state_manager_runtime"
+            - "kernel_core_agent"
+          trust_level:
+            minimum: 3
+        actions:
+          - "state:snapshot_create"
+          - "state:checkpoint"
+        resources:
+          type: "state_snapshot"
+        conditions:
+          - type: "snapshot_quota"
+            operator: "lte"
+            value:
+              max_snapshots_per_agent: 10
+              max_total_snapshots: 100
+          - type: "snapshot_size"
+            operator: "lte"
+            value: "1GB"
+          - type: "storage_available"
+            operator: "gte"
+            value: "10%"
+        audit:
+          log_level: "info"
+          retention_days: 90
+
+      - effect: "allow"
+        subjects:
+          agent_role: ["*"]
+          trust_level:
+            minimum: 2
+          session_valid: true
+        actions:
+          - "state:snapshot_own"
+        resources:
+          type: "state_snapshot"
+          owner: "${subject.agent_id}"
+        conditions:
+          - type: "snapshot_quota"
+            operator: "lte"
+            value:
+              max_snapshots_per_agent: 5
+        audit:
+          log_level: "debug"
+
+  - id: "agent-sys-045"
+    version: "1.0.0"
+    name: "State Rollback"
+    description: |
+      Allow state rollback to previous snapshots.
+      Rollback of shared state requires human approval.
+    enabled: true
+    priority: 85
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "state_manager_runtime"
+            - "kernel_core_agent"
+          trust_level:
+            minimum: 4
+        actions:
+          - "state:rollback"
+          - "state:restore_snapshot"
+        resources:
+          type: "state_snapshot"
+        conditions:
+          - type: "snapshot_exists"
+            operator: "equals"
+            value: true
+          - type: "snapshot_valid"
+            operator: "equals"
+            value: true
+          - type: "human_approval"
+            operator: "required_if"
+            value:
+              condition: "resource.type == 'shared_state'"
+          - type: "prm_evaluation"
+            operator: "gte"
+            value: 0.8
+        audit:
+          log_level: "warning"
+          alert: true
+          alert_channels:
+            - "system_operations"
+        escalation:
+          required_if: "resource.scope == 'global'"
+          escalation_target: "human_supervisor"
+          timeout_minutes: 15
+
+      - effect: "allow"
+        subjects:
+          agent_role: ["*"]
+          trust_level:
+            minimum: 2
+          session_valid: true
+        actions:
+          - "state:rollback_own"
+        resources:
+          type: "state_snapshot"
+          owner: "${subject.agent_id}"
+        conditions:
+          - type: "snapshot_exists"
+            operator: "equals"
+            value: true
+          - type: "rollback_cooldown"
+            operator: "gte"
+            value:
+              minutes_since_last_rollback: 5
+        audit:
+          log_level: "info"
+
+  # ===========================================================================
+  # CONSENSUS PARTICIPATION POLICIES
+  # ===========================================================================
+
+  - id: "agent-sys-050"
+    version: "1.0.0"
+    name: "Consensus Vote - Standard"
+    description: |
+      Allow eligible agents to participate in consensus voting.
+      Uses quadratic voting with token budgets.
+    enabled: true
+    priority: 100
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role: ["*"]
+          trust_level:
+            minimum: 2
+          session_valid: true
+        actions:
+          - "consensus:vote"
+          - "consensus:cast_ballot"
+        resources:
+          type: "consensus_topic"
+        conditions:
+          - type: "has_capability"
+            operator: "contains"
+            value: "consensus_vote"
+          - type: "topic_participation_eligible"
+            operator: "equals"
+            value: true
+          - type: "vote_token_balance"
+            operator: "gte"
+            value: 1
+          - type: "vote_deadline"
+            operator: "not_passed"
+          - type: "single_vote_per_topic"
+            operator: "not_already_voted"
+        audit:
+          log_level: "info"
+          include_payload: true
+          anonymize_vote: false  # Votes are transparent in VAK
+
+  - id: "agent-sys-051"
+    version: "1.0.0"
+    name: "Consensus Proposal - Create"
+    description: "Allow qualified agents to propose topics for consensus"
+    enabled: true
+    priority: 95
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role: ["*"]
+          trust_level:
+            minimum: 3
+          session_valid: true
+        actions:
+          - "consensus:propose"
+          - "consensus:create_topic"
+        resources:
+          type: "consensus_topic"
+        conditions:
+          - type: "has_capability"
+            operator: "contains"
+            value: "consensus_propose"
+          - type: "proposal_quota"
+            operator: "lte"
+            value:
+              proposals_per_hour: 2
+              proposals_per_day: 5
+            scope: "per_agent"
+          - type: "proposal_stake"
+            operator: "gte"
+            value: 10  # Must stake tokens to propose
+          - type: "prm_score"
+            operator: "gte"
+            value: 0.6
+        audit:
+          log_level: "info"
+          include_payload: true
+
+  - id: "agent-sys-052"
+    version: "1.0.0"
+    name: "Consensus Coordination"
+    description: "Allow consensus coordinator to manage voting process"
+    enabled: true
+    priority: 100
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "swarm_consensus_runtime"
+          trust_level:
+            minimum: 4
+        actions:
+          - "consensus:open_voting"
+          - "consensus:close_voting"
+          - "consensus:tally_votes"
+          - "consensus:announce_result"
+          - "consensus:distribute_tokens"
+        resources:
+          type: "consensus_system"
+        conditions:
+          - type: "is_consensus_coordinator"
+            operator: "equals"
+            value: true
+          - type: "quorum_reached"
+            operator: "required_for"
+            value: ["close_voting", "tally_votes"]
+        audit:
+          log_level: "info"
+          include_payload: true
+
+  - id: "agent-sys-053"
+    version: "1.0.0"
+    name: "Consensus - High Stakes Decision"
+    description: |
+      Additional controls for high-stakes consensus decisions.
+      Requires formal verification and human oversight.
+    enabled: true
+    priority: 80
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "swarm_consensus_runtime"
+          trust_level:
+            minimum: 4
+        actions:
+          - "consensus:execute_high_stakes"
+        resources:
+          type: "consensus_topic"
+          stakes: "high"
+        conditions:
+          - type: "participation_rate"
+            operator: "gte"
+            value: 0.7
+          - type: "approval_threshold"
+            operator: "gte"
+            value: 0.66  # Supermajority required
+          - type: "formal_verification"
+            operator: "passed"
+          - type: "human_approval"
+            operator: "equals"
+            value: true
+          - type: "cooling_off_period"
+            operator: "gte"
+            value:
+              hours: 24
+        audit:
+          log_level: "critical"
+          alert: true
+          alert_channels:
+            - "executive_team"
+            - "security_team"
+
+  # ===========================================================================
+  # PRM EVALUATION POLICIES
+  # ===========================================================================
+
+  - id: "agent-sys-060"
+    version: "1.0.0"
+    name: "PRM Evaluation - Request"
+    description: "Allow agents to request PRM evaluation of reasoning steps"
+    enabled: true
+    priority: 100
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role: ["*"]
+          session_valid: true
+        actions:
+          - "prm:evaluate_step"
+          - "prm:request_score"
+        resources:
+          type: "prm_service"
+        conditions:
+          - type: "reasoning_step_format"
+            operator: "conforms_to"
+            value: "vak-reasoning-step-schema"
+          - type: "rate_limit"
+            operator: "lte"
+            value:
+              evaluations_per_minute: 30
+              evaluations_per_hour: 500
+            scope: "per_agent"
+        audit:
+          log_level: "debug"
+          sample_rate: 0.1
+
+  - id: "agent-sys-061"
+    version: "1.0.0"
+    name: "PRM Evaluation - Mandatory Trigger"
+    description: |
+      Automatically trigger PRM evaluation for high-risk actions.
+      Low scores trigger escalation workflow.
+    enabled: true
+    priority: 95
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "prm_scoring_runtime"
+          trust_level:
+            minimum: 4
+        actions:
+          - "prm:mandatory_evaluate"
+          - "prm:block_on_low_score"
+          - "prm:trigger_backtrack"
+        resources:
+          type: "prm_service"
+        conditions:
+          - type: "trigger_conditions"
+            operator: "any_of"
+            value:
+              - "action.risk_level >= 'high'"
+              - "action.affects_external_system"
+              - "action.involves_pii"
+              - "action.financial_impact > 1000"
+        audit:
+          log_level: "info"
+        actions_on_result:
+          score_below_0.3:
+            action: "block_and_escalate"
+            escalation_target: "human_supervisor"
+          score_below_0.5:
+            action: "request_alternative_reasoning"
+          score_below_0.7:
+            action: "log_warning"
+
+  - id: "agent-sys-062"
+    version: "1.0.0"
+    name: "PRM Score History Access"
+    description: "Control access to PRM score history"
+    enabled: true
+    priority: 90
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role: ["*"]
+          session_valid: true
+        actions:
+          - "prm:view_own_history"
+        resources:
+          type: "prm_history"
+          owner: "${subject.agent_id}"
+        conditions: []
+        audit:
+          log_level: "trace"
+
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "prm_scoring_runtime"
+            - "audit_logging_runtime"
+            - "policy_enforcement_runtime"
+          trust_level:
+            minimum: 4
+        actions:
+          - "prm:view_all_history"
+          - "prm:analyze_patterns"
+        resources:
+          type: "prm_history"
+        conditions:
+          - type: "audit_purpose"
+            operator: "in"
+            value:
+              - "security_investigation"
+              - "compliance_audit"
+              - "performance_analysis"
+        audit:
+          log_level: "info"
+
+  # ===========================================================================
+  # ESCALATION POLICIES
+  # ===========================================================================
+
+  - id: "agent-sys-070"
+    version: "1.0.0"
+    name: "Escalation to Human - Standard"
+    description: |
+      Allow agents to escalate decisions to human supervisors.
+      Ensures humans remain in the loop for critical decisions.
+    enabled: true
+    priority: 100
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role: ["*"]
+          session_valid: true
+        actions:
+          - "escalation:request_human_review"
+          - "escalation:pause_and_wait"
+        resources:
+          type: "escalation_channel"
+        conditions:
+          - type: "escalation_reason_provided"
+            operator: "equals"
+            value: true
+          - type: "escalation_priority"
+            operator: "in"
+            value: ["low", "normal", "high", "critical"]
+          - type: "rate_limit"
+            operator: "lte"
+            value:
+              escalations_per_hour: 10
+            scope: "per_agent"
+        audit:
+          log_level: "info"
+          include_payload: true
+
+  - id: "agent-sys-071"
+    version: "1.0.0"
+    name: "Escalation - Mandatory Triggers"
+    description: "Define conditions that mandate human escalation"
+    enabled: true
+    priority: 10  # High priority - always evaluated
+
+    rules:
+      - effect: "deny"
+        subjects:
+          agent_role: ["*"]
+        actions:
+          - "*:execute"
+        resources:
+          type: "*"
+          requires_human_approval: true
+        conditions:
+          - type: "human_approval"
+            operator: "not_obtained"
+        audit:
+          log_level: "warning"
+        denial_response:
+          code: "HUMAN_APPROVAL_REQUIRED"
+          message: "This action requires human approval"
+          action: "auto_escalate"
+          escalation_config:
+            channel: "human_supervisor"
+            priority: "high"
+            timeout_minutes: 60
+
+  - id: "agent-sys-072"
+    version: "1.0.0"
+    name: "Escalation Response Handling"
+    description: "Handle responses from human escalation"
+    enabled: true
+    priority: 100
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "policy_enforcement_runtime"
+          trust_level:
+            minimum: 5
+        actions:
+          - "escalation:record_response"
+          - "escalation:apply_decision"
+          - "escalation:notify_agent"
+        resources:
+          type: "escalation_response"
+        conditions:
+          - type: "response_authenticated"
+            operator: "equals"
+            value: true
+          - type: "human_identity_verified"
+            operator: "equals"
+            value: true
+        audit:
+          log_level: "info"
+          include_payload: true
+
+  # ===========================================================================
+  # AGENT SUSPENSION POLICIES
+  # ===========================================================================
+
+  - id: "agent-sys-080"
+    version: "1.0.0"
+    name: "Agent Suspension - Automatic"
+    description: |
+      Automatically suspend agents that violate policies or exhibit anomalous behavior.
+    enabled: true
+    priority: 5  # Very high priority
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "policy_enforcement_runtime"
+            - "kernel_core_agent"
+          trust_level:
+            minimum: 5
+        actions:
+          - "agent:suspend"
+          - "agent:quarantine"
+        resources:
+          type: "agent_lifecycle"
+        conditions:
+          - type: "suspension_trigger"
+            operator: "any_of"
+            value:
+              - "policy_violations >= 3 in 1 hour"
+              - "prm_score_average < 0.3 over 10 actions"
+              - "anomaly_score > 0.9"
+              - "security_alert_triggered"
+              - "human_requested_suspension"
+        audit:
+          log_level: "critical"
+          alert: true
+          alert_channels:
+            - "security_team"
+            - "agent_operations"
+        effects:
+          - "revoke_all_capabilities"
+          - "terminate_active_sessions"
+          - "preserve_state_for_investigation"
+
+  - id: "agent-sys-081"
+    version: "1.0.0"
+    name: "Agent Suspension - Manual"
+    description: "Allow authorized agents to manually suspend other agents"
+    enabled: true
+    priority: 90
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "kernel_core_agent"
+            - "policy_enforcement_runtime"
+          trust_level:
+            minimum: 4
+        actions:
+          - "agent:suspend"
+          - "agent:temporary_disable"
+        resources:
+          type: "agent_lifecycle"
+        conditions:
+          - type: "target_trust_level"
+            operator: "lt"
+            value: "${subject.trust_level}"
+          - type: "reason_provided"
+            operator: "equals"
+            value: true
+          - type: "duration_specified"
+            operator: "lte"
+            value:
+              max_suspension_hours: 24
+        audit:
+          log_level: "warning"
+          alert: true
+
+  - id: "agent-sys-082"
+    version: "1.0.0"
+    name: "Agent Reinstatement"
+    description: "Allow reinstating suspended agents after review"
+    enabled: true
+    priority: 85
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "kernel_core_agent"
+            - "policy_enforcement_runtime"
+          trust_level:
+            minimum: 4
+        actions:
+          - "agent:reinstate"
+          - "agent:lift_suspension"
+        resources:
+          type: "agent_lifecycle"
+        conditions:
+          - type: "suspension_review_complete"
+            operator: "equals"
+            value: true
+          - type: "root_cause_identified"
+            operator: "equals"
+            value: true
+          - type: "human_approval"
+            operator: "required_if"
+            value:
+              condition: "suspension.was_security_related"
+          - type: "remediation_applied"
+            operator: "equals"
+            value: true
+        audit:
+          log_level: "info"
+          include_payload: true
+
+  # ===========================================================================
+  # AGENT TERMINATION POLICIES
+  # ===========================================================================
+
+  - id: "agent-sys-090"
+    version: "1.0.0"
+    name: "Agent Termination - Emergency"
+    description: |
+      Emergency termination for agents posing immediate threat.
+      Bypasses normal approval workflows.
+    enabled: true
+    priority: 1  # Highest priority
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "kernel_core_agent"
+            - "policy_enforcement_runtime"
+          trust_level:
+            minimum: 5
+        actions:
+          - "agent:emergency_terminate"
+          - "agent:kill"
+        resources:
+          type: "agent_lifecycle"
+        conditions:
+          - type: "emergency_condition"
+            operator: "any_of"
+            value:
+              - "active_security_breach"
+              - "data_exfiltration_detected"
+              - "resource_exhaustion_attack"
+              - "unauthorized_escalation_attempt"
+        audit:
+          log_level: "critical"
+          alert: true
+          alert_channels:
+            - "security_team"
+            - "executive_team"
+            - "incident_response"
+        effects:
+          - "immediate_termination"
+          - "preserve_memory_dump"
+          - "isolate_network_access"
+          - "trigger_incident_response"
+
+  - id: "agent-sys-091"
+    version: "1.0.0"
+    name: "Agent Termination - Graceful"
+    description: "Standard graceful termination with cleanup"
+    enabled: true
+    priority: 80
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role:
+            - "kernel_core_agent"
+            - "policy_enforcement_runtime"
+            - "state_manager_runtime"
+          trust_level:
+            minimum: 4
+        actions:
+          - "agent:terminate"
+          - "agent:shutdown"
+        resources:
+          type: "agent_lifecycle"
+        conditions:
+          - type: "target_trust_level"
+            operator: "lt"
+            value: "${subject.trust_level}"
+          - type: "pending_tasks"
+            operator: "equals"
+            value: 0
+          - type: "consensus_participation"
+            operator: "not_active"
+          - type: "state_persisted"
+            operator: "equals"
+            value: true
+          - type: "human_approval"
+            operator: "required_if"
+            value:
+              condition: "target.trust_level >= 3"
+        audit:
+          log_level: "warning"
+          include_payload: true
+
+  # ===========================================================================
+  # ACTION QUOTA POLICIES
+  # ===========================================================================
+
+  - id: "agent-sys-100"
+    version: "1.0.0"
+    name: "Action Quota Enforcement"
+    description: "Enforce per-agent action quotas to prevent resource abuse"
+    enabled: true
+    priority: 15
+
+    rules:
+      - effect: "deny"
+        subjects:
+          agent_role: ["*"]
+        actions:
+          - "*"
+        resources:
+          type: "*"
+        conditions:
+          - type: "action_quota_exceeded"
+            operator: "any_of"
+            value:
+              - "actions_per_minute > ${quotas[subject.trust_level].actions_per_minute}"
+              - "actions_per_hour > ${quotas[subject.trust_level].actions_per_hour}"
+              - "actions_per_day > ${quotas[subject.trust_level].actions_per_day}"
+        audit:
+          log_level: "warning"
+          alert_if_repeated: true
+        denial_response:
+          code: "QUOTA_EXCEEDED"
+          message: "Action quota exceeded. Please wait before retrying."
+          retry_after_seconds: 60
+
+    quotas:
+      trust_level_0:
+        actions_per_minute: 5
+        actions_per_hour: 50
+        actions_per_day: 200
+      trust_level_1:
+        actions_per_minute: 20
+        actions_per_hour: 200
+        actions_per_day: 1000
+      trust_level_2:
+        actions_per_minute: 60
+        actions_per_hour: 600
+        actions_per_day: 5000
+      trust_level_3:
+        actions_per_minute: 120
+        actions_per_hour: 1200
+        actions_per_day: 10000
+      trust_level_4:
+        actions_per_minute: 300
+        actions_per_hour: 3000
+        actions_per_day: 30000
+      trust_level_5:
+        actions_per_minute: -1  # Unlimited
+        actions_per_hour: -1
+        actions_per_day: -1
+
+  # ===========================================================================
+  # SESSION VALIDITY POLICIES
+  # ===========================================================================
+
+  - id: "agent-sys-110"
+    version: "1.0.0"
+    name: "Session Validation"
+    description: "Ensure all agent sessions are valid and not expired"
+    enabled: true
+    priority: 5
+
+    rules:
+      - effect: "deny"
+        subjects:
+          agent_role: ["*"]
+          session_valid: false
+        actions:
+          - "*"
+        resources:
+          type: "*"
+        conditions: []
+        audit:
+          log_level: "warning"
+        denial_response:
+          code: "INVALID_SESSION"
+          message: "Session is invalid or expired. Please re-authenticate."
+
+      - effect: "deny"
+        subjects:
+          agent_role: ["*"]
+        actions:
+          - "*"
+        resources:
+          type: "*"
+        conditions:
+          - type: "session_age"
+            operator: "gt"
+            value: "${global_settings.session_timeout_minutes}"
+        audit:
+          log_level: "info"
+        denial_response:
+          code: "SESSION_EXPIRED"
+          message: "Session has expired. Please re-authenticate."
+          action: "trigger_reauthentication"
+
+  - id: "agent-sys-111"
+    version: "1.0.0"
+    name: "Session Renewal"
+    description: "Allow session renewal for active agents"
+    enabled: true
+    priority: 100
+
+    rules:
+      - effect: "allow"
+        subjects:
+          agent_role: ["*"]
+        actions:
+          - "session:renew"
+          - "session:heartbeat"
+        resources:
+          type: "session"
+          owner: "${subject.agent_id}"
+        conditions:
+          - type: "session_renewable"
+            operator: "equals"
+            value: true
+          - type: "session_not_revoked"
+            operator: "equals"
+            value: true
+        audit:
+          log_level: "trace"
+          sample_rate: 0.01
+
+# =============================================================================
+# POLICY EVALUATION ORDER
+# =============================================================================
+
+evaluation_order:
+  description: |
+    Policies are evaluated in priority order (lower number = higher priority).
+    First matching rule determines the outcome.
+  
+  priority_bands:
+    emergency: 1-5
+    security: 6-15
+    authorization: 16-50
+    standard: 51-100
+    default: 101+
+
+# =============================================================================
+# AUDIT CONFIGURATION
+# =============================================================================
+
+audit_configuration:
+  default_log_level: "info"
+  retention_days: 365
+  tamper_proof: true
+  hash_algorithm: "sha256"
+  
+  sensitive_fields_redaction:
+    - "password"
+    - "api_key"
+    - "secret"
+    - "token"
+    - "credential"
+  
+  alert_channels:
+    security_team:
+      type: "webhook"
+      url: "${env.SECURITY_TEAM_WEBHOOK}"
+      priority_threshold: "warning"
+    
+    agent_operations:
+      type: "email"
+      recipients: ["agent-ops@vak.internal"]
+      priority_threshold: "info"
+    
+    incident_response:
+      type: "pagerduty"
+      service_key: "${env.PAGERDUTY_SERVICE_KEY}"
+      priority_threshold: "critical"
+    
+    executive_team:
+      type: "email"
+      recipients: ["executives@vak.internal"]
+      priority_threshold: "critical"
+
+# =============================================================================
+# SCHEMA VERSION
+# =============================================================================
+
+schema:
+  version: "1.0.0"
+  compatible_kernel_versions:
+    - ">=0.1.0"

@@ -1,0 +1,1739 @@
+# =============================================================================
+# VAK (Verifiable Agent Kernel) - Policy Test Cases
+# =============================================================================
+# Comprehensive test suite for validating ABAC policy enforcement across
+# all policy domains including finance, data access, admin, API/external,
+# and agent system policies.
+# =============================================================================
+
+metadata:
+  test_suite: "vak_policy_tests"
+  version: "1.0.0"
+  created: "2026-01-30"
+  last_modified: "2026-01-30"
+  owner: "vak-security-team"
+  description: |
+    Comprehensive policy test cases covering positive tests, negative tests,
+    boundary tests, escalation tests, and time-based tests across all
+    VAK policy domains.
+
+# =============================================================================
+# TEST CONFIGURATION
+# =============================================================================
+
+test_configuration:
+  execution_mode: "sequential"
+  fail_fast: false
+  timeout_per_test_ms: 5000
+  cleanup_after_each: true
+  mock_external_services: true
+  freeze_time_for_tests: true
+  default_test_timestamp: "2026-01-30T10:00:00Z"
+
+# =============================================================================
+# FINANCE POLICY TESTS
+# =============================================================================
+
+finance_policy_tests:
+  category: "Finance Operations"
+  policy_domain: "finance"
+  
+  tests:
+    # -------------------------------------------------------------------------
+    # POSITIVE TESTS - Authorized Actions
+    # -------------------------------------------------------------------------
+    
+    - test_id: "fin-pos-001"
+      category: "positive"
+      description: "Finance agent can process refund within authorized limit"
+      policy_file: "policies/finance/refund_policies.yaml"
+      request:
+        agent_id: "test-agent-finance-001"
+        agent_role: "finance_agent"
+        agent_attributes:
+          trust_level: 4
+          department: "customer_service"
+          permissions:
+            - "refund:process"
+            - "refund:approve_standard"
+          daily_refund_total: 500.00
+        action: "refund:process"
+        resource:
+          type: "refund_request"
+          amount: 150.00
+          currency: "USD"
+          customer_id: "cust-12345"
+          order_id: "ord-67890"
+          reason: "product_defect"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+          source_ip: "10.0.1.50"
+          business_hours: true
+      expected:
+        decision: "ALLOW"
+        matched_rule: "fin-refund-001"
+        reason: "Agent has sufficient trust level and refund amount is within standard limit"
+
+    - test_id: "fin-pos-002"
+      category: "positive"
+      description: "Senior finance agent can approve high-value refund with manager approval"
+      policy_file: "policies/finance/refund_policies.yaml"
+      request:
+        agent_id: "test-agent-finance-002"
+        agent_role: "senior_finance_agent"
+        agent_attributes:
+          trust_level: 5
+          department: "finance"
+          permissions:
+            - "refund:process"
+            - "refund:approve_elevated"
+          manager_approval: true
+          daily_refund_total: 2500.00
+        action: "refund:approve_elevated"
+        resource:
+          type: "refund_request"
+          amount: 2500.00
+          currency: "USD"
+          customer_id: "cust-premium-001"
+          order_id: "ord-premium-123"
+          reason: "service_failure"
+          escalation_ticket: "ESC-2026-001"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T14:00:00Z"
+          human_approval_received: true
+          approval_timestamp: "2026-01-30T13:55:00Z"
+      expected:
+        decision: "ALLOW"
+        matched_rule: "fin-refund-002"
+        reason: "Elevated refund approved with required human manager approval"
+
+    - test_id: "fin-pos-003"
+      category: "positive"
+      description: "Transfer agent can execute internal fund transfer"
+      policy_file: "policies/finance/transfer_policies.yaml"
+      request:
+        agent_id: "test-agent-transfer-001"
+        agent_role: "transfer_agent"
+        agent_attributes:
+          trust_level: 4
+          department: "treasury"
+          permissions:
+            - "transfer:internal"
+            - "transfer:execute"
+          daily_transfer_limit: 100000.00
+        action: "transfer:execute"
+        resource:
+          type: "fund_transfer"
+          amount: 25000.00
+          currency: "USD"
+          source_account: "acc-internal-001"
+          destination_account: "acc-internal-002"
+          transfer_type: "internal"
+          memo: "Quarterly budget allocation"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T11:30:00Z"
+          business_hours: true
+          dual_control_verified: true
+      expected:
+        decision: "ALLOW"
+        matched_rule: "fin-transfer-001"
+        reason: "Internal transfer within daily limit with dual control verification"
+
+    - test_id: "fin-pos-004"
+      category: "positive"
+      description: "Withdrawal agent can process customer withdrawal within limits"
+      policy_file: "policies/finance/withdrawal_policies.yaml"
+      request:
+        agent_id: "test-agent-withdrawal-001"
+        agent_role: "withdrawal_agent"
+        agent_attributes:
+          trust_level: 3
+          department: "operations"
+          permissions:
+            - "withdrawal:process"
+            - "withdrawal:standard"
+        action: "withdrawal:process"
+        resource:
+          type: "withdrawal_request"
+          amount: 5000.00
+          currency: "USD"
+          account_id: "acc-customer-123"
+          withdrawal_method: "bank_transfer"
+          destination_verified: true
+        context:
+          session_valid: true
+          request_time: "2026-01-30T09:00:00Z"
+          customer_verified: true
+          kyc_status: "verified"
+      expected:
+        decision: "ALLOW"
+        matched_rule: "fin-withdrawal-001"
+        reason: "Standard withdrawal for verified customer within daily limit"
+
+    # -------------------------------------------------------------------------
+    # NEGATIVE TESTS - Unauthorized Actions
+    # -------------------------------------------------------------------------
+
+    - test_id: "fin-neg-001"
+      category: "negative"
+      description: "Low-trust agent cannot process any refunds"
+      policy_file: "policies/finance/refund_policies.yaml"
+      request:
+        agent_id: "test-agent-untrusted-001"
+        agent_role: "basic_agent"
+        agent_attributes:
+          trust_level: 1
+          department: "general"
+          permissions: []
+        action: "refund:process"
+        resource:
+          type: "refund_request"
+          amount: 50.00
+          currency: "USD"
+          customer_id: "cust-99999"
+          order_id: "ord-99999"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+      expected:
+        decision: "DENY"
+        matched_rule: "default_deny"
+        reason: "Agent lacks required trust level (minimum 3) for refund processing"
+
+    - test_id: "fin-neg-002"
+      category: "negative"
+      description: "Finance agent cannot process refund exceeding daily limit"
+      policy_file: "policies/finance/refund_policies.yaml"
+      request:
+        agent_id: "test-agent-finance-003"
+        agent_role: "finance_agent"
+        agent_attributes:
+          trust_level: 4
+          department: "customer_service"
+          permissions:
+            - "refund:process"
+          daily_refund_total: 9500.00
+          daily_refund_limit: 10000.00
+        action: "refund:process"
+        resource:
+          type: "refund_request"
+          amount: 750.00
+          currency: "USD"
+          customer_id: "cust-55555"
+          order_id: "ord-55555"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T16:00:00Z"
+      expected:
+        decision: "DENY"
+        matched_rule: "fin-refund-limit-001"
+        reason: "Refund would exceed agent's daily refund limit of $10,000"
+
+    - test_id: "fin-neg-003"
+      category: "negative"
+      description: "Transfer agent cannot execute external transfer without approval"
+      policy_file: "policies/finance/transfer_policies.yaml"
+      request:
+        agent_id: "test-agent-transfer-002"
+        agent_role: "transfer_agent"
+        agent_attributes:
+          trust_level: 4
+          department: "treasury"
+          permissions:
+            - "transfer:internal"
+        action: "transfer:execute"
+        resource:
+          type: "fund_transfer"
+          amount: 50000.00
+          currency: "USD"
+          source_account: "acc-internal-001"
+          destination_account: "acc-external-wire-001"
+          transfer_type: "external_wire"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T11:00:00Z"
+          human_approval_received: false
+      expected:
+        decision: "DENY"
+        matched_rule: "fin-transfer-external-001"
+        reason: "External wire transfers require human approval which was not provided"
+
+    - test_id: "fin-neg-004"
+      category: "negative"
+      description: "Withdrawal cannot be processed for unverified customer"
+      policy_file: "policies/finance/withdrawal_policies.yaml"
+      request:
+        agent_id: "test-agent-withdrawal-002"
+        agent_role: "withdrawal_agent"
+        agent_attributes:
+          trust_level: 3
+          department: "operations"
+          permissions:
+            - "withdrawal:process"
+        action: "withdrawal:process"
+        resource:
+          type: "withdrawal_request"
+          amount: 1000.00
+          currency: "USD"
+          account_id: "acc-customer-456"
+          withdrawal_method: "bank_transfer"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:30:00Z"
+          customer_verified: false
+          kyc_status: "pending"
+      expected:
+        decision: "DENY"
+        matched_rule: "fin-withdrawal-kyc-001"
+        reason: "Withdrawal denied - customer KYC verification is pending"
+
+    # -------------------------------------------------------------------------
+    # BOUNDARY TESTS - Edge Cases and Limits
+    # -------------------------------------------------------------------------
+
+    - test_id: "fin-bound-001"
+      category: "boundary"
+      description: "Refund at exact daily limit boundary should succeed"
+      policy_file: "policies/finance/refund_policies.yaml"
+      request:
+        agent_id: "test-agent-finance-004"
+        agent_role: "finance_agent"
+        agent_attributes:
+          trust_level: 4
+          department: "customer_service"
+          permissions:
+            - "refund:process"
+          daily_refund_total: 9000.00
+          daily_refund_limit: 10000.00
+        action: "refund:process"
+        resource:
+          type: "refund_request"
+          amount: 1000.00
+          currency: "USD"
+          customer_id: "cust-boundary-001"
+          order_id: "ord-boundary-001"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T15:00:00Z"
+      expected:
+        decision: "ALLOW"
+        matched_rule: "fin-refund-001"
+        reason: "Refund exactly meets daily limit boundary (9000 + 1000 = 10000)"
+
+    - test_id: "fin-bound-002"
+      category: "boundary"
+      description: "Refund exceeding daily limit by $0.01 should be denied"
+      policy_file: "policies/finance/refund_policies.yaml"
+      request:
+        agent_id: "test-agent-finance-005"
+        agent_role: "finance_agent"
+        agent_attributes:
+          trust_level: 4
+          department: "customer_service"
+          permissions:
+            - "refund:process"
+          daily_refund_total: 9000.00
+          daily_refund_limit: 10000.00
+        action: "refund:process"
+        resource:
+          type: "refund_request"
+          amount: 1000.01
+          currency: "USD"
+          customer_id: "cust-boundary-002"
+          order_id: "ord-boundary-002"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T15:00:00Z"
+      expected:
+        decision: "DENY"
+        matched_rule: "fin-refund-limit-001"
+        reason: "Refund exceeds daily limit by $0.01 (9000 + 1000.01 > 10000)"
+
+# =============================================================================
+# DATA ACCESS POLICY TESTS
+# =============================================================================
+
+data_access_policy_tests:
+  category: "Data Access Operations"
+  policy_domain: "data"
+  
+  tests:
+    # -------------------------------------------------------------------------
+    # POSITIVE TESTS - Authorized Data Access
+    # -------------------------------------------------------------------------
+
+    - test_id: "data-pos-001"
+      category: "positive"
+      description: "Data analyst can read non-sensitive aggregated data"
+      policy_file: "policies/data/data_access_policies.yaml"
+      request:
+        agent_id: "test-agent-analyst-001"
+        agent_role: "data_analyst_agent"
+        agent_attributes:
+          trust_level: 3
+          department: "analytics"
+          permissions:
+            - "data:read"
+            - "data:query"
+          data_classification_access: ["public", "internal"]
+        action: "data:read"
+        resource:
+          type: "dataset"
+          dataset_id: "ds-sales-aggregate-2026"
+          classification: "internal"
+          contains_pii: false
+          record_count: 10000
+        context:
+          session_valid: true
+          request_time: "2026-01-30T09:30:00Z"
+          purpose: "quarterly_reporting"
+      expected:
+        decision: "ALLOW"
+        matched_rule: "data-read-001"
+        reason: "Agent has appropriate access level for internal classified data"
+
+    - test_id: "data-pos-002"
+      category: "positive"
+      description: "ETL agent can write to designated data pipeline"
+      policy_file: "policies/data/data_access_policies.yaml"
+      request:
+        agent_id: "test-agent-etl-001"
+        agent_role: "etl_agent"
+        agent_attributes:
+          trust_level: 4
+          department: "data_engineering"
+          permissions:
+            - "data:read"
+            - "data:write"
+            - "data:transform"
+          target_systems: ["warehouse_staging", "warehouse_prod"]
+        action: "data:write"
+        resource:
+          type: "data_pipeline"
+          pipeline_id: "pipeline-customer-sync"
+          target_table: "dim_customers"
+          target_system: "warehouse_staging"
+          operation: "upsert"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T02:00:00Z"
+          batch_job_id: "job-nightly-sync-001"
+          validation_passed: true
+      expected:
+        decision: "ALLOW"
+        matched_rule: "data-write-001"
+        reason: "ETL agent authorized to write to designated staging system"
+
+    - test_id: "data-pos-003"
+      category: "positive"
+      description: "Compliance agent can delete data under GDPR request"
+      policy_file: "policies/data/data_deletion_policies.yaml"
+      request:
+        agent_id: "test-agent-compliance-001"
+        agent_role: "compliance_agent"
+        agent_attributes:
+          trust_level: 5
+          department: "legal"
+          permissions:
+            - "data:delete"
+            - "data:gdpr_erasure"
+        action: "data:delete"
+        resource:
+          type: "personal_data"
+          subject_id: "user-gdpr-request-001"
+          data_categories:
+            - "profile_data"
+            - "activity_logs"
+            - "preferences"
+          deletion_scope: "all_systems"
+          gdpr_request_id: "GDPR-2026-00123"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T14:00:00Z"
+          legal_hold_check: "no_hold"
+          verification_complete: true
+          human_approval_received: true
+      expected:
+        decision: "ALLOW"
+        matched_rule: "data-gdpr-delete-001"
+        reason: "GDPR erasure request with proper verification and human approval"
+
+    - test_id: "data-pos-004"
+      category: "positive"
+      description: "Export agent can export anonymized data for research"
+      policy_file: "policies/data/data_export_policies.yaml"
+      request:
+        agent_id: "test-agent-export-001"
+        agent_role: "data_export_agent"
+        agent_attributes:
+          trust_level: 4
+          department: "research"
+          permissions:
+            - "data:read"
+            - "data:export"
+            - "data:anonymize"
+        action: "data:export"
+        resource:
+          type: "research_dataset"
+          dataset_id: "ds-research-cohort-001"
+          export_format: "parquet"
+          record_count: 50000
+          anonymization_applied: true
+          destination: "secure_research_bucket"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T11:00:00Z"
+          irb_approval: "IRB-2026-0042"
+          data_use_agreement: true
+      expected:
+        decision: "ALLOW"
+        matched_rule: "data-export-research-001"
+        reason: "Anonymized research export with valid IRB approval and DUA"
+
+    # -------------------------------------------------------------------------
+    # NEGATIVE TESTS - Unauthorized Data Access
+    # -------------------------------------------------------------------------
+
+    - test_id: "data-neg-001"
+      category: "negative"
+      description: "Basic agent cannot access confidential data"
+      policy_file: "policies/data/data_access_policies.yaml"
+      request:
+        agent_id: "test-agent-basic-001"
+        agent_role: "basic_agent"
+        agent_attributes:
+          trust_level: 1
+          department: "general"
+          permissions:
+            - "data:read_public"
+          data_classification_access: ["public"]
+        action: "data:read"
+        resource:
+          type: "dataset"
+          dataset_id: "ds-employee-salaries"
+          classification: "confidential"
+          contains_pii: true
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+      expected:
+        decision: "DENY"
+        matched_rule: "data-classification-001"
+        reason: "Agent's data classification access (public) insufficient for confidential data"
+
+    - test_id: "data-neg-002"
+      category: "negative"
+      description: "Read-only agent cannot perform write operations"
+      policy_file: "policies/data/data_access_policies.yaml"
+      request:
+        agent_id: "test-agent-readonly-001"
+        agent_role: "reporting_agent"
+        agent_attributes:
+          trust_level: 3
+          department: "analytics"
+          permissions:
+            - "data:read"
+            - "data:query"
+        action: "data:write"
+        resource:
+          type: "dataset"
+          dataset_id: "ds-metrics-aggregate"
+          target_table: "fact_metrics"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+      expected:
+        decision: "DENY"
+        matched_rule: "data-write-permission-001"
+        reason: "Agent lacks data:write permission required for write operations"
+
+    - test_id: "data-neg-003"
+      category: "negative"
+      description: "Cannot delete data under legal hold"
+      policy_file: "policies/data/data_deletion_policies.yaml"
+      request:
+        agent_id: "test-agent-compliance-002"
+        agent_role: "compliance_agent"
+        agent_attributes:
+          trust_level: 5
+          department: "legal"
+          permissions:
+            - "data:delete"
+        action: "data:delete"
+        resource:
+          type: "legal_documents"
+          document_ids:
+            - "doc-litigation-001"
+            - "doc-litigation-002"
+          legal_hold_id: "LH-2026-0015"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+          legal_hold_check: "active_hold"
+      expected:
+        decision: "DENY"
+        matched_rule: "data-legal-hold-001"
+        reason: "Data is under active legal hold (LH-2026-0015) and cannot be deleted"
+
+    - test_id: "data-neg-004"
+      category: "negative"
+      description: "Cannot export PII data to unauthorized destination"
+      policy_file: "policies/data/data_export_policies.yaml"
+      request:
+        agent_id: "test-agent-export-002"
+        agent_role: "data_export_agent"
+        agent_attributes:
+          trust_level: 4
+          department: "marketing"
+          permissions:
+            - "data:read"
+            - "data:export"
+        action: "data:export"
+        resource:
+          type: "customer_data"
+          dataset_id: "ds-customer-pii"
+          contains_pii: true
+          export_format: "csv"
+          destination: "external_partner_ftp"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+          destination_verified: false
+      expected:
+        decision: "DENY"
+        matched_rule: "data-export-pii-001"
+        reason: "PII data cannot be exported to unverified external destinations"
+
+    # -------------------------------------------------------------------------
+    # BOUNDARY TESTS - Data Access Limits
+    # -------------------------------------------------------------------------
+
+    - test_id: "data-bound-001"
+      category: "boundary"
+      description: "Query result at maximum row limit should succeed"
+      policy_file: "policies/data/data_access_policies.yaml"
+      request:
+        agent_id: "test-agent-analyst-002"
+        agent_role: "data_analyst_agent"
+        agent_attributes:
+          trust_level: 3
+          department: "analytics"
+          permissions:
+            - "data:read"
+            - "data:query"
+          max_query_rows: 1000000
+        action: "data:query"
+        resource:
+          type: "query_result"
+          query_id: "qry-large-dataset-001"
+          estimated_rows: 1000000
+          classification: "internal"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+      expected:
+        decision: "ALLOW"
+        matched_rule: "data-query-limit-001"
+        reason: "Query result count exactly matches maximum allowed rows"
+
+    - test_id: "data-bound-002"
+      category: "boundary"
+      description: "Query exceeding row limit should be denied"
+      policy_file: "policies/data/data_access_policies.yaml"
+      request:
+        agent_id: "test-agent-analyst-003"
+        agent_role: "data_analyst_agent"
+        agent_attributes:
+          trust_level: 3
+          department: "analytics"
+          permissions:
+            - "data:read"
+            - "data:query"
+          max_query_rows: 1000000
+        action: "data:query"
+        resource:
+          type: "query_result"
+          query_id: "qry-oversized-001"
+          estimated_rows: 1000001
+          classification: "internal"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+      expected:
+        decision: "DENY"
+        matched_rule: "data-query-limit-001"
+        reason: "Query result exceeds maximum allowed rows (1000001 > 1000000)"
+
+# =============================================================================
+# ADMIN/SYSTEM POLICY TESTS
+# =============================================================================
+
+admin_system_policy_tests:
+  category: "Admin and System Operations"
+  policy_domain: "admin"
+  
+  tests:
+    # -------------------------------------------------------------------------
+    # POSITIVE TESTS - Authorized Admin Operations
+    # -------------------------------------------------------------------------
+
+    - test_id: "admin-pos-001"
+      category: "positive"
+      description: "Kernel agent can modify system configuration"
+      policy_file: "policies/admin/system_config_policies.yaml"
+      request:
+        agent_id: "kernel_core_agent"
+        agent_role: "kernel_core_agent"
+        agent_attributes:
+          trust_level: 5
+          permissions:
+            - "config:read"
+            - "config:write"
+            - "config:deploy"
+          formal_verification: true
+        action: "config:write"
+        resource:
+          type: "system_configuration"
+          config_key: "rate_limiting.global_max_requests"
+          current_value: 10000
+          new_value: 12000
+          config_scope: "global"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T03:00:00Z"
+          maintenance_window: true
+          change_ticket: "CHG-2026-0042"
+      expected:
+        decision: "ALLOW"
+        matched_rule: "admin-config-001"
+        reason: "Kernel agent authorized for config changes during maintenance window"
+
+    - test_id: "admin-pos-002"
+      category: "positive"
+      description: "Admin agent can create new user account"
+      policy_file: "policies/admin/user_management_policies.yaml"
+      request:
+        agent_id: "test-agent-admin-001"
+        agent_role: "user_management_agent"
+        agent_attributes:
+          trust_level: 4
+          department: "it_operations"
+          permissions:
+            - "user:create"
+            - "user:read"
+            - "user:modify"
+        action: "user:create"
+        resource:
+          type: "user_account"
+          username: "new.employee@company.com"
+          role: "standard_user"
+          department: "engineering"
+          access_level: 2
+        context:
+          session_valid: true
+          request_time: "2026-01-30T09:00:00Z"
+          hr_ticket: "HR-2026-ONBOARD-123"
+          manager_approval: true
+      expected:
+        decision: "ALLOW"
+        matched_rule: "admin-user-create-001"
+        reason: "User creation authorized with HR ticket and manager approval"
+
+    - test_id: "admin-pos-003"
+      category: "positive"
+      description: "Security agent can disable compromised account"
+      policy_file: "policies/admin/user_management_policies.yaml"
+      request:
+        agent_id: "test-agent-security-001"
+        agent_role: "security_agent"
+        agent_attributes:
+          trust_level: 5
+          department: "security"
+          permissions:
+            - "user:disable"
+            - "user:investigate"
+            - "session:terminate"
+        action: "user:disable"
+        resource:
+          type: "user_account"
+          user_id: "user-compromised-001"
+          username: "compromised.user@company.com"
+          current_status: "active"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T02:30:00Z"
+          security_incident: "SEC-2026-0001"
+          threat_level: "critical"
+          immediate_action_required: true
+      expected:
+        decision: "ALLOW"
+        matched_rule: "admin-security-disable-001"
+        reason: "Emergency account disable authorized for active security incident"
+
+    # -------------------------------------------------------------------------
+    # NEGATIVE TESTS - Unauthorized Admin Operations
+    # -------------------------------------------------------------------------
+
+    - test_id: "admin-neg-001"
+      category: "negative"
+      description: "Standard agent cannot modify system configuration"
+      policy_file: "policies/admin/system_config_policies.yaml"
+      request:
+        agent_id: "test-agent-standard-001"
+        agent_role: "standard_agent"
+        agent_attributes:
+          trust_level: 2
+          department: "engineering"
+          permissions:
+            - "config:read"
+        action: "config:write"
+        resource:
+          type: "system_configuration"
+          config_key: "security.mfa_required"
+          new_value: false
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+      expected:
+        decision: "DENY"
+        matched_rule: "admin-config-permission-001"
+        reason: "Agent lacks config:write permission for system configuration changes"
+
+    - test_id: "admin-neg-002"
+      category: "negative"
+      description: "Cannot create admin user without proper authorization"
+      policy_file: "policies/admin/user_management_policies.yaml"
+      request:
+        agent_id: "test-agent-admin-002"
+        agent_role: "user_management_agent"
+        agent_attributes:
+          trust_level: 4
+          department: "it_operations"
+          permissions:
+            - "user:create"
+            - "user:read"
+        action: "user:create"
+        resource:
+          type: "user_account"
+          username: "new.admin@company.com"
+          role: "system_admin"
+          access_level: 5
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+          hr_ticket: "HR-2026-ADMIN-001"
+          ciso_approval: false
+      expected:
+        decision: "DENY"
+        matched_rule: "admin-user-create-elevated-001"
+        reason: "Creating admin accounts requires CISO approval which was not provided"
+
+    - test_id: "admin-neg-003"
+      category: "negative"
+      description: "Cannot delete system-critical accounts"
+      policy_file: "policies/admin/user_management_policies.yaml"
+      request:
+        agent_id: "test-agent-admin-003"
+        agent_role: "user_management_agent"
+        agent_attributes:
+          trust_level: 4
+          department: "it_operations"
+          permissions:
+            - "user:delete"
+        action: "user:delete"
+        resource:
+          type: "user_account"
+          user_id: "system-service-account"
+          username: "kernel-service@system.local"
+          is_system_account: true
+          is_protected: true
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+      expected:
+        decision: "DENY"
+        matched_rule: "admin-protected-account-001"
+        reason: "System-critical protected accounts cannot be deleted"
+
+    # -------------------------------------------------------------------------
+    # ESCALATION TESTS - High-Stakes Admin Operations
+    # -------------------------------------------------------------------------
+
+    - test_id: "admin-esc-001"
+      category: "escalation"
+      description: "Destructive config change requires human escalation"
+      policy_file: "policies/admin/system_config_policies.yaml"
+      request:
+        agent_id: "kernel_core_agent"
+        agent_role: "kernel_core_agent"
+        agent_attributes:
+          trust_level: 5
+          permissions:
+            - "config:write"
+            - "config:deploy"
+        action: "config:write"
+        resource:
+          type: "system_configuration"
+          config_key: "database.drop_all_tables"
+          destructive_operation: true
+          impact_scope: "global"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+          human_approval_received: false
+      expected:
+        decision: "ESCALATE"
+        escalation_target: "human_supervisor"
+        escalation_reason: "Destructive global configuration change requires human approval"
+        timeout_minutes: 15
+        matched_rule: "admin-config-destructive-001"
+
+    - test_id: "admin-esc-002"
+      category: "escalation"
+      description: "Mass user deactivation triggers escalation"
+      policy_file: "policies/admin/user_management_policies.yaml"
+      request:
+        agent_id: "test-agent-admin-004"
+        agent_role: "user_management_agent"
+        agent_attributes:
+          trust_level: 4
+          department: "it_operations"
+          permissions:
+            - "user:bulk_operations"
+        action: "user:bulk_disable"
+        resource:
+          type: "user_bulk_operation"
+          user_count: 150
+          operation: "disable"
+          reason: "department_restructure"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+          hr_approval: true
+          human_approval_received: false
+      expected:
+        decision: "ESCALATE"
+        escalation_target: "ciso_approval"
+        escalation_reason: "Bulk operation affecting 150+ users requires CISO approval"
+        timeout_minutes: 60
+        matched_rule: "admin-bulk-operation-001"
+
+# =============================================================================
+# API/EXTERNAL POLICY TESTS
+# =============================================================================
+
+api_external_policy_tests:
+  category: "API and External Operations"
+  policy_domain: "api_external"
+  
+  tests:
+    # -------------------------------------------------------------------------
+    # POSITIVE TESTS - Authorized External Operations
+    # -------------------------------------------------------------------------
+
+    - test_id: "api-pos-001"
+      category: "positive"
+      description: "Integration agent can make HTTPS request to trusted domain"
+      policy_file: "policies/api_external_policies.yaml"
+      request:
+        agent_id: "test-agent-integration-001"
+        agent_role: "integration_agent"
+        agent_attributes:
+          trust_level: 3
+          department: "integrations"
+          permissions:
+            - "http:request"
+            - "https:request"
+        action: "https:request"
+        resource:
+          type: "external_api"
+          domain: "api.github.com"
+          endpoint: "/repos/org/repo/issues"
+          method: "GET"
+          protocol: "https"
+          tls_version: "1.3"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+          payload_size_bytes: 256
+          contains_pii: false
+      expected:
+        decision: "ALLOW"
+        matched_rule: "api-ext-001"
+        reason: "HTTPS request to trusted domain api.github.com allowed"
+
+    - test_id: "api-pos-002"
+      category: "positive"
+      description: "Notification agent can send email within rate limits"
+      policy_file: "policies/api_external_policies.yaml"
+      request:
+        agent_id: "test-agent-notification-001"
+        agent_role: "notification_agent"
+        agent_attributes:
+          trust_level: 4
+          department: "communications"
+          permissions:
+            - "email:send"
+          emails_sent_today: 50
+        action: "email:send"
+        resource:
+          type: "email_service"
+          provider: "sendgrid"
+          recipient_count: 1
+          recipient_domain: "customer.com"
+          has_attachment: false
+          subject: "Order Confirmation"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+          content_scanned: true
+          pii_detected: false
+      expected:
+        decision: "ALLOW"
+        matched_rule: "api-ext-010"
+        reason: "Email send allowed within rate limits to valid recipient"
+
+    - test_id: "api-pos-003"
+      category: "positive"
+      description: "Webhook dispatcher can send signed webhook"
+      policy_file: "policies/api_external_policies.yaml"
+      request:
+        agent_id: "test-agent-webhook-001"
+        agent_role: "webhook_dispatcher_agent"
+        agent_attributes:
+          trust_level: 3
+          permissions:
+            - "webhook:send"
+        action: "webhook:send"
+        resource:
+          type: "webhook_endpoint"
+          endpoint_url: "https://partner.example.com/webhooks/vak"
+          registered: true
+          protocol: "https"
+          port: 443
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+          signature_attached: true
+          signature_algorithm: "HMAC-SHA256"
+          payload_size_bytes: 2048
+      expected:
+        decision: "ALLOW"
+        matched_rule: "api-ext-020"
+        reason: "Signed webhook to registered HTTPS endpoint allowed"
+
+    # -------------------------------------------------------------------------
+    # NEGATIVE TESTS - Unauthorized External Operations
+    # -------------------------------------------------------------------------
+
+    - test_id: "api-neg-001"
+      category: "negative"
+      description: "Cannot make request to blocked domain"
+      policy_file: "policies/api_external_policies.yaml"
+      request:
+        agent_id: "test-agent-integration-002"
+        agent_role: "integration_agent"
+        agent_attributes:
+          trust_level: 3
+          permissions:
+            - "http:request"
+            - "https:request"
+        action: "https:request"
+        resource:
+          type: "external_api"
+          domain: "malicious.onion"
+          endpoint: "/api/data"
+          method: "POST"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+      expected:
+        decision: "DENY"
+        matched_rule: "api-ext-002"
+        reason: "Request to blocked domain pattern (*.onion) is prohibited"
+
+    - test_id: "api-neg-002"
+      category: "negative"
+      description: "Cannot send email with blocked attachment type"
+      policy_file: "policies/api_external_policies.yaml"
+      request:
+        agent_id: "test-agent-notification-002"
+        agent_role: "notification_agent"
+        agent_attributes:
+          trust_level: 4
+          permissions:
+            - "email:send"
+        action: "email:send"
+        resource:
+          type: "email_service"
+          provider: "sendgrid"
+          recipient_count: 1
+          has_attachment: true
+          attachment_extension: ".exe"
+          attachment_size_mb: 5
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+      expected:
+        decision: "DENY"
+        matched_rule: "api-ext-010-attachment"
+        reason: "Executable attachments (.exe) are blocked for email sending"
+
+    - test_id: "api-neg-003"
+      category: "negative"
+      description: "Cannot make HTTP request (HTTPS required)"
+      policy_file: "policies/api_external_policies.yaml"
+      request:
+        agent_id: "test-agent-integration-003"
+        agent_role: "integration_agent"
+        agent_attributes:
+          trust_level: 3
+          permissions:
+            - "http:request"
+        action: "http:request"
+        resource:
+          type: "external_api"
+          domain: "api.github.com"
+          endpoint: "/repos"
+          method: "GET"
+          protocol: "http"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+      expected:
+        decision: "DENY"
+        matched_rule: "api-ext-001"
+        reason: "HTTP requests are not allowed; use HTTPS only"
+
+    - test_id: "api-neg-004"
+      category: "negative"
+      description: "Cannot send email containing detected secrets"
+      policy_file: "policies/api_external_policies.yaml"
+      request:
+        agent_id: "test-agent-notification-003"
+        agent_role: "notification_agent"
+        agent_attributes:
+          trust_level: 4
+          permissions:
+            - "email:send"
+        action: "email:send"
+        resource:
+          type: "email_service"
+          provider: "sendgrid"
+          recipient_count: 1
+          body_content: "Your API key is: sk_live_abc123xyz789"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+          content_scanned: true
+          secrets_detected:
+            - type: "api_key"
+              pattern: "sk_live_*"
+      expected:
+        decision: "DENY"
+        matched_rule: "api-ext-010-content"
+        reason: "Email body contains detected API key - blocked for security"
+
+    # -------------------------------------------------------------------------
+    # RATE LIMIT TESTS - API Throttling
+    # -------------------------------------------------------------------------
+
+    - test_id: "api-rate-001"
+      category: "boundary"
+      description: "Request within rate limit should succeed"
+      policy_file: "policies/api_external_policies.yaml"
+      request:
+        agent_id: "test-agent-integration-004"
+        agent_role: "integration_agent"
+        agent_attributes:
+          trust_level: 3
+          permissions:
+            - "https:request"
+          requests_this_minute: 99
+          requests_this_hour: 1999
+        action: "https:request"
+        resource:
+          type: "external_api"
+          domain: "api.openai.com"
+          endpoint: "/v1/chat/completions"
+          method: "POST"
+          protocol: "https"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+      expected:
+        decision: "ALLOW"
+        matched_rule: "api-ext-001"
+        reason: "Request within rate limits (100/min, 2000/hr)"
+
+    - test_id: "api-rate-002"
+      category: "boundary"
+      description: "Request exceeding rate limit should be denied"
+      policy_file: "policies/api_external_policies.yaml"
+      request:
+        agent_id: "test-agent-integration-005"
+        agent_role: "integration_agent"
+        agent_attributes:
+          trust_level: 3
+          permissions:
+            - "https:request"
+          requests_this_minute: 100
+          requests_this_hour: 2000
+        action: "https:request"
+        resource:
+          type: "external_api"
+          domain: "api.openai.com"
+          endpoint: "/v1/chat/completions"
+          method: "POST"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+      expected:
+        decision: "DENY"
+        matched_rule: "api-ext-rate-limit"
+        reason: "Rate limit exceeded (100 requests/minute)"
+        retry_after_seconds: 60
+
+# =============================================================================
+# AGENT SYSTEM POLICY TESTS
+# =============================================================================
+
+agent_system_policy_tests:
+  category: "Agent System Operations"
+  policy_domain: "agent_system"
+  
+  tests:
+    # -------------------------------------------------------------------------
+    # POSITIVE TESTS - Authorized Agent Operations
+    # -------------------------------------------------------------------------
+
+    - test_id: "agent-pos-001"
+      category: "positive"
+      description: "Kernel agent can register new agent"
+      policy_file: "policies/agent_system_policies.yaml"
+      request:
+        agent_id: "kernel_core_agent"
+        agent_role: "kernel_core_agent"
+        agent_attributes:
+          trust_level: 5
+          permissions:
+            - "agent:register"
+            - "agent:validate"
+          formal_verification: true
+        action: "agent:register"
+        resource:
+          type: "agent_registry"
+          new_agent:
+            agent_id: "new-worker-agent-001"
+            agent_role: "worker_agent"
+            requested_trust_level: 2
+            capabilities_requested:
+              - "read_public_state"
+              - "write_own_state"
+              - "inter_agent_query"
+            cryptographic_identity: "valid_ed25519_pubkey"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+          identity_verified: true
+      expected:
+        decision: "ALLOW"
+        matched_rule: "agent-sys-001"
+        reason: "Kernel agent authorized to register new agent with valid identity"
+
+    - test_id: "agent-pos-002"
+      category: "positive"
+      description: "Agent can read its own state"
+      policy_file: "policies/agent_system_policies.yaml"
+      request:
+        agent_id: "test-agent-worker-001"
+        agent_role: "worker_agent"
+        agent_attributes:
+          trust_level: 2
+          permissions:
+            - "state:read_own"
+        action: "state:read_own"
+        resource:
+          type: "agent_state"
+          owner: "test-agent-worker-001"
+          state_key: "task_queue"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+      expected:
+        decision: "ALLOW"
+        matched_rule: "agent-sys-040"
+        reason: "Agent can always read its own state"
+
+    - test_id: "agent-pos-003"
+      category: "positive"
+      description: "Trusted agent can send inter-agent query"
+      policy_file: "policies/agent_system_policies.yaml"
+      request:
+        agent_id: "test-agent-coordinator-001"
+        agent_role: "coordinator_agent"
+        agent_attributes:
+          trust_level: 3
+          permissions:
+            - "ipc:query"
+            - "ipc:request_info"
+        action: "ipc:query"
+        resource:
+          type: "inter_agent_channel"
+          target_agent: "test-agent-worker-002"
+          routing: "kernel_mediated"
+          message_format: "vak-ipc-envelope"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+          payload_size_bytes: 1024
+          queries_this_minute: 30
+      expected:
+        decision: "ALLOW"
+        matched_rule: "agent-sys-030"
+        reason: "Inter-agent query allowed via kernel-mediated channel"
+
+    - test_id: "agent-pos-004"
+      category: "positive"
+      description: "Eligible agent can participate in consensus vote"
+      policy_file: "policies/agent_system_policies.yaml"
+      request:
+        agent_id: "test-agent-consensus-001"
+        agent_role: "standard_agent"
+        agent_attributes:
+          trust_level: 2
+          permissions:
+            - "consensus:vote"
+          vote_token_balance: 10
+        action: "consensus:vote"
+        resource:
+          type: "consensus_topic"
+          topic_id: "proposal-2026-001"
+          topic_type: "policy_change"
+          vote_deadline: "2026-01-31T23:59:59Z"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+          already_voted: false
+          topic_eligible: true
+      expected:
+        decision: "ALLOW"
+        matched_rule: "agent-sys-050"
+        reason: "Agent eligible to vote with sufficient token balance"
+
+    # -------------------------------------------------------------------------
+    # NEGATIVE TESTS - Unauthorized Agent Operations
+    # -------------------------------------------------------------------------
+
+    - test_id: "agent-neg-001"
+      category: "negative"
+      description: "Untrusted agent cannot communicate with other agents"
+      policy_file: "policies/agent_system_policies.yaml"
+      request:
+        agent_id: "test-agent-untrusted-001"
+        agent_role: "untrusted_agent"
+        agent_attributes:
+          trust_level: 0
+          permissions: []
+        action: "ipc:query"
+        resource:
+          type: "inter_agent_channel"
+          target_agent: "test-agent-worker-001"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+      expected:
+        decision: "DENY"
+        matched_rule: "agent-sys-033"
+        reason: "Untrusted agents (trust_level 0) cannot communicate with other agents"
+
+    - test_id: "agent-neg-002"
+      category: "negative"
+      description: "Cannot write to another agent's state"
+      policy_file: "policies/agent_system_policies.yaml"
+      request:
+        agent_id: "test-agent-worker-001"
+        agent_role: "worker_agent"
+        agent_attributes:
+          trust_level: 2
+          permissions:
+            - "state:write_own"
+        action: "state:write"
+        resource:
+          type: "agent_state"
+          owner: "test-agent-worker-002"
+          state_key: "credentials"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+      expected:
+        decision: "DENY"
+        matched_rule: "agent-sys-041"
+        reason: "Agents can only write to their own state, not other agents' state"
+
+    - test_id: "agent-neg-003"
+      category: "negative"
+      description: "Low-trust agent cannot propose consensus topics"
+      policy_file: "policies/agent_system_policies.yaml"
+      request:
+        agent_id: "test-agent-basic-001"
+        agent_role: "basic_agent"
+        agent_attributes:
+          trust_level: 2
+          permissions:
+            - "consensus:vote"
+        action: "consensus:propose"
+        resource:
+          type: "consensus_topic"
+          proposed_topic: "Change rate limits"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+      expected:
+        decision: "DENY"
+        matched_rule: "agent-sys-051"
+        reason: "Consensus proposals require minimum trust level 3"
+
+    - test_id: "agent-neg-004"
+      category: "negative"
+      description: "Cannot deregister agent with higher trust level"
+      policy_file: "policies/agent_system_policies.yaml"
+      request:
+        agent_id: "test-agent-supervisor-001"
+        agent_role: "state_manager_runtime"
+        agent_attributes:
+          trust_level: 4
+          permissions:
+            - "agent:deregister"
+        action: "agent:deregister"
+        resource:
+          type: "agent_registry"
+          target_agent: "kernel_core_agent"
+          target_trust_level: 5
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+          reason_provided: true
+      expected:
+        decision: "DENY"
+        matched_rule: "agent-sys-011"
+        reason: "Cannot deregister agent with equal or higher trust level"
+
+    # -------------------------------------------------------------------------
+    # ESCALATION TESTS - High-Stakes Agent Operations
+    # -------------------------------------------------------------------------
+
+    - test_id: "agent-esc-001"
+      category: "escalation"
+      description: "Capability elevation request triggers escalation"
+      policy_file: "policies/agent_system_policies.yaml"
+      request:
+        agent_id: "test-agent-worker-002"
+        agent_role: "worker_agent"
+        agent_attributes:
+          trust_level: 2
+          permissions:
+            - "capability:request"
+          prm_score: 0.85
+        action: "capability:request_elevation"
+        resource:
+          type: "capability_registry"
+          requested_capabilities:
+            - "write_shared_state"
+            - "consensus_propose"
+          elevation_level: 1
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+          minutes_since_last_request: 120
+          pending_elevation_requests: 0
+      expected:
+        decision: "ESCALATE"
+        escalation_target: "human_supervisor"
+        escalation_reason: "Capability elevation requests require human approval"
+        timeout_minutes: 30
+        matched_rule: "agent-sys-021"
+
+    - test_id: "agent-esc-002"
+      category: "escalation"
+      description: "Global state rollback triggers escalation"
+      policy_file: "policies/agent_system_policies.yaml"
+      request:
+        agent_id: "state_manager_runtime"
+        agent_role: "state_manager_runtime"
+        agent_attributes:
+          trust_level: 4
+          permissions:
+            - "state:rollback"
+          prm_score: 0.9
+        action: "state:rollback"
+        resource:
+          type: "state_snapshot"
+          snapshot_id: "snap-global-2026-01-29"
+          scope: "global"
+          snapshot_valid: true
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+          human_approval_received: false
+      expected:
+        decision: "ESCALATE"
+        escalation_target: "human_supervisor"
+        escalation_reason: "Global state rollback requires human approval"
+        timeout_minutes: 15
+        matched_rule: "agent-sys-045"
+
+    # -------------------------------------------------------------------------
+    # TIME-BASED TESTS - Business Hours and Windows
+    # -------------------------------------------------------------------------
+
+    - test_id: "agent-time-001"
+      category: "time_based"
+      description: "Bulk email allowed during business hours"
+      policy_file: "policies/api_external_policies.yaml"
+      request:
+        agent_id: "test-agent-marketing-001"
+        agent_role: "bulk_notification_agent"
+        agent_attributes:
+          trust_level: 5
+          permissions:
+            - "email:send_bulk"
+        action: "email:send_bulk"
+        resource:
+          type: "email_service"
+          provider: "sendgrid"
+          recipient_count: 500
+          campaign_id: "camp-2026-q1-promo"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T14:00:00Z"  # 2 PM UTC - within business hours
+          day_of_week: "thursday"
+          approval_workflow_completed: true
+          unsubscribe_link_present: true
+      expected:
+        decision: "ALLOW"
+        matched_rule: "api-ext-011"
+        reason: "Bulk email allowed during business hours (8-20 UTC) on weekdays"
+
+    - test_id: "agent-time-002"
+      category: "time_based"
+      description: "Bulk email denied outside business hours"
+      policy_file: "policies/api_external_policies.yaml"
+      request:
+        agent_id: "test-agent-marketing-002"
+        agent_role: "bulk_notification_agent"
+        agent_attributes:
+          trust_level: 5
+          permissions:
+            - "email:send_bulk"
+        action: "email:send_bulk"
+        resource:
+          type: "email_service"
+          provider: "sendgrid"
+          recipient_count: 500
+          campaign_id: "camp-2026-q1-promo"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T22:00:00Z"  # 10 PM UTC - outside business hours
+          day_of_week: "thursday"
+      expected:
+        decision: "DENY"
+        matched_rule: "api-ext-011"
+        reason: "Bulk email operations only allowed during business hours (8-20 UTC)"
+
+    - test_id: "agent-time-003"
+      category: "time_based"
+      description: "Security scan allowed during low-traffic hours"
+      policy_file: "policies/api_external_policies.yaml"
+      request:
+        agent_id: "test-agent-security-scan-001"
+        agent_role: "security_scanner_agent"
+        agent_attributes:
+          trust_level: 5
+          security_clearance: "elevated"
+          permissions:
+            - "dns:enumerate_subdomains"
+        action: "dns:enumerate_subdomains"
+        resource:
+          type: "dns_service"
+          target_domain: "company.com"
+          scan_type: "subdomain_enumeration"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T03:00:00Z"  # 3 AM UTC - low traffic hours
+          scan_authorization_ticket: "SCAN-2026-001"
+          scope_definition: "company.com and subdomains"
+      expected:
+        decision: "ALLOW"
+        matched_rule: "api-ext-041"
+        reason: "Security scanning allowed during low-traffic hours (0-6 UTC)"
+
+    - test_id: "agent-time-004"
+      category: "time_based"
+      description: "Security scan denied during business hours"
+      policy_file: "policies/api_external_policies.yaml"
+      request:
+        agent_id: "test-agent-security-scan-002"
+        agent_role: "security_scanner_agent"
+        agent_attributes:
+          trust_level: 5
+          security_clearance: "elevated"
+          permissions:
+            - "dns:enumerate_subdomains"
+        action: "dns:enumerate_subdomains"
+        resource:
+          type: "dns_service"
+          target_domain: "company.com"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T14:00:00Z"  # 2 PM UTC - business hours
+          scan_authorization_ticket: "SCAN-2026-002"
+      expected:
+        decision: "DENY"
+        matched_rule: "api-ext-041"
+        reason: "Intensive security scans only allowed during low-traffic hours (0-6 UTC)"
+
+# =============================================================================
+# CROSS-DOMAIN POLICY TESTS
+# =============================================================================
+
+cross_domain_policy_tests:
+  category: "Cross-Domain Scenarios"
+  description: "Tests that validate policy interactions across multiple domains"
+  
+  tests:
+    - test_id: "cross-001"
+      category: "integration"
+      description: "Data export triggering external API and finance audit"
+      policy_file: "multiple"
+      request:
+        agent_id: "test-agent-export-premium-001"
+        agent_role: "premium_export_agent"
+        agent_attributes:
+          trust_level: 5
+          permissions:
+            - "data:export"
+            - "https:request"
+            - "audit:write"
+        action: "data:export_to_external"
+        resource:
+          type: "composite_operation"
+          operations:
+            - domain: "data"
+              action: "export"
+              dataset: "financial_reports_q4"
+              classification: "confidential"
+            - domain: "api_external"
+              action: "https:upload"
+              destination: "s3.amazonaws.com"
+            - domain: "finance"
+              action: "audit:log"
+              audit_type: "data_export"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+          all_approvals_received: true
+          encryption_verified: true
+      expected:
+        decision: "ALLOW"
+        matched_rules:
+          - "data-export-confidential-001"
+          - "api-ext-050"
+          - "fin-audit-001"
+        reason: "Composite operation allowed with all required approvals and encryption"
+
+    - test_id: "cross-002"
+      category: "integration"
+      description: "Agent registration with immediate capability assignment"
+      policy_file: "multiple"
+      request:
+        agent_id: "kernel_core_agent"
+        agent_role: "kernel_core_agent"
+        agent_attributes:
+          trust_level: 5
+        action: "agent:register_with_capabilities"
+        resource:
+          type: "composite_operation"
+          operations:
+            - domain: "agent_system"
+              action: "agent:register"
+              new_agent_id: "new-integration-agent"
+            - domain: "agent_system"
+              action: "capability:assign"
+              capabilities:
+                - "https:request"
+                - "data:read"
+        context:
+          session_valid: true
+          request_time: "2026-01-30T10:00:00Z"
+          identity_verified: true
+          capability_check_passed: true
+      expected:
+        decision: "ALLOW"
+        matched_rules:
+          - "agent-sys-001"
+          - "agent-sys-020"
+        reason: "Agent registration with capability assignment within trust bounds"
+
+# =============================================================================
+# TEST SUMMARY AND VALIDATION
+# =============================================================================
+
+test_summary:
+  total_test_cases: 42
+  categories:
+    positive_tests: 14
+    negative_tests: 16
+    boundary_tests: 5
+    escalation_tests: 4
+    time_based_tests: 4
+    cross_domain_tests: 2
+  
+  coverage:
+    finance_policies:
+      - refund_processing
+      - fund_transfers
+      - withdrawals
+      - daily_limits
+      - approval_workflows
+    data_access_policies:
+      - read_operations
+      - write_operations
+      - delete_operations
+      - export_operations
+      - classification_enforcement
+      - legal_holds
+    admin_system_policies:
+      - config_changes
+      - user_management
+      - protected_accounts
+      - bulk_operations
+    api_external_policies:
+      - https_requests
+      - email_sending
+      - webhook_operations
+      - rate_limiting
+      - domain_blocking
+      - content_scanning
+    agent_system_policies:
+      - agent_registration
+      - state_management
+      - inter_agent_communication
+      - consensus_participation
+      - capability_management
+      - trust_level_enforcement
+
+validation_rules:
+  - rule: "All test cases must have unique test_id"
+    severity: "error"
+  - rule: "Expected decision must be ALLOW, DENY, ESCALATE, or INADMISSIBLE"
+    severity: "error"
+  - rule: "Request must include agent_id, agent_role, and action"
+    severity: "error"
+  - rule: "Expected section must include decision and reason"
+    severity: "error"
+  - rule: "Escalation tests must include escalation_target and timeout"
+    severity: "warning"
