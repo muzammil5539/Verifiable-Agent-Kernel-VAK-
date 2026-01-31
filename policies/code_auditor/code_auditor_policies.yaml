@@ -1,0 +1,339 @@
+# =============================================================================
+# VAK Code Auditor - ABAC Policy Configuration
+# =============================================================================
+# Attribute-Based Access Control policies for the Autonomous Code Auditor
+# =============================================================================
+
+metadata:
+  policy_domain: "code_auditor"
+  version: "1.0.0"
+  created: "2026-01-31"
+  last_modified: "2026-01-31"
+  owner: "vak-security-team"
+  classification: "internal"
+  description: |
+    ABAC policies governing the Code Auditor agent's access to resources,
+    allowed operations, and safety constraints.
+
+# =============================================================================
+# GLOBAL SETTINGS
+# =============================================================================
+
+global_settings:
+  default_effect: "deny"
+  require_audit_logging: true
+  require_sandbox_execution: true
+  max_steps_per_session: 50
+  session_timeout_minutes: 30
+
+# =============================================================================
+# CODE AUDITOR AGENT DEFINITION
+# =============================================================================
+
+agent_profile:
+  id: "code-auditor"
+  name: "Autonomous Code Auditor"
+  description: "Reviews code for security vulnerabilities, logic errors, and suggests fixes"
+  trust_level: 3
+  capabilities:
+    - "code_review"
+    - "vulnerability_detection"
+    - "static_analysis"
+    - "dependency_analysis"
+    - "fix_suggestion"
+  restrictions:
+    - "Cannot execute any code"
+    - "Cannot write to filesystem"
+    - "Cannot make network requests"
+    - "Cannot access secrets or credentials"
+    - "Must run all tools in WASM sandbox"
+    - "Must log all actions to audit trail"
+
+# =============================================================================
+# ACCESS CONTROL POLICIES
+# =============================================================================
+
+policies:
+  # Allow reading source code files
+  - id: "allow_read_source_code"
+    effect: "allow"
+    description: "Allow reading source code files for analysis"
+    priority: 100
+    conditions:
+      - field: "action"
+        operator: "equals"
+        value: "read_file"
+      - field: "file_extension"
+        operator: "in"
+        value:
+          - ".rs"
+          - ".py"
+          - ".js"
+          - ".ts"
+          - ".jsx"
+          - ".tsx"
+          - ".java"
+          - ".go"
+          - ".c"
+          - ".cpp"
+          - ".h"
+          - ".hpp"
+          - ".rb"
+          - ".php"
+          - ".swift"
+          - ".kt"
+          - ".scala"
+          - ".cs"
+          - ".toml"
+          - ".yaml"
+          - ".yml"
+          - ".json"
+          - ".xml"
+          - ".md"
+          - ".txt"
+          - ".cfg"
+          - ".ini"
+
+  # Deny reading secret files (higher priority)
+  - id: "deny_read_secrets"
+    effect: "deny"
+    description: "Deny reading files that may contain secrets"
+    priority: 200
+    conditions:
+      - field: "action"
+        operator: "equals"
+        value: "read_file"
+      - field: "file_name"
+        operator: "matches"
+        value: "(^\\.env.*|secrets\\.(json|yaml|yml)|credentials\\.(json|yaml|yml)|.*\\.pem|.*\\.key|id_rsa.*)"
+
+  # Deny reading hidden directories
+  - id: "deny_read_hidden_dirs"
+    effect: "deny"
+    description: "Deny reading from hidden directories"
+    priority: 200
+    conditions:
+      - field: "action"
+        operator: "equals"
+        value: "read_file"
+      - field: "path"
+        operator: "contains"
+        value: "/."
+
+  # Allow directory listing
+  - id: "allow_list_directory"
+    effect: "allow"
+    description: "Allow listing directory contents"
+    priority: 100
+    conditions:
+      - field: "action"
+        operator: "equals"
+        value: "list_directory"
+
+  # Deny listing sensitive directories
+  - id: "deny_list_sensitive_dirs"
+    effect: "deny"
+    description: "Deny listing sensitive directories"
+    priority: 200
+    conditions:
+      - field: "action"
+        operator: "equals"
+        value: "list_directory"
+      - field: "path"
+        operator: "matches"
+        value: "(\\.git|\\.env|node_modules|__pycache__|venv|\\.venv)"
+
+  # Allow code search
+  - id: "allow_code_search"
+    effect: "allow"
+    description: "Allow searching code for patterns"
+    priority: 100
+    conditions:
+      - field: "action"
+        operator: "equals"
+        value: "search_code"
+
+  # Allow AST parsing
+  - id: "allow_ast_parsing"
+    effect: "allow"
+    description: "Allow parsing code into AST"
+    priority: 100
+    conditions:
+      - field: "action"
+        operator: "equals"
+        value: "parse_ast"
+
+  # Allow linting
+  - id: "allow_linting"
+    effect: "allow"
+    description: "Allow running linters"
+    priority: 100
+    conditions:
+      - field: "action"
+        operator: "equals"
+        value: "run_linter"
+
+  # Allow generating reports
+  - id: "allow_report_generation"
+    effect: "allow"
+    description: "Allow generating audit reports"
+    priority: 100
+    conditions:
+      - field: "action"
+        operator: "equals"
+        value: "generate_report"
+
+  # Allow fix suggestions
+  - id: "allow_fix_suggestions"
+    effect: "allow"
+    description: "Allow suggesting code fixes"
+    priority: 100
+    conditions:
+      - field: "action"
+        operator: "equals"
+        value: "suggest_fix"
+
+  # Deny all write operations
+  - id: "deny_write_operations"
+    effect: "deny"
+    description: "Deny all write operations"
+    priority: 300
+    conditions:
+      - field: "action"
+        operator: "in"
+        value:
+          - "write_file"
+          - "delete_file"
+          - "create_file"
+          - "modify_file"
+
+  # Deny all execution operations
+  - id: "deny_execution"
+    effect: "deny"
+    description: "Deny code execution"
+    priority: 300
+    conditions:
+      - field: "action"
+        operator: "in"
+        value:
+          - "execute_code"
+          - "run_command"
+          - "shell_command"
+          - "eval"
+          - "exec"
+
+  # Deny network operations
+  - id: "deny_network"
+    effect: "deny"
+    description: "Deny all network operations"
+    priority: 300
+    conditions:
+      - field: "action"
+        operator: "in"
+        value:
+          - "http_request"
+          - "network_request"
+          - "dns_lookup"
+          - "socket_connect"
+
+# =============================================================================
+# TOOL PERMISSIONS
+# =============================================================================
+
+tool_permissions:
+  file_reader:
+    allowed: true
+    sandbox_required: true
+    permissions:
+      - "read"
+    restrictions:
+      - "no_secrets"
+      - "no_hidden_files"
+      - "max_size_1mb"
+
+  directory_lister:
+    allowed: true
+    sandbox_required: true
+    permissions:
+      - "list"
+    restrictions:
+      - "no_sensitive_dirs"
+
+  code_searcher:
+    allowed: true
+    sandbox_required: true
+    permissions:
+      - "search"
+    restrictions:
+      - "regex_timeout_5s"
+
+  ast_parser:
+    allowed: true
+    sandbox_required: true
+    permissions:
+      - "parse"
+    restrictions:
+      - "max_file_size_1mb"
+      - "timeout_10s"
+
+  linter:
+    allowed: true
+    sandbox_required: true
+    permissions:
+      - "analyze"
+    restrictions:
+      - "no_auto_fix"
+      - "read_only"
+
+  report_generator:
+    allowed: true
+    sandbox_required: false
+    permissions:
+      - "generate"
+    restrictions:
+      - "structured_output_only"
+
+# =============================================================================
+# AUDIT REQUIREMENTS
+# =============================================================================
+
+audit_requirements:
+  log_all_file_access: true
+  log_all_searches: true
+  log_all_analysis_steps: true
+  log_reasoning_chain: true
+  include_prm_scores: true
+  include_constraint_checks: true
+  merkle_chain_enabled: true
+  
+  required_fields:
+    - "timestamp"
+    - "agent_id"
+    - "action"
+    - "resource"
+    - "decision"
+    - "reasoning_step"
+    - "prm_score"
+    - "constraint_status"
+    - "hash"
+    - "prev_hash"
+
+# =============================================================================
+# REASONING CONSTRAINTS
+# =============================================================================
+
+reasoning_constraints:
+  max_depth: 10
+  max_branches: 5
+  backtrack_threshold: 0.5
+  confidence_threshold: 0.7
+  
+  required_verification:
+    - "constraint_check_before_action"
+    - "prm_score_after_reasoning"
+    - "policy_check_before_tool"
+    
+  forbidden_reasoning_patterns:
+    - "skip_verification"
+    - "ignore_constraints"
+    - "bypass_policy"

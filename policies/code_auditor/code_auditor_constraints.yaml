@@ -1,0 +1,306 @@
+# =============================================================================
+# VAK Code Auditor - Constraint Configuration
+# =============================================================================
+# Formal constraints for the Autonomous Code Auditor MVP
+# Uses the VAK constraint DSL for safety verification
+# =============================================================================
+
+metadata:
+  name: "code_auditor_constraints"
+  version: "1.0.0"
+  description: "Safety constraints for the autonomous code auditor agent"
+  created: "2026-01-31"
+  author: "VAK Team"
+
+# =============================================================================
+# FORBIDDEN FILES - Files the auditor must never read or modify
+# =============================================================================
+
+constraints:
+  # Security-sensitive files that must never be accessed
+  - name: "forbidden_env_files"
+    description: "Never access .env files containing secrets"
+    kind:
+      type: "Forbidden"
+      values:
+        - ".env"
+        - ".env.local"
+        - ".env.production"
+        - ".env.staging"
+        - ".env.development"
+
+  - name: "forbidden_secret_files"
+    description: "Never access known secret/credential files"
+    kind:
+      type: "Forbidden"
+      values:
+        - "secrets.json"
+        - "secrets.yaml"
+        - "secrets.yml"
+        - "credentials.json"
+        - "credentials.yaml"
+        - "service-account.json"
+        - "private.key"
+        - "private.pem"
+        - "id_rsa"
+        - "id_ed25519"
+        - ".npmrc"
+        - ".pypirc"
+
+  - name: "forbidden_git_secrets"
+    description: "Never access git credential storage"
+    kind:
+      type: "Forbidden"
+      values:
+        - ".git-credentials"
+        - ".gitconfig"
+
+  - name: "forbidden_cloud_credentials"
+    description: "Never access cloud provider credentials"
+    kind:
+      type: "Forbidden"
+      values:
+        - "aws_credentials"
+        - ".aws/credentials"
+        - "gcloud_credentials.json"
+        - "azure_credentials.json"
+
+  # Path patterns for forbidden directories
+  - name: "forbidden_directories"
+    description: "Directories that should never be accessed"
+    kind:
+      type: "Forbidden"
+      values:
+        - "node_modules/"
+        - ".git/"
+        - "__pycache__/"
+        - ".venv/"
+        - "venv/"
+        - ".cache/"
+
+# =============================================================================
+# RESOURCE LIMITS - Operational boundaries
+# =============================================================================
+
+  # Maximum number of reasoning steps
+  - name: "max_reasoning_steps"
+    description: "Limit total reasoning steps to prevent infinite loops"
+    kind:
+      type: "LessThan"
+      field: "step_count"
+      value: 50
+
+  # Maximum files to analyze per session
+  - name: "max_files_per_session"
+    description: "Limit files analyzed to prevent resource exhaustion"
+    kind:
+      type: "LessThan"
+      field: "files_analyzed"
+      value: 100
+
+  # Maximum file size to analyze (in bytes)
+  - name: "max_file_size_bytes"
+    description: "Skip files larger than 1MB"
+    kind:
+      type: "LessThan"
+      field: "file_size"
+      value: 1048576
+
+  # Maximum lines in a single file
+  - name: "max_lines_per_file"
+    description: "Skip files with more than 10000 lines"
+    kind:
+      type: "LessThan"
+      field: "line_count"
+      value: 10000
+
+# =============================================================================
+# ALLOWED OPERATIONS - What the auditor can do
+# =============================================================================
+
+  - name: "allowed_operations"
+    description: "Operations the code auditor is permitted to perform"
+    kind:
+      type: "In"
+      field: "operation"
+      values:
+        - "read_file"
+        - "list_directory"
+        - "search_code"
+        - "parse_ast"
+        - "run_linter"
+        - "check_syntax"
+        - "analyze_dependencies"
+        - "generate_report"
+        - "suggest_fix"
+
+  - name: "forbidden_operations"
+    description: "Operations the code auditor must never perform"
+    kind:
+      type: "NotIn"
+      field: "operation"
+      values:
+        - "write_file"
+        - "delete_file"
+        - "execute_code"
+        - "network_request"
+        - "shell_command"
+        - "modify_permissions"
+
+# =============================================================================
+# CODE QUALITY THRESHOLDS
+# =============================================================================
+
+  - name: "minimum_confidence_score"
+    description: "Minimum confidence required to report an issue"
+    kind:
+      type: "GreaterThan"
+      field: "confidence"
+      value: 0.7
+
+  - name: "prm_backtrack_threshold"
+    description: "PRM score below which to backtrack reasoning"
+    kind:
+      type: "GreaterThan"
+      field: "prm_score"
+      value: 0.5
+
+# =============================================================================
+# SAFETY GUARANTEES
+# =============================================================================
+
+  - name: "no_code_execution"
+    description: "Ensure no actual code execution happens during analysis"
+    kind:
+      type: "Equals"
+      field: "code_executed"
+      value: false
+
+  - name: "audit_trail_required"
+    description: "Every action must be logged to audit trail"
+    kind:
+      type: "Equals"
+      field: "audit_logged"
+      value: true
+
+  - name: "sandbox_required"
+    description: "All tools must run in WASM sandbox"
+    kind:
+      type: "Equals"
+      field: "sandboxed_execution"
+      value: true
+
+# =============================================================================
+# VULNERABILITY SEVERITY LEVELS
+# =============================================================================
+
+severity_levels:
+  critical:
+    description: "Immediate security risk - must be fixed"
+    examples:
+      - "SQL injection"
+      - "Command injection"
+      - "Path traversal"
+      - "Hardcoded secrets"
+    action: "block_merge"
+    
+  high:
+    description: "Significant security concern"
+    examples:
+      - "Cross-site scripting (XSS)"
+      - "Insecure deserialization"
+      - "Missing authentication"
+    action: "require_review"
+    
+  medium:
+    description: "Potential security issue"
+    examples:
+      - "Weak cryptography"
+      - "Information disclosure"
+      - "Missing input validation"
+    action: "warn"
+    
+  low:
+    description: "Code quality concern"
+    examples:
+      - "Unused variables"
+      - "Missing error handling"
+      - "Code style violations"
+    action: "suggest"
+
+# =============================================================================
+# VULNERABILITY PATTERNS TO DETECT
+# =============================================================================
+
+vulnerability_patterns:
+  # SQL Injection patterns
+  - name: "sql_injection_string_concat"
+    pattern: '(query|execute|sql)\s*\(\s*["\'].*\+.*["\']'
+    severity: "critical"
+    description: "SQL query built with string concatenation"
+    
+  - name: "sql_injection_format_string"
+    pattern: '(query|execute|sql)\s*\(\s*f["\']'
+    severity: "critical"
+    description: "SQL query using f-string interpolation"
+
+  # Command Injection patterns
+  - name: "command_injection_os_system"
+    pattern: 'os\.system\s*\('
+    severity: "critical"
+    description: "Use of os.system() - vulnerable to command injection"
+    
+  - name: "command_injection_subprocess_shell"
+    pattern: 'subprocess\.(run|call|Popen).*shell\s*=\s*True'
+    severity: "critical"
+    description: "Subprocess with shell=True - vulnerable to command injection"
+
+  # Hardcoded secrets patterns
+  - name: "hardcoded_password"
+    pattern: '(password|passwd|pwd)\s*=\s*["\'][^"\']+["\']'
+    severity: "critical"
+    description: "Hardcoded password detected"
+    
+  - name: "hardcoded_api_key"
+    pattern: '(api[_-]?key|apikey)\s*=\s*["\'][^"\']+["\']'
+    severity: "critical"
+    description: "Hardcoded API key detected"
+    
+  - name: "hardcoded_secret"
+    pattern: '(secret|token)\s*=\s*["\'][A-Za-z0-9+/=]{20,}["\']'
+    severity: "critical"
+    description: "Hardcoded secret/token detected"
+
+  # Path Traversal patterns
+  - name: "path_traversal"
+    pattern: 'open\s*\([^)]*\.\.'
+    severity: "critical"
+    description: "Potential path traversal vulnerability"
+
+  # XSS patterns (for web applications)
+  - name: "xss_innerHTML"
+    pattern: '\.innerHTML\s*='
+    severity: "high"
+    description: "Use of innerHTML - potential XSS vulnerability"
+    
+  - name: "xss_dangerouslySetInnerHTML"
+    pattern: 'dangerouslySetInnerHTML'
+    severity: "high"
+    description: "React dangerouslySetInnerHTML - review for XSS"
+
+  # Weak cryptography patterns
+  - name: "weak_crypto_md5"
+    pattern: '(hashlib\.md5|MD5|md5\()'
+    severity: "medium"
+    description: "Use of MD5 - weak cryptographic hash"
+    
+  - name: "weak_crypto_sha1"
+    pattern: '(hashlib\.sha1|SHA1|sha1\()'
+    severity: "medium"
+    description: "Use of SHA1 - weak cryptographic hash"
+
+  # Insecure random patterns
+  - name: "insecure_random"
+    pattern: 'random\.(random|randint|choice|shuffle)'
+    severity: "medium"
+    description: "Use of random module for potentially security-sensitive operation"
