@@ -33,6 +33,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # Cryptography and hashing
 sha2 = "0.10"
 hex = "0.4"
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+rand = "0.8"
+
+# Database (Issue #4)
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 # WASM runtime
 wasmtime = "27.0"
@@ -91,6 +96,9 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 sha2.workspace = true
 hex.workspace = true
+ed25519-dalek.workspace = true
+rand.workspace = true
+rusqlite.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 config.workspace = true

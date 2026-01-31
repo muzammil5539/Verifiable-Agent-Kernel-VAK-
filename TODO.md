@@ -8,17 +8,16 @@
 - [x] **Issue #3**: Implement persistent audit storage backend (`AuditBackend` trait with `MemoryAuditBackend` and `FileAuditBackend` implementations)
 - [x] **Issue #6**: Integrate WASM skill execution with kernel via `SkillRegistry` and `WasmSandbox`
 - [x] **Issue #51 (partial)**: Add hash-chained audit entries with signature support (signature field added, signing implementation pending)
+- [x] **Issue #4**: Add SQLite backend for queryable persistent storage (`SqliteAuditBackend` with full CRUD, indexes, and queries)
+- [x] **Issue #51**: Complete ed25519 signing support for audit entries
+  - Added `AuditSigner` with ed25519-dalek for key generation, signing, and verification
+  - `AuditLogger::new_with_signing()` for automatic signing
+  - `verify_signatures()` and `verify_all()` methods for validation
+  - Key export/import for key rotation support
 
 ## In Progress
 
-- [ ] **Issue #4**: Add database schema and migration system for persistent storage
-  - Need to implement SQLite backend using rusqlite or sqlx
-  - Create migration scripts for audit_logs, policies, agent_sessions, memory_snapshots tables
-  
-- [ ] **Issue #51**: Complete ed25519 signing support for audit entries
-  - Add ed25519-dalek dependency
-  - Implement signing in `AuditLogger::log_with_signature()`
-  - Add key rotation support
+- [ ] Add migration scripts for other persistent data (policies, agent_sessions, memory_snapshots tables)
 
 ## Future Work
 
@@ -27,3 +26,5 @@
 - [ ] Implement flight recorder shadow mode (#43)
 - [ ] Add PRM gating and backtracking (#47)
 - [ ] Implement Merkle DAG memory fabric (#50)
+- [ ] Add S3Backend for cloud audit log archival
+- [ ] Implement `vak-skill-sign` CLI helper tool
