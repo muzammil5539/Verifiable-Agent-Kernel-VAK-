@@ -66,12 +66,21 @@
 //! ```
 
 mod prm;
+pub mod prm_gating;
 pub mod tree_search;
 pub mod verifier;
+pub mod z3_verifier;
 
 // Re-export all public types from PRM
 pub use prm::{
     LlmPrm, MockPrm, PrmConfig, PrmError, ProcessRewardModel, ReasoningStep, ThoughtScore,
+    PrmScorer, TrajectoryScore,
+};
+
+// Re-export PRM gating types (Issue #47)
+pub use prm_gating::{
+    AlternativeAction, BatchGateResult, GateConfig, GateContext, GateDecision, GateError,
+    GateStats, PrmGate,
 };
 
 // Re-export all public types from tree_search (NSR-003)
@@ -86,4 +95,9 @@ pub use verifier::{
     BatchVerificationResult, Constraint, ConstraintFile, ConstraintKind, ConstraintValue,
     ConstraintVerifier, Counterexample, FormalVerifier, VerificationError, VerificationResult,
     VerificationStatus, VerifierConfig, Z3Config, Z3Verifier,
+};
+
+// Re-export Z3 formal verifier types (Issue #12)
+pub use z3_verifier::{
+    SmtLibBuilder, Z3Config as Z3SolverConfig, Z3Error, Z3FormalVerifier, Z3Output,
 };

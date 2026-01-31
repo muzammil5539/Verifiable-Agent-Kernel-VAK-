@@ -134,6 +134,50 @@ impl fmt::Display for ThoughtScore {
     }
 }
 
+/// Aggregate score for a complete reasoning trajectory
+///
+/// Contains the overall score, individual step scores, and reasoning.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrajectoryScore {
+    /// Overall score for the trajectory (0.0-1.0)
+    pub overall_score: f64,
+    /// Individual step scores
+    pub step_scores: Vec<ThoughtScore>,
+    /// Reasoning for the overall score
+    pub reasoning: String,
+}
+
+impl TrajectoryScore {
+    /// Create a new trajectory score
+    pub fn new(overall_score: f64, step_scores: Vec<ThoughtScore>, reasoning: impl Into<String>) -> Self {
+        Self {
+            overall_score,
+            step_scores,
+            reasoning: reasoning.into(),
+        }
+    }
+}
+
+/// Alternative trait for PRM scoring (compatibility alias for prm_gating)
+///
+/// This trait provides an alternative interface for PRM scoring that takes
+/// history instead of context, for use with the gating module.
+#[async_trait]
+pub trait PrmScorer: Send + Sync {
+    /// Score a single reasoning step given history
+    async fn score_step(
+        &self,
+        step: &ReasoningStep,
+        history: &[ReasoningStep],
+    ) -> Result<ThoughtScore, PrmError>;
+
+    /// Score a complete reasoning trajectory
+    async fn score_trajectory(
+        &self,
+        steps: &[ReasoningStep],
+    ) -> Result<TrajectoryScore, PrmError>;
+}
+
 /// A single step in a reasoning chain
 ///
 /// Represents the thought, action, and observation at each step of

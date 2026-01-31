@@ -15,6 +15,8 @@
 pub mod episodic;
 pub mod ipfs;
 pub mod knowledge_graph;
+pub mod merkle_dag;
+pub mod migrations;
 pub mod storage;
 pub mod time_travel;
 pub mod vector_store;
@@ -33,6 +35,16 @@ pub use knowledge_graph::{
     Entity, EntityId, KnowledgeGraph, KnowledgeGraphConfig, KnowledgeGraphError,
     KnowledgeGraphExport, KnowledgeGraphResult, PropertyValue, RelationType, Relationship,
     RelationshipId,
+};
+
+pub use merkle_dag::{
+    ContentId as MerkleContentId, DagDiff, DagError, DagExport, DagNode as MerkleDagNode,
+    InclusionProof, MemorySnapshot, MerkleDag, NodeType, ProofStep,
+};
+
+pub use migrations::{
+    Migration, MigrationError, MigrationRecord, MigrationRunner, MigrationStatus,
+    get_all_migrations,
 };
 
 pub use storage::{

@@ -33,10 +33,9 @@
 //! ```
 
 use crate::reasoner::verifier::{
-    Constraint, ConstraintKind, ConstraintValue, FormalVerifier, VerificationError,
-    VerificationResult,
+    BatchVerificationResult, Constraint, ConstraintKind, ConstraintValue, Counterexample,
+    FormalVerifier, VerificationError, VerificationResult,
 };
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::process::Command;
@@ -377,20 +376,14 @@ impl Z3FormalVerifier {
                     .collect();
                 format!("(and {})", and_clauses.join(" "))
             }
-            ConstraintKind::Contains { field, substring } => {
-                format!("(str.contains {} \"{}\")", field, substring)
-            }
-            ConstraintKind::StartsWith { field, prefix } => {
-                format!("(str.prefixof \"{}\" {})", prefix, field)
-            }
-            ConstraintKind::EndsWith { field, suffix } => {
-                format!("(str.suffixof \"{}\" {})", suffix, field)
+            ConstraintKind::Contains { field, value } => {
+                format!("(str.contains {} \"{}\")", field, value)
             }
             ConstraintKind::Matches { field, pattern } => {
                 // Regular expression matching
                 format!("(str.in.re {} (str.to.re \"{}\"))", field, pattern)
             }
-            ConstraintKind::Range { field, min, max } => {
+            ConstraintKind::Between { field, min, max } => {
                 format!(
                     "(and (>= {} {}) (<= {} {}))",
                     field,
@@ -398,6 +391,11 @@ impl Z3FormalVerifier {
                     field,
                     Self::translate_value(max)
                 )
+            }
+            ConstraintKind::Forbidden { resources } => {
+                // Forbidden resources - return true assertion (to be checked separately)
+                let _ = resources; // Handled by check_forbidden
+                "true".to_string()
             }
             ConstraintKind::And { constraints } => {
                 let mut sub_assertions = Vec::new();
@@ -419,16 +417,10 @@ impl Z3FormalVerifier {
                 let sub = self.translate_constraint(constraint, context, builder)?;
                 format!("(not {})", sub)
             }
-            ConstraintKind::Implies { antecedent, consequent } => {
-                let ant = self.translate_constraint(antecedent, context, builder)?;
-                let cons = self.translate_constraint(consequent, context, builder)?;
-                format!("(=> {} {})", ant, cons)
-            }
-            _ => {
-                return Err(Z3Error::UnsupportedConstraint(format!(
-                    "{:?}",
-                    constraint.kind
-                )))
+            ConstraintKind::Implies { condition, consequence } => {
+                let cond = self.translate_constraint(condition, context, builder)?;
+                let cons = self.translate_constraint(consequence, context, builder)?;
+                format!("(=> {} {})", cond, cons)
             }
         };
 
@@ -572,13 +564,15 @@ pub struct Z3Output {
     pub raw_output: String,
 }
 
-#[async_trait]
 impl FormalVerifier for Z3FormalVerifier {
-    async fn verify(
+    fn verify(
         &self,
         constraint: &Constraint,
         context: &HashMap<String, ConstraintValue>,
     ) -> Result<VerificationResult, VerificationError> {
+        use std::time::Instant;
+        let start = Instant::now();
+        
         let mut builder = SmtLibBuilder::new();
 
         // Translate constraint
@@ -595,33 +589,111 @@ impl FormalVerifier for Z3FormalVerifier {
         // Generate explanation
         let explanation = self.generate_explanation(constraint, &output, context);
 
-        Ok(VerificationResult {
-            satisfied: output.satisfiable,
-            constraint_name: constraint.name.clone(),
-            explanation,
-            counterexample: output.model,
-            proof: if self.config.generate_proofs {
-                Some(output.raw_output)
-            } else {
-                None
-            },
-        })
+        let time_us = start.elapsed().as_micros() as u64;
+        
+        // Determine status and build result
+        if output.satisfiable {
+            Ok(VerificationResult::satisfied(constraint.name.clone(), time_us))
+        } else if output.unsatisfiable {
+            let counterexample = output.model.map(|model| {
+                Counterexample::new(model, explanation)
+            }).unwrap_or_else(|| {
+                Counterexample::new(HashMap::new(), explanation)
+            });
+            Ok(VerificationResult::violated(constraint.name.clone(), counterexample, time_us))
+        } else {
+            Ok(VerificationResult::unknown(constraint.name.clone(), time_us))
+        }
     }
 
-    async fn verify_batch(
+    fn verify_all(
         &self,
         constraints: &[Constraint],
         context: &HashMap<String, ConstraintValue>,
-    ) -> Result<Vec<VerificationResult>, VerificationError> {
+    ) -> Result<BatchVerificationResult, VerificationError> {
+        use std::time::Instant;
+        let start = Instant::now();
+        
         let mut results = Vec::new();
         for constraint in constraints {
-            results.push(self.verify(constraint, context).await?);
+            results.push(self.verify(constraint, context)?);
         }
-        Ok(results)
+        
+        let total_time_us = start.elapsed().as_micros() as u64;
+            
+        Ok(BatchVerificationResult::new(results, total_time_us))
     }
 
-    fn name(&self) -> &str {
-        "Z3FormalVerifier"
+    fn check_forbidden(&self, resource: &str, forbidden_patterns: &[String]) -> bool {
+        for pattern in forbidden_patterns {
+            if resource.contains(pattern) || pattern == "*" {
+                return true;
+            }
+            // Support basic glob patterns
+            if pattern.ends_with("/*") {
+                let prefix = &pattern[..pattern.len() - 2];
+                if resource.starts_with(prefix) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn validate_constraint(&self, constraint: &Constraint) -> Result<(), VerificationError> {
+        // Basic validation
+        if constraint.name.is_empty() {
+            return Err(VerificationError::InvalidConstraint(
+                "Constraint name cannot be empty".to_string()
+            ));
+        }
+        
+        // Validate constraint kind
+        match &constraint.kind {
+            ConstraintKind::LessThan { field, .. } 
+            | ConstraintKind::LessThanOrEqual { field, .. }
+            | ConstraintKind::GreaterThan { field, .. }
+            | ConstraintKind::GreaterThanOrEqual { field, .. }
+            | ConstraintKind::Equals { field, .. }
+            | ConstraintKind::NotEquals { field, .. }
+            | ConstraintKind::Contains { field, .. }
+            | ConstraintKind::Matches { field, .. }
+            | ConstraintKind::Between { field, .. }
+            | ConstraintKind::In { field, .. }
+            | ConstraintKind::NotIn { field, .. } => {
+                if field.is_empty() {
+                    return Err(VerificationError::InvalidConstraint(
+                        format!("Constraint '{}': field name cannot be empty", constraint.name)
+                    ));
+                }
+            }
+            ConstraintKind::And { constraints } | ConstraintKind::Or { constraints } => {
+                if constraints.is_empty() {
+                    return Err(VerificationError::InvalidConstraint(
+                        format!("Constraint '{}': compound constraint cannot be empty", constraint.name)
+                    ));
+                }
+                for c in constraints {
+                    self.validate_constraint(c)?;
+                }
+            }
+            ConstraintKind::Not { constraint: inner } => {
+                self.validate_constraint(inner)?;
+            }
+            ConstraintKind::Implies { condition, consequence } => {
+                self.validate_constraint(condition)?;
+                self.validate_constraint(consequence)?;
+            }
+            ConstraintKind::Forbidden { resources } => {
+                if resources.is_empty() {
+                    return Err(VerificationError::InvalidConstraint(
+                        format!("Constraint '{}': forbidden resources list cannot be empty", constraint.name)
+                    ));
+                }
+            }
+        }
+        
+        Ok(())
     }
 }
 

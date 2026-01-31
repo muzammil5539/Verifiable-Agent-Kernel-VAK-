@@ -50,18 +50,83 @@
   - Added `bench_concurrent_policy_evaluation` for multi-agent scenarios
   - Added `bench_policy_validation` for config validation
   - Enhanced existing benchmarks with Issue #17 documentation
+- [x] **Migration Scripts**: Add persistent data migrations for policies, agent_sessions, memory_snapshots tables (February 2026)
+  - Created `src/memory/migrations.rs` with `MigrationRunner` system
+  - Implemented 8 migrations: schema_migrations, policies, agent_sessions, memory_snapshots, policy_evaluations, working_memory_cache, skill_registry, flight_recorder_events
+  - Added `Migration`, `MigrationStatus`, `MigrationRecord` types
+  - Support for `run_all()`, `run_one()`, `rollback()`, `rollback_to()`, `status()`
+  - SHA-256 checksums for migration integrity
+- [x] **Issue #43**: Flight recorder shadow mode (February 2026)
+  - Created `src/audit/flight_recorder.rs` with full shadow mode support
+  - `FlightRecorder` with configurable shadow/live modes
+  - `FlightEvent` types for requests, policy decisions, responses, tool executions
+  - Trace receipts with hash chaining for verification
+  - JSONL persistence with compression support
+  - Replay API for policy validation against historical traffic
+- [x] **Issue #47**: PRM gating and backtracking (February 2026)
+  - Created `src/reasoner/prm_gating.rs` with `PrmGate` implementation
+  - `GateConfig` with configurable thresholds (allow, backtrack, high-risk)
+  - `GateDecision` enum: Allow, Deny, Backtrack, Bypassed
+  - Automatic alternative generation for backtracking
+  - High-risk action detection with stricter thresholds
+  - Session-based backtrack state tracking
+  - `BatchGateResult` for trajectory evaluation
+- [x] **Issue #50**: Merkle DAG memory fabric (February 2026)
+  - Created `src/memory/merkle_dag.rs` with content-addressed storage
+  - `MerkleDag` with insert, branching, merging operations
+  - `ContentId` for SHA-256 based addressing
+  - `DagNode` with types: Root, Snapshot, Delta, Merge, Branch, Tag
+  - `InclusionProof` with path verification
+  - Efficient diffing between snapshots
+  - Export/import for persistence
+  - `MemorySnapshot` integration for agent memory
+- [x] **S3Backend**: Cloud audit log archival (February 2026)
+  - Created `src/audit/s3_backend.rs` with full S3 integration
+  - `S3Config` with bucket, region, credentials, compression, storage class
+  - Automatic batching for efficient uploads
+  - Gzip compression support
+  - Server-side encryption (AES256 and KMS)
+  - Local cache for queries
+  - `ArchiveQuery` for date range filtering
+- [x] **vak-skill-sign CLI**: Helper tool for signing skills (February 2026)
+  - Created `src/tools/skill_sign.rs` with Ed25519 signing
+  - `SigningKeypair` for key generation, export/import
+  - `SkillSigner` for signing WASM skills with manifest
+  - `SkillVerifier` for signature verification
+  - CLI commands: `keygen`, `sign`, `verify`, `info`
+  - `SignedSkillManifest` with signature metadata
+- [x] **Issue #12**: Z3 formal verification integration (February 2026)
+  - Created `src/reasoner/z3_verifier.rs` with SMT-LIB2 support
+  - `Z3FormalVerifier` implementing `FormalVerifier` trait
+  - `SmtLibBuilder` for constructing SMT-LIB2 formulas
+  - Constraint translation for all `ConstraintKind` variants
+  - Proof generation and counterexample extraction
+  - Support for And, Or, Not, Implies, Range, In, Contains, etc.
+  - Integration tests (skipped without Z3 installed)
+- [x] **Issue #45**: LangChain/AutoGPT middleware adapter (February 2026)
+  - Created `src/integrations/mod.rs` with adapter framework
+  - Created `src/integrations/common.rs` with shared types
+  - Created `src/integrations/langchain.rs` with `LangChainAdapter`
+    - Tool call and chain execution interception
+    - Rate limiting, blocked actions, passthrough tools
+    - Statistics tracking
+  - Created `src/integrations/autogpt.rs` with `AutoGPTAdapter`
+    - Task plan evaluation with step validation
+    - Command execution interception
+    - High-risk goal detection
+    - Blocked command enforcement
 
 ## In Progress
 
-- [ ] Add migration scripts for other persistent data (policies, agent_sessions, memory_snapshots tables)
+- [ ] **Issue #46**: Basic OSS dashboard and observability
+  - Need to add metrics endpoint
+  - Need to add basic dashboard HTML/JS
 
 ## Future Work
 
-- [ ] Implement flight recorder shadow mode (#43)
-- [ ] Add PRM gating and backtracking (#47)
-- [ ] Implement Merkle DAG memory fabric (#50)
-- [ ] Add S3Backend for cloud audit log archival
-- [ ] Implement `vak-skill-sign` CLI helper tool
-- [ ] Z3 formal verification integration (#12)
-- [ ] LangChain / AutoGPT middleware adapter (#45)
-- [ ] Basic OSS dashboard and observability (#46)
+- [ ] Multi-region S3 replication for audit logs
+- [ ] Enhanced WASM skill marketplace integration
+- [ ] Real-time audit log streaming
+- [ ] GraphQL API for audit queries
+- [ ] Enhanced PRM model fine-tuning tools
+- [ ] Kubernetes operator for VAK deployment

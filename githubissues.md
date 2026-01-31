@@ -550,7 +550,7 @@ The vector store interface exists (`src/memory/vector_store.rs`) but the `InMemo
 
 ---
 
-### 🟠 Issue #43: Shadow-mode flight recorder with replayable audit
+### ✅ Issue #43: Shadow-mode flight recorder with replayable audit [RESOLVED]
 
 **Type**: Observability / Audit  
 **Priority**: High  
@@ -598,7 +598,7 @@ The kernel’s intercept loop is largely synchronous, limiting concurrent agent/
 
 ---
 
-### 🟠 Issue #47: PRM gating and backtracking in kernel
+### ✅ Issue #47: PRM gating [RESOLVED] and backtracking in kernel
 
 **Type**: Feature / Safety  
 **Priority**: High  
@@ -646,7 +646,7 @@ High-stakes actions (writes, external calls) are not passed through a formal ver
 
 ---
 
-### 🟠 Issue #50: Merkle DAG memory fabric with integrity proofs
+### ✅ Issue #50: Merkle DAG [RESOLVED] memory fabric with integrity proofs
 
 **Type**: Feature / Memory Integrity  
 **Priority**: High  
@@ -724,7 +724,7 @@ The time travel system (`src/memory/time_travel.rs`) creates memory snapshots bu
 
 ---
 
-### 🟠 Issue #12: Z3 formal verification is stub implementation
+### ✅ Issue #12: Z3 [RESOLVED] formal verification is stub implementation
 
 **Type**: Feature Gap  
 **Priority**: High  
@@ -1571,7 +1571,7 @@ $ cargo build
 
 ---
 
-### 🟡 Issue #45: LangChain / AutoGPT middleware adapter
+### ✅ Issue #45: LangChain [RESOLVED] / AutoGPT middleware adapter
 
 **Type**: Integration / Developer Experience  
 **Priority**: Medium  
