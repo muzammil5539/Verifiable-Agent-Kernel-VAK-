@@ -78,6 +78,12 @@ pub mod audit;
 /// LLM interface module for interacting with language models.
 pub mod llm;
 
+/// Reasoner module with Process Reward Model (PRM) integration.
+///
+/// Provides step-by-step validation of reasoning chains using PRMs
+/// to detect errors early and enable backtracking when needed.
+pub mod reasoner;
+
 /// Prelude module for convenient imports.
 ///
 /// # Example
