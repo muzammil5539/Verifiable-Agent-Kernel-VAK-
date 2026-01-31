@@ -55,7 +55,6 @@ module-name = "vak._vak_native"
 strip = true
 
 [tool.pytest.ini_options]
-asyncio_mode = "auto"
 testpaths = ["python/tests"]
 
 [tool.mypy]
