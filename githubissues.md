@@ -1,0 +1,2024 @@
+# VAK Project Issues & Improvements
+
+**Generated**: January 31, 2026  
+**Repository**: Verifiable Agent Kernel (VAK) / Exo-Cortex  
+**Version**: v0.1 (Alpha)
+
+---
+
+## 📋 Table of Contents
+
+1. [Critical Issues](#1-critical-issues)
+2. [High Priority Issues](#2-high-priority-issues)
+3. [Medium Priority Issues](#3-medium-priority-issues)
+4. [Low Priority Issues](#4-low-priority-issues)
+5. [Documentation Issues](#5-documentation-issues)
+6. [Testing Issues](#6-testing-issues)
+7. [Configuration & Dependencies](#7-configuration--dependencies)
+8. [Security Concerns](#8-security-concerns)
+9. [Performance & Optimization](#9-performance--optimization)
+10. [Future Enhancements](#10-future-enhancements)
+
+---
+
+## Issue Summary
+
+| Priority | Count | Status |
+|----------|-------|--------|
+| 🔴 Critical | 8 | Needs immediate attention |
+| 🟠 High | 7 | Important for production |
+| 🟡 Medium | 9 | Should be addressed |
+| 🟢 Low | 6 | Nice to have |
+| **Total** | **30** | |
+
+---
+
+## 1. Critical Issues
+
+### 🔴 Issue #1: Excessive unwrap() calls causing potential panics
+
+**Type**: Code Quality / Stability  
+**Priority**: Critical  
+**Estimated Effort**: 3-5 days  
+
+**Description**:
+The codebase contains 60+ instances of `.unwrap()` calls which can cause panics in production when encountering unexpected errors. This violates Rust best practices and can lead to service crashes.
+
+**Affected Files**:
+- `src/memory/knowledge_graph.rs` - Multiple unwrap chains in entity/relationship management
+- `src/reasoner/prm.rs` - LLM response parsing without proper error handling (lines 100-150)
+- `src/sandbox/mod.rs` - WASM engine creation with unwrap
+- `src/llm/litellm.rs` - HTTP response parsing
+- `src/memory/episodic.rs` - Hash computation unwrap calls
+- `src/swarm/voting.rs` - Vote calculation unwraps
+
+**Example**:
+```rust
+// BAD - Current code
+let entity = self.entities.get(&id).unwrap();
+
+// GOOD - Proper error handling
+let entity = self.entities.get(&id)
+    .ok_or(KnowledgeGraphError::EntityNotFound(id))?;
+```
+
+**Impact**:
+- High risk of production crashes
+- Poor error messages for users
+- Difficult to debug failures
+
+**Recommended Fix**:
+1. Replace all unwrap() with proper Result/Option handling
+2. Define custom error types where needed
+3. Add error context with `.context()` from anyhow
+4. Add recovery strategies for non-fatal errors
+
+**Related Issues**: #2, #8
+
+---
+
+### 🔴 Issue #2: Missing error propagation in policy evaluation chain
+
+**Type**: Bug / Robustness  
+**Priority**: Critical  
+**Estimated Effort**: 2-3 days  
+
+**Description**:
+The policy evaluation chain doesn't properly propagate errors from nested evaluations, leading to silent failures where policies might incorrectly allow/deny actions.
+
+**Affected Files**:
+- `src/policy/mod.rs` - Policy evaluation logic (lines 200-350)
+- `src/kernel/mod.rs` - Tool execution wrapper (lines 150-200)
+
+**Example Scenario**:
+```rust
+// If condition evaluation fails, the entire policy check silently succeeds
+// This could allow unauthorized actions
+let result = self.evaluate_condition(condition); // Returns default on error
+```
+
+**Impact**:
+- Security vulnerability (bypass policies on error)
+- Audit trail gaps
+- Unpredictable agent behavior
+
+**Recommended Fix**:
+1. Ensure all policy evaluation errors bubble up
+2. Add explicit "deny on error" policy
+3. Log all evaluation failures to audit log
+4. Add integration tests for error scenarios
+
+**Related Issues**: #1, #19
+
+---
+
+### 🔴 Issue #3: Audit logs stored only in memory (not persistent)
+
+**Type**: Feature Gap / Production Readiness  
+**Priority**: Critical  
+**Estimated Effort**: 1 week  
+
+**Description**:
+The audit logger stores all entries in memory (`Vec<AuditEntry>`), which means audit trails are lost on restart or crash. This violates compliance requirements for production systems.
+
+**Affected Files**:
+- `src/audit/mod.rs` - AuditLogger implementation (lines 50-200)
+- `src/kernel/mod.rs` - Kernel initialization
+
+**Current Limitations**:
+- No persistence layer
+- Memory grows unbounded
+- No replay capability after restart
+- Audit integrity lost on crash
+
+**Impact**:
+- Cannot meet compliance requirements (SOX, GDPR, etc.)
+- No forensic analysis capability after incidents
+- Memory exhaustion risk for long-running agents
+
+**Recommended Fix**:
+1. Implement `AuditBackend` trait with multiple implementations:
+   - `FileBackend` - append-only log files with rotation
+   - `DatabaseBackend` - PostgreSQL/SQLite for queries
+   - `S3Backend` - cloud storage for archival
+2. Add periodic flush mechanism
+3. Implement log rotation and archival
+4. Add recovery mechanism to rebuild audit chain from disk
+
+**Related Implementation**:
+- Can leverage existing `StorageManager` from `src/memory/storage.rs`
+- Reference: `INF-001` in `plan-vakImplementation.prompt.md`
+
+**Related Issues**: #4, #20
+
+---
+
+### 🔴 Issue #4: No database schema or migration system
+
+**Type**: Infrastructure  
+**Priority**: Critical  
+**Estimated Effort**: 1 week  
+
+**Description**:
+The project lacks a proper database schema and migration system for persistent storage. All data is currently in-memory which prevents production deployment.
+
+**Affected Components**:
+- Audit logs
+- Policy rules
+- Agent state
+- Memory snapshots
+- Skill registry
+
+**Current State**:
+- No SQL schema definitions
+- No migration tools (e.g., diesel, sqlx migrations)
+- No data versioning strategy
+
+**Impact**:
+- Cannot deploy to production
+- Data loss on restart
+- No upgrade path for schema changes
+- Testing requires in-memory mocks only
+
+**Recommended Fix**:
+1. Choose database: SQLite (embedded) or PostgreSQL (production)
+2. Create schema for:
+   - `audit_logs` table (id, timestamp, agent_id, action, decision, prev_hash, hash)
+   - `policies` table (id, priority, effect, patterns, conditions)
+   - `agent_sessions` table (session_id, agent_id, state, created_at)
+   - `memory_snapshots` table (snapshot_id, agent_id, merkle_root, data)
+3. Add migration system (sqlx-cli or diesel-cli)
+4. Implement `DatabaseBackend` for all storage traits
+
+**Example Schema**:
+```sql
+CREATE TABLE audit_logs (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMPTZ NOT NULL,
+    agent_id UUID NOT NULL,
+    action TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    prev_hash TEXT,
+    hash TEXT NOT NULL UNIQUE,
+    metadata JSONB
+);
+CREATE INDEX idx_audit_agent ON audit_logs(agent_id, timestamp);
+```
+
+**Related Issues**: #3, #11
+
+---
+
+### 🔴 Issue #5: Skill registry integration incomplete (hardcoded tools)
+
+**Type**: Bug / Implementation Gap  
+**Priority**: Critical  
+**Estimated Effort**: 2-3 days  
+
+**Description**:
+The Python SDK returns hardcoded tool names instead of querying the actual skill registry. This makes it impossible to dynamically load and use custom skills.
+
+**Affected Files**:
+- `src/python.rs` - Line 349 has explicit TODO comment:
+  ```rust
+  // TODO: Integrate with skill registry
+  Ok(vec!["calculator".to_string(), "web_search".to_string(), "file_reader".to_string()])
+  ```
+
+**Current Behavior**:
+- `kernel.list_tools()` always returns 3 hardcoded tools
+- Custom skills in `skills/` directory are ignored
+- Skill manifests not loaded
+- WASM modules not executed
+
+**Expected Behavior**:
+- Query `SkillRegistry` for available skills
+- Return actual skill names from loaded manifests
+- Support dynamic skill loading/unloading
+- Execute WASM skills through sandbox
+
+**Impact**:
+- Cannot use custom skills
+- Agent capabilities are fixed at compile time
+- Skill development workflow broken
+
+**Recommended Fix**:
+```rust
+// In src/python.rs
+pub fn list_tools(&self) -> PyResult<Vec<String>> {
+    let registry = self.inner.skill_registry();
+    let skills = registry.list_skills()
+        .map_err(|e| PyErr::new::<PyRuntimeError, _>(format!("Failed to list skills: {}", e)))?;
+    Ok(skills.iter().map(|s| s.name.clone()).collect())
+}
+```
+
+**Related Issues**: #6, #10
+
+---
+
+### 🔴 Issue #6: WASM skill execution not integrated with kernel
+
+**Type**: Implementation Gap  
+**Priority**: Critical  
+**Estimated Effort**: 3-5 days  
+
+**Description**:
+While the WASM sandbox exists (`src/sandbox/mod.rs`), it's not integrated into the kernel's tool execution pipeline. Skills cannot be executed through the normal agent workflow.
+
+**Affected Files**:
+- `src/kernel/mod.rs` - `execute_tool()` method (line 180)
+- `src/sandbox/mod.rs` - WasmSandbox implementation
+- `src/sandbox/registry.rs` - SkillRegistry
+
+**Current Flow**:
+```
+Agent -> Kernel.execute_tool() -> [no WASM execution] -> Mock response
+```
+
+**Expected Flow**:
+```
+Agent -> Kernel.execute_tool() -> Policy Check -> SkillRegistry.get(tool_name) 
+      -> WasmSandbox.execute() -> Response
+```
+
+**Missing Components**:
+1. Tool name → Skill mapping
+2. Input JSON → WASM params conversion
+3. WASM output → ToolResponse conversion
+4. Error handling for WASM execution failures
+5. Resource limit enforcement during execution
+
+**Impact**:
+- Core feature (skill execution) not working
+- Cannot demonstrate sandboxed execution
+- Defeats purpose of WASM security model
+
+**Recommended Fix**:
+1. Add `skill_registry: Arc<SkillRegistry>` to Kernel struct
+2. Modify `execute_tool()` to:
+   - Look up skill in registry
+   - Load WASM module if needed
+   - Execute in sandbox with limits
+   - Convert result to ToolResponse
+3. Add integration tests for skill execution flow
+
+**Related Issues**: #5, #7
+
+---
+
+### 🔴 Issue #7: Signature verification not enforced on skill loading
+
+**Type**: Security  
+**Priority**: Critical  
+**Estimated Effort**: 2 days  
+
+**Description**:
+While skill signature verification code exists in `src/sandbox/registry.rs`, it's not enforced by default. Unsigned skills can be loaded and executed, creating a security vulnerability.
+
+**Affected Files**:
+- `src/sandbox/registry.rs` - `SkillRegistry::load_skill()` (lines 150-200)
+- `src/sandbox/mod.rs` - WasmSandbox initialization
+
+**Current Behavior**:
+- Signature verification is opt-in via `SignatureConfig::strict()`
+- Default mode is permissive (allows unsigned skills)
+- No warning when loading unsigned skills
+
+**Security Risk**:
+- Malicious skills can be injected
+- No chain of trust for skill provenance
+- Tampering with WASM modules goes undetected
+
+**Recommended Fix**:
+1. Make signature verification **mandatory by default**
+2. Add explicit flag to allow unsigned skills (dev mode only)
+3. Implement signing tool for skill developers:
+   ```bash
+   cargo run --bin vak-skill-sign -- skills/my_skill/
+   ```
+4. Add verification to CI/CD pipeline
+5. Log signature verification results to audit log
+
+**Configuration**:
+```rust
+// Should be default
+let registry = SkillRegistry::new()
+    .with_signature_verification(SignatureConfig::strict())
+    .build();
+```
+
+**Related Issues**: #19, #21
+
+---
+
+### 🔴 Issue #8: LLM error handling lacks retry logic and fallback
+
+**Type**: Reliability  
+**Priority**: Critical  
+**Estimated Effort**: 2-3 days  
+
+**Description**:
+The LLM interface (`src/llm/litellm.rs`) has no retry logic for transient failures (timeouts, rate limits, service errors). A single failed API call causes the entire agent operation to fail.
+
+**Affected Files**:
+- `src/llm/litellm.rs` - `LiteLlmClient::complete()` (lines 80-150)
+- `src/reasoner/prm.rs` - PRM scoring calls LLM without fallback
+
+**Common Failure Modes**:
+- HTTP timeouts (30s default)
+- Rate limiting (429 errors)
+- Service unavailable (503 errors)
+- Network errors
+- API quota exhausted
+
+**Current Behavior**:
+```rust
+let response = self.client.post(url).send().await?; // No retry
+```
+
+**Impact**:
+- Agent workflows fail completely on transient errors
+- Poor user experience
+- Cannot use in production with SLA requirements
+
+**Recommended Fix**:
+1. Implement exponential backoff retry:
+   ```rust
+   use tokio_retry::{Retry, strategy::ExponentialBackoff};
+   
+   let retry_strategy = ExponentialBackoff::from_millis(100)
+       .max_delay(Duration::from_secs(10))
+       .take(5);
+   
+   Retry::spawn(retry_strategy, || async {
+       self.client.post(url).send().await
+   }).await?
+   ```
+2. Add circuit breaker pattern
+3. Implement fallback to simpler models (GPT-4 → GPT-3.5)
+4. Add timeout configuration per model
+5. Cache responses for repeated queries
+
+**Configuration**:
+```yaml
+llm:
+  retry:
+    max_attempts: 5
+    initial_delay_ms: 100
+    max_delay_ms: 10000
+  circuit_breaker:
+    failure_threshold: 5
+    timeout_seconds: 60
+  fallback_models:
+    - gpt-4-turbo
+    - gpt-3.5-turbo
+```
+
+**Related Issues**: #15, #25
+
+---
+
+## 2. High Priority Issues
+
+### 🟠 Issue #9: No integration tests for kernel + policy + audit workflow
+
+**Type**: Testing  
+**Priority**: High  
+**Estimated Effort**: 5-7 days  
+
+**Description**:
+The project has good unit test coverage but lacks end-to-end integration tests that verify the complete workflow: agent request → policy check → audit log → tool execution → response.
+
+**Current Test Coverage**:
+- ✅ Unit tests: 416 Rust tests passing
+- ✅ Python tests: 126 tests passing
+- ❌ Integration tests: None
+- ❌ System tests: None
+
+**Missing Test Scenarios**:
+1. Full agent workflow with policy enforcement
+2. Multi-agent coordination scenarios
+3. Policy conflict resolution
+4. Audit chain integrity under concurrent load
+5. Error recovery and rollback
+6. Memory overflow handling
+7. WASM skill execution with resource limits
+8. Python SDK → Rust boundary integration
+
+**Affected Areas**:
+- `tests/` directory is empty
+- No `tests/integration/` directory
+- No Docker Compose for test infrastructure
+
+**Impact**:
+- Cannot verify system works end-to-end
+- Regressions go undetected
+- Difficult to refactor with confidence
+
+**Recommended Fix**:
+1. Create `tests/integration/` directory structure:
+   ```
+   tests/
+   ├── integration/
+   │   ├── test_kernel_workflow.rs
+   │   ├── test_policy_enforcement.rs
+   │   ├── test_audit_integrity.rs
+   │   ├── test_skill_execution.rs
+   │   └── test_multi_agent.rs
+   └── fixtures/
+       ├── policies/
+       ├── skills/
+       └── test_data/
+   ```
+
+2. Write comprehensive integration tests:
+   ```rust
+   #[tokio::test]
+   async fn test_full_agent_workflow() {
+       // Setup: kernel, policies, skills
+       let kernel = setup_test_kernel().await;
+       
+       // Execute: agent makes request
+       let request = ToolRequest::new(agent_id, "file_read", params);
+       let response = kernel.execute_tool(request).await;
+       
+       // Verify: policy was checked, audit logged, tool executed
+       assert!(response.is_ok());
+       let audit_log = kernel.get_audit_trail(agent_id).await;
+       assert_eq!(audit_log.len(), 1);
+   }
+   ```
+
+3. Add CI pipeline for integration tests
+
+**Related Issues**: #10, #17
+
+---
+
+### 🟠 Issue #10: Vector store implementation is placeholder only
+
+**Type**: Feature Gap  
+**Priority**: High  
+**Estimated Effort**: 1 week  
+
+**Description**:
+The vector store interface exists (`src/memory/vector_store.rs`) but the `InMemoryVectorStore` is a basic implementation without actual vector similarity search, indexing, or optimization.
+
+**Affected Files**:
+- `src/memory/vector_store.rs` - InMemoryVectorStore implementation (lines 100-300)
+- `src/memory/mod.rs` - Memory integration
+
+**Current Limitations**:
+- No HNSW or IVF indexing (linear search only)
+- No approximate nearest neighbor (ANN) search
+- No batch operations optimization
+- Limited to small datasets (< 10k vectors)
+- No persistence
+
+**Missing Features**:
+1. Efficient similarity search algorithms
+2. Vector quantization for memory efficiency
+3. Incremental index updates
+4. Multi-collection support
+5. Metadata filtering optimization
+6. Integration with embedding models
+
+**Impact**:
+- Semantic memory retrieval is slow
+- Cannot scale to large knowledge bases
+- Agent reasoning limited by poor retrieval
+
+**Recommended Fix**:
+1. **Short-term**: Optimize InMemoryVectorStore with HNSW graph
+2. **Medium-term**: Integrate with LanceDB (already in dependencies)
+   ```rust
+   use lancedb::{Connection, Table};
+   
+   pub struct LanceDbVectorStore {
+       conn: Connection,
+       table: Table,
+   }
+   
+   impl VectorStore for LanceDbVectorStore {
+       async fn search_similar(&self, query: &[f32], k: usize) -> Result<Vec<VectorEntry>> {
+           self.table.query()
+               .nearest_to(query)
+               .limit(k)
+               .execute()
+               .await
+       }
+   }
+   ```
+3. Add benchmarks for 10k, 100k, 1M vectors
+4. Document vector store selection guide
+
+**Related Issues**: #11, #26
+
+---
+
+### 🟠 Issue #11: No persistent storage backend for memory snapshots
+
+**Type**: Feature Gap  
+**Priority**: High  
+**Estimated Effort**: 1 week  
+
+**Description**:
+The time travel system (`src/memory/time_travel.rs`) creates memory snapshots but stores them only in memory. Agent state is lost on restart.
+
+**Affected Files**:
+- `src/memory/time_travel.rs` - TimeTravelManager (lines 1-400)
+- `src/memory/storage.rs` - Storage backends
+
+**Current State**:
+- Snapshots stored in `HashMap<SnapshotId, StateCheckpoint>`
+- No serialization to disk
+- No compression
+- Memory grows unbounded
+
+**Use Cases Blocked**:
+- Long-running agents (need to restart)
+- Agent migration between servers
+- Forensic analysis of past agent states
+- Disaster recovery
+
+**Impact**:
+- Cannot resume agent conversations
+- No state backup
+- Memory exhaustion on long episodes
+
+**Recommended Fix**:
+1. Implement `SnapshotBackend` trait:
+   ```rust
+   #[async_trait]
+   pub trait SnapshotBackend: Send + Sync {
+       async fn save_snapshot(&self, id: &SnapshotId, checkpoint: &StateCheckpoint) -> Result<()>;
+       async fn load_snapshot(&self, id: &SnapshotId) -> Result<StateCheckpoint>;
+       async fn list_snapshots(&self) -> Result<Vec<SnapshotId>>;
+       async fn delete_snapshot(&self, id: &SnapshotId) -> Result<()>;
+   }
+   ```
+
+2. Implement backends:
+   - `FileBackend` - JSON/CBOR files with compression
+   - `S3Backend` - Cloud storage for production
+   - `PostgresBackend` - Queryable snapshots
+
+3. Add automatic snapshot pruning (keep last N or by time)
+4. Implement lazy loading of old snapshots
+
+**Related Issues**: #3, #4
+
+---
+
+### 🟠 Issue #12: Z3 formal verification is stub implementation
+
+**Type**: Feature Gap  
+**Priority**: High  
+**Estimated Effort**: 1 week  
+
+**Description**:
+The `ConstraintVerifier` in `src/reasoner/verifier.rs` is a pure Rust implementation that does simple constraint checking but doesn't use the actual Z3 SMT solver for formal verification.
+
+**Affected Files**:
+- `src/reasoner/verifier.rs` - Z3Verifier alias (line 10)
+- `Cargo.toml` - No z3 dependency
+
+**Current Capabilities**:
+- ✅ Basic constraint types (Equals, LessThan, In, etc.)
+- ✅ YAML constraint loading
+- ❌ SAT solving
+- ❌ Proof generation
+- ❌ Complex logical formulas (quantifiers, bitvectors)
+- ❌ Counterexample generation
+
+**Limitation Example**:
+```rust
+// Current: Can check simple constraints
+let constraint = Constraint::LessThan { field: "age", value: 18 };
+
+// Cannot verify: Complex logical properties
+// ∀x ∈ agents: (x.role = "admin" ⟹ x.can_delete = true) ∧ (x.suspended = false)
+```
+
+**Impact**:
+- Cannot verify complex safety properties
+- No mathematical proof of policy correctness
+- Limited to runtime checks (not static verification)
+
+**Recommended Fix**:
+1. Add Z3 dependency:
+   ```toml
+   [dependencies]
+   z3 = { version = "0.12", optional = true }
+   z3-sys = { version = "0.8", optional = true }
+   
+   [features]
+   default = []
+   formal-verification = ["z3", "z3-sys"]
+   ```
+
+2. Implement `Z3FormalVerifier`:
+   ```rust
+   use z3::{Config, Context, Solver};
+   
+   pub struct Z3FormalVerifier {
+       context: Context,
+       solver: Solver<'_>,
+   }
+   
+   impl FormalVerifier for Z3FormalVerifier {
+       async fn verify(&self, constraint: &Constraint) -> Result<VerificationResult> {
+           // Translate constraint to SMT-LIB2
+           // Check satisfiability
+           // Generate proof or counterexample
+       }
+   }
+   ```
+
+3. Add translation from Constraint DSL to SMT-LIB2
+4. Generate human-readable proof explanations
+
+**Alternative**:
+- Use CVC5 instead of Z3 (MIT license, more Rust-friendly)
+
+**Related Issues**: #15, #23
+
+---
+
+### 🟠 Issue #13: No rate limiting on policy evaluation
+
+**Type**: Security / Performance  
+**Priority**: High  
+**Estimated Effort**: 2-3 days  
+
+**Description**:
+The policy engine has no rate limiting, allowing an agent to flood the system with policy evaluation requests (potential DoS attack or resource exhaustion).
+
+**Affected Files**:
+- `src/policy/mod.rs` - PolicyEngine::evaluate() (no rate limiting)
+- `src/kernel/mod.rs` - Tool execution (no throttling)
+
+**Attack Scenarios**:
+1. Malicious agent sends 1000s of policy checks per second
+2. Infinite loop in agent generates unbounded requests
+3. Multiple agents coordinate to exhaust CPU
+
+**Current Behavior**:
+- No request counting
+- No rate limiting
+- No backpressure mechanism
+
+**Impact**:
+- System can be overwhelmed
+- Legitimate agents starved
+- CPU exhaustion
+
+**Recommended Fix**:
+1. Implement rate limiter using token bucket:
+   ```rust
+   use governor::{Quota, RateLimiter};
+   
+   pub struct PolicyEngine {
+       rate_limiter: RateLimiter<AgentId>,
+       // 100 requests per second per agent
+       quota: Quota::per_second(nonzero!(100u32)),
+   }
+   
+   pub async fn evaluate(&self, request: &PolicyRequest) -> Result<PolicyDecision> {
+       // Check rate limit
+       self.rate_limiter.until_ready_with_jitter(request.agent_id).await;
+       
+       // Proceed with evaluation
+       self.evaluate_internal(request)
+   }
+   ```
+
+2. Add configuration:
+   ```yaml
+   policy_engine:
+     rate_limits:
+       per_agent_per_second: 100
+       per_session_per_minute: 1000
+       burst_size: 10
+   ```
+
+3. Return 429 Too Many Requests on limit exceeded
+4. Log rate limit violations to audit trail
+
+**Related Issues**: #19, #21
+
+---
+
+### 🟠 Issue #14: No input sanitization guide for skill developers
+
+**Type**: Documentation / Security  
+**Priority**: High  
+**Estimated Effort**: 1-2 days  
+
+**Description**:
+The skills README and examples don't provide guidance on input sanitization, validation, or security best practices for skill developers.
+
+**Affected Files**:
+- `skills/README.md` - Missing security section
+- `examples/` - No security examples
+- `skills/calculator/` - No input validation examples
+
+**Missing Guidance**:
+1. Input validation patterns
+2. SQL injection prevention
+3. Command injection prevention
+4. Path traversal prevention
+5. Resource limit handling
+6. Error message sanitization (no sensitive data leaks)
+
+**Current Risk**:
+- Skill developers may write vulnerable code
+- No security review checklist
+- No automated security scanning
+
+**Recommended Fix**:
+1. Add "Skill Security Guide" section to `skills/README.md`:
+   ```markdown
+   ## Security Best Practices
+   
+   ### Input Validation
+   - ✅ Always validate input types and ranges
+   - ✅ Use allowlists, not denylists
+   - ✅ Sanitize strings before passing to external systems
+   
+   ### Examples
+   See `skills/examples/secure_skill/` for reference implementation
+   ```
+
+2. Create example secure skill with validation:
+   ```rust
+   // skills/examples/secure_skill/src/lib.rs
+   #[no_mangle]
+   pub extern "C" fn execute(input_ptr: *const u8, input_len: usize) -> *const u8 {
+       // Validate input length
+       if input_len > MAX_INPUT_SIZE {
+           return error("Input too large");
+       }
+       
+       // Parse and validate JSON
+       let input: Input = match serde_json::from_slice(input) {
+           Ok(input) => input,
+           Err(_) => return error("Invalid JSON"),
+       };
+       
+       // Validate fields
+       if !is_valid_path(&input.path) {
+           return error("Invalid path");
+       }
+       
+       // Safe execution
+       ...
+   }
+   ```
+
+3. Add automated security checks:
+   - Cargo-audit for dependencies
+   - Clippy security lints
+   - SAST tools (cargo-deny, rust-semverver)
+
+**Related Issues**: #7, #19
+
+---
+
+### 🟠 Issue #15: Working memory token estimation inaccurate
+
+**Type**: Bug / Accuracy  
+**Priority**: High  
+**Estimated Effort**: 2-3 days  
+
+**Description**:
+The `WorkingMemory` implementation in `src/memory/working.rs` uses a simple character-based heuristic to estimate token counts (chars / 4), which is inaccurate for non-English text and code.
+
+**Affected Files**:
+- `src/memory/working.rs` - `estimate_tokens()` function (line 200)
+
+**Current Implementation**:
+```rust
+fn estimate_tokens(&self, text: &str) -> usize {
+    text.chars().count() / 4  // Rough approximation
+}
+```
+
+**Problems**:
+1. Inaccurate for code (tokens != words)
+2. Wrong for non-English (Chinese, Japanese)
+3. Doesn't account for special tokens
+4. GPT-4 vs GPT-3.5 tokenization differs
+
+**Impact**:
+- Context window overflow (truncated conversations)
+- Premature summarization
+- Inefficient memory usage
+
+**Recommended Fix**:
+1. Integrate proper tokenizer library:
+   ```toml
+   [dependencies]
+   tiktoken-rs = "0.5"  # OpenAI tokenizer
+   ```
+
+2. Update implementation:
+   ```rust
+   use tiktoken_rs::cl100k_base;  // GPT-4 tokenizer
+   
+   pub struct WorkingMemory {
+       tokenizer: CoreBPE,
+       // ...
+   }
+   
+   fn estimate_tokens(&self, text: &str) -> usize {
+       self.tokenizer.encode_with_special_tokens(text).len()
+   }
+   ```
+
+3. Add configuration for different models:
+   ```yaml
+   working_memory:
+     tokenizer: cl100k_base  # GPT-4
+     # tokenizer: p50k_base  # GPT-3.5
+     max_tokens: 8000
+   ```
+
+4. Add tests with known token counts
+
+**Related Issues**: #8, #26
+
+---
+
+## 3. Medium Priority Issues
+
+### 🟡 Issue #16: Large files should be split (1000+ lines)
+
+**Type**: Code Quality  
+**Priority**: Medium  
+**Estimated Effort**: 2-3 days  
+
+**Description**:
+Several modules exceed 1000 lines, making them difficult to navigate, test, and maintain.
+
+**Large Files**:
+- `src/memory/knowledge_graph.rs` - 650+ lines (borderline)
+- `src/reasoner/prm.rs` - 450+ lines
+- `examples/code_auditor_demo.rs` - 800+ lines
+- `examples/code_auditor_python.py` - 700+ lines
+
+**Recommendation**:
+1. Split by responsibility:
+   ```
+   src/memory/knowledge_graph/
+   ├── mod.rs          # Public API
+   ├── entity.rs       # Entity operations
+   ├── relationship.rs # Relationship operations
+   ├── query.rs        # Query methods
+   └── serialization.rs # Import/export
+   ```
+
+2. Extract common utilities
+3. Move tests to separate test modules
+
+**Impact**:
+- Medium - affects maintainability but not functionality
+
+**Related Issues**: None
+
+---
+
+### 🟡 Issue #17: No benchmarks for critical paths
+
+**Type**: Performance  
+**Priority**: Medium  
+**Estimated Effort**: 3-5 days  
+
+**Description**:
+The project has a `benches/` directory but no actual benchmark implementations for performance-critical operations.
+
+**Missing Benchmarks**:
+1. Policy evaluation (1k rules, 10k rules)
+2. Audit log verification (chain of 1M entries)
+3. Memory retrieval (semantic search in 100k vectors)
+4. WASM skill execution overhead
+5. Concurrent agent load (10, 100, 1000 agents)
+6. Merkle proof generation
+
+**Affected Files**:
+- `benches/` - Empty directory
+
+**Impact**:
+- Cannot detect performance regressions
+- No baseline metrics
+- Unknown scalability limits
+
+**Recommended Fix**:
+1. Use criterion.rs for benchmarks:
+   ```rust
+   // benches/policy_benchmark.rs
+   use criterion::{black_box, criterion_group, criterion_main, Criterion};
+   
+   fn policy_evaluation_benchmark(c: &mut Criterion) {
+       let engine = setup_policy_engine_with_1k_rules();
+       
+       c.bench_function("policy_eval_1k_rules", |b| {
+           b.iter(|| {
+               let request = black_box(create_test_request());
+               engine.evaluate(&request)
+           })
+       });
+   }
+   
+   criterion_group!(benches, policy_evaluation_benchmark);
+   criterion_main!(benches);
+   ```
+
+2. Add CI benchmark tracking (track performance over time)
+3. Set performance budgets (e.g., policy eval < 1ms)
+
+**Related Issues**: #10, #18
+
+---
+
+### 🟡 Issue #18: Python SDK async support incomplete
+
+**Type**: Feature Gap  
+**Priority**: Medium  
+**Estimated Effort**: 1 week  
+
+**Description**:
+The Python SDK uses synchronous bindings but the Rust implementation is async. This forces unnecessary blocking and limits Python integration with async frameworks like FastAPI.
+
+**Affected Files**:
+- `src/python.rs` - All methods use blocking wrappers
+- `python/vak/__init__.py` - No async methods
+
+**Current Limitation**:
+```python
+# Forces blocking in async context
+async def agent_handler():
+    kernel = VakKernel()
+    result = kernel.execute_tool(request)  # Blocks event loop!
+    return result
+```
+
+**Expected Behavior**:
+```python
+async def agent_handler():
+    kernel = VakKernel()
+    result = await kernel.execute_tool_async(request)  # Non-blocking
+    return result
+```
+
+**Impact**:
+- Poor performance in async Python apps
+- Cannot integrate with FastAPI, aiohttp
+- Blocks event loop
+
+**Recommended Fix**:
+1. Add pyo3-asyncio dependency:
+   ```toml
+   [dependencies]
+   pyo3-asyncio = { version = "0.20", features = ["tokio-runtime"] }
+   ```
+
+2. Implement async methods:
+   ```rust
+   #[pyclass]
+   impl VakKernel {
+       #[pyo3(name = "execute_tool_async")]
+       fn execute_tool_async_py<'py>(
+           &self,
+           py: Python<'py>,
+           request: ToolRequest,
+       ) -> PyResult<&'py PyAny> {
+           let kernel = self.inner.clone();
+           pyo3_asyncio::tokio::future_into_py(py, async move {
+               kernel.execute_tool(request).await
+                   .map_err(|e| PyErr::new::<PyRuntimeError, _>(e.to_string()))
+           })
+       }
+   }
+   ```
+
+3. Update Python SDK:
+   ```python
+   class VakKernel:
+       async def execute_tool_async(self, request: ToolRequest) -> ToolResponse:
+           return await self._kernel.execute_tool_async(request)
+   ```
+
+**Related Issues**: #9
+
+---
+
+### 🟡 Issue #19: Default deny policy not validated on startup
+
+**Type**: Security / Configuration  
+**Priority**: Medium  
+**Estimated Effort**: 1-2 days  
+
+**Description**:
+The policy engine defaults to "deny all" if no policies are loaded, but this isn't validated or documented. An empty policy directory silently blocks all agent actions.
+
+**Affected Files**:
+- `src/policy/mod.rs` - PolicyEngine initialization
+- `src/kernel/mod.rs` - Kernel startup
+
+**Current Behavior**:
+- Empty policy directory → all actions denied
+- No startup validation
+- No warning logged
+
+**Problems**:
+1. Confusing for new users (why is everything blocked?)
+2. No distinction between "no policies" and "explicit deny"
+3. Risk of accidental lockout
+
+**Recommended Fix**:
+1. Add validation on startup:
+   ```rust
+   impl PolicyEngine {
+       pub fn new(policy_dir: &Path) -> Result<Self> {
+           let engine = Self::load_policies(policy_dir)?;
+           
+           // Validate: at least one Allow rule exists
+           if !engine.has_allow_rules() {
+               warn!("No Allow policies found - all actions will be denied");
+               warn!("Add policies to {} or set --permissive mode", policy_dir.display());
+           }
+           
+           Ok(engine)
+       }
+   }
+   ```
+
+2. Add `--permissive` mode for development:
+   ```bash
+   cargo run -- --policy-mode permissive  # Allow all, log only
+   ```
+
+3. Require explicit default policy file:
+   ```yaml
+   # policies/00_default.yaml
+   id: default_deny
+   effect: Deny
+   patterns:
+     actions: ["*"]
+     resources: ["*"]
+   priority: 0
+   ```
+
+**Related Issues**: #2, #7
+
+---
+
+### 🟡 Issue #20: Audit log size grows unbounded (no rotation)
+
+**Type**: Resource Management  
+**Priority**: Medium  
+**Estimated Effort**: 2-3 days  
+
+**Description**:
+The in-memory audit log never purges old entries, leading to memory exhaustion for long-running agents.
+
+**Affected Files**:
+- `src/audit/mod.rs` - AuditLogger (no size limits)
+
+**Current State**:
+```rust
+pub struct AuditLogger {
+    entries: Vec<AuditEntry>,  // Grows forever
+}
+```
+
+**Impact**:
+- Memory usage grows linearly with agent activity
+- OOM crash for 24/7 agents
+- Performance degrades (verification scans all entries)
+
+**Recommended Fix**:
+1. Add ring buffer with configurable size:
+   ```rust
+   use std::collections::VecDeque;
+   
+   pub struct AuditLogger {
+       entries: VecDeque<AuditEntry>,
+       max_entries: usize,
+       archival_backend: Option<Box<dyn AuditBackend>>,
+   }
+   
+   impl AuditLogger {
+       pub fn append(&mut self, entry: AuditEntry) -> Result<()> {
+           // Archive old entries before eviction
+           if self.entries.len() >= self.max_entries {
+               if let Some(backend) = &self.archival_backend {
+                   let old_entry = self.entries.pop_front().unwrap();
+                   backend.archive(old_entry)?;
+               }
+           }
+           
+           self.entries.push_back(entry);
+           Ok(())
+       }
+   }
+   ```
+
+2. Add configuration:
+   ```yaml
+   audit:
+     max_memory_entries: 10000
+     archive_to: file  # or s3, database
+     archive_path: /var/log/vak/audit/
+   ```
+
+3. Implement log rotation (daily, by size)
+4. Add periodic compaction (merge contiguous entries)
+
+**Related Issues**: #3, #4
+
+---
+
+### 🟡 Issue #21: No monitoring/observability integration
+
+**Type**: Operations  
+**Priority**: Medium  
+**Estimated Effort**: 1 week  
+
+**Description**:
+The project has minimal logging (tracing crate) but no structured metrics, distributed tracing, or monitoring integration for production deployments.
+
+**Current State**:
+- Basic tracing with `tracing::info!()` calls
+- No metrics collection (Prometheus, StatsD)
+- No distributed tracing (OpenTelemetry, Jaeger)
+- No health checks
+- No dashboards
+
+**Missing Observability**:
+1. Metrics:
+   - Policy evaluation latency (p50, p95, p99)
+   - Audit log write rate
+   - WASM execution time per skill
+   - Memory usage per agent
+   - Error rate by type
+
+2. Tracing:
+   - Request flow through kernel → policy → execution
+   - Span context for debugging
+   - Trace sampling for performance
+
+3. Health:
+   - `/health` endpoint
+   - `/ready` endpoint (Kubernetes)
+   - `/metrics` endpoint (Prometheus)
+
+**Impact**:
+- Difficult to debug production issues
+- No SLO tracking
+- Cannot identify bottlenecks
+
+**Recommended Fix**:
+1. Add metrics with `metrics` crate:
+   ```rust
+   use metrics::{counter, histogram, gauge};
+   
+   impl PolicyEngine {
+       pub async fn evaluate(&self, request: &PolicyRequest) -> Result<PolicyDecision> {
+           let start = Instant::now();
+           
+           let result = self.evaluate_internal(request).await;
+           
+           histogram!("policy.evaluation.duration", start.elapsed());
+           counter!("policy.evaluations.total", 1);
+           
+           if result.is_ok() {
+               counter!("policy.evaluations.success", 1);
+           } else {
+               counter!("policy.evaluations.failure", 1);
+           }
+           
+           result
+       }
+   }
+   ```
+
+2. Add OpenTelemetry integration:
+   ```toml
+   [dependencies]
+   opentelemetry = "0.21"
+   opentelemetry-jaeger = "0.20"
+   tracing-opentelemetry = "0.22"
+   ```
+
+3. Add health check endpoints (actix-web or axum)
+4. Create Grafana dashboard templates
+
+**Related Issues**: #22, #24
+
+---
+
+### 🟡 Issue #22: No deployment guide or Docker configuration
+
+**Type**: Documentation / DevOps  
+**Priority**: Medium  
+**Estimated Effort**: 2-3 days  
+
+**Description**:
+The project lacks deployment documentation, Dockerfiles, and Kubernetes manifests for production deployments.
+
+**Missing Assets**:
+- Dockerfile for Rust binary
+- docker-compose.yml for local development
+- Kubernetes manifests (deployment, service, configmap)
+- Helm chart
+- Deployment guide (AWS, GCP, Azure)
+- Security hardening guide
+
+**Affected Use Cases**:
+- Cannot easily deploy to cloud
+- No reference architecture
+- No scalability guidance
+
+**Recommended Fix**:
+1. Create `Dockerfile`:
+   ```dockerfile
+   FROM rust:1.93-alpine AS builder
+   WORKDIR /app
+   COPY . .
+   RUN cargo build --release --features python
+   
+   FROM alpine:3.18
+   RUN apk add --no-cache libgcc
+   COPY --from=builder /app/target/release/vak /usr/local/bin/
+   EXPOSE 8080
+   CMD ["vak", "serve"]
+   ```
+
+2. Add `docker-compose.yml`:
+   ```yaml
+   version: '3.8'
+   services:
+     vak:
+       build: .
+       ports:
+         - "8080:8080"
+       environment:
+         - VAK_POLICY_PATH=/policies
+         - VAK_LOG_LEVEL=info
+       volumes:
+         - ./policies:/policies
+         - ./audit:/var/log/vak
+   ```
+
+3. Create deployment guide:
+   ```markdown
+   ## Deployment Guide
+   
+   ### Docker
+   docker build -t vak:latest .
+   docker run -p 8080:8080 vak:latest
+   
+   ### Kubernetes
+   kubectl apply -f k8s/
+   
+   ### Production Checklist
+   - [ ] Set up persistent storage for audit logs
+   - [ ] Configure secrets management
+   - [ ] Enable TLS/HTTPS
+   - [ ] Set resource limits
+   - [ ] Configure monitoring
+   ```
+
+**Related Issues**: #21, #24
+
+---
+
+### 🟡 Issue #23: No CONTRIBUTING.md guide for contributors
+
+**Type**: Documentation  
+**Priority**: Medium  
+**Estimated Effort**: 1 day  
+
+**Description**:
+The project lacks a contribution guide explaining how to contribute, coding standards, review process, and development workflow.
+
+**Missing Information**:
+- How to set up development environment
+- Code style guidelines (rustfmt config)
+- Testing requirements
+- PR review process
+- Issue triaging
+- Release process
+- Communication channels
+
+**Impact**:
+- Contributors don't know how to start
+- Inconsistent code quality
+- Unclear expectations
+
+**Recommended Fix**:
+Create `CONTRIBUTING.md`:
+```markdown
+# Contributing to VAK
+
+## Getting Started
+1. Fork the repository
+2. Clone your fork: `git clone https://github.com/YOUR_USERNAME/Verifiable-Agent-Kernel-VAK-.git`
+3. Install dependencies: `cargo build`
+4. Run tests: `cargo test`
+
+## Development Workflow
+1. Create feature branch: `git checkout -b feature/my-feature`
+2. Make changes (follow style guide)
+3. Add tests (coverage > 80%)
+4. Run checks: `cargo fmt && cargo clippy && cargo test`
+5. Commit with descriptive message
+6. Push and create PR
+
+## Code Style
+- Run `cargo fmt` before committing
+- Fix all `cargo clippy` warnings
+- Add rustdoc comments for public APIs
+- Write unit tests for new functions
+
+## Testing Requirements
+- Unit tests for all public functions
+- Integration tests for workflows
+- Minimum 80% code coverage
+
+## Review Process
+- PRs require 1 approval
+- All CI checks must pass
+- Update documentation if needed
+```
+
+**Related Issues**: #23, #9
+
+---
+
+### 🟡 Issue #24: PyO3 feature should be optional for Rust-only builds
+
+**Type**: Build System  
+**Priority**: Medium  
+**Estimated Effort**: 1 day  
+
+**Description**:
+The PyO3 Python bindings are enabled by default in Cargo.toml, forcing all builds to require Python development headers even for Rust-only use cases.
+
+**Affected Files**:
+- `Cargo.toml` - Feature configuration
+- `src/lib.rs` - Conditional compilation
+
+**Current Problem**:
+```bash
+$ cargo build
+# Fails if Python headers not installed
+```
+
+**Recommended Fix**:
+1. Update `Cargo.toml`:
+   ```toml
+   [dependencies]
+   pyo3 = { version = "0.23", features = ["extension-module"], optional = true }
+   
+   [features]
+   default = []  # No Python by default
+   python = ["pyo3"]
+   
+   [lib]
+   crate-type = ["rlib"]  # Default: Rust library only
+   
+   [[lib]]
+   name = "vak_native"
+   crate-type = ["cdylib"]  # Python module
+   required-features = ["python"]
+   ```
+
+2. Update build instructions:
+   ```markdown
+   ## Building
+   
+   ### Rust only
+   cargo build --release
+   
+   ### With Python support
+   cargo build --release --features python
+   pip install maturin
+   maturin develop --release
+   ```
+
+**Related Issues**: None
+
+---
+
+## 4. Low Priority Issues
+
+### 🟢 Issue #25: No architectural diagrams in documentation
+
+**Type**: Documentation  
+**Priority**: Low  
+**Estimated Effort**: 2-3 days  
+
+**Description**:
+While the README has ASCII diagrams, it lacks professional architectural diagrams (SVG, PNG) showing component interactions, data flows, and deployment architectures.
+
+**Missing Diagrams**:
+1. Component architecture (kernel, policy, audit, memory, reasoner)
+2. Sequence diagram for agent request flow
+3. Data flow diagram for audit chain
+4. Deployment architecture (single node vs distributed)
+5. Memory hierarchy diagram
+6. WASM sandbox isolation diagram
+
+**Recommended Fix**:
+1. Create `docs/architecture/` directory
+2. Use PlantUML or Draw.io
+3. Generate diagrams:
+   ```plantuml
+   @startuml
+   actor Agent
+   participant Kernel
+   participant Policy
+   participant Audit
+   participant Executor
+   
+   Agent -> Kernel: execute_tool(request)
+   Kernel -> Policy: evaluate(request)
+   Policy --> Kernel: Allow/Deny
+   Kernel -> Audit: log_decision()
+   Kernel -> Executor: execute()
+   Executor --> Kernel: response
+   Kernel --> Agent: response
+   @enduml
+   ```
+4. Embed in README and docs
+
+**Related Issues**: #23
+
+---
+
+### 🟢 Issue #26: Memory token estimation should support multiple tokenizers
+
+**Type**: Enhancement  
+**Priority**: Low  
+**Estimated Effort**: 2-3 days  
+
+**Description**:
+The working memory token estimation is hardcoded to a single tokenizer. Different LLMs use different tokenization schemes.
+
+**Affected Files**:
+- `src/memory/working.rs`
+
+**Desired Enhancement**:
+```rust
+pub enum TokenizerType {
+    Cl100kBase,  // GPT-4
+    P50kBase,    // GPT-3.5
+    R50kBase,    // GPT-3
+    Claude,      // Anthropic
+}
+
+pub struct WorkingMemory {
+    tokenizer: Box<dyn Tokenizer>,
+    // ...
+}
+```
+
+**Impact**: Low - current estimation works for most cases
+
+**Related Issues**: #15
+
+---
+
+### 🟢 Issue #27: No skill marketplace or registry service
+
+**Type**: Feature / Future  
+**Priority**: Low  
+**Estimated Effort**: 4-6 weeks  
+
+**Description**:
+The roadmap mentions a "Decentralized Skill Marketplace" (ADV-004) but no implementation exists.
+
+**Proposed Features**:
+- Centralized skill registry (skills.vak-project.org)
+- Skill discovery and search
+- Version management
+- Automatic updates
+- Ratings and reviews
+- Skill signing and verification
+
+**Status**: P3 - Post-MVP feature
+
+**Related Issues**: #5, #7
+
+---
+
+### 🟢 Issue #28: No Fleet Management dashboard
+
+**Type**: Feature / Future  
+**Priority**: Low  
+**Estimated Effort**: 6-8 weeks  
+
+**Description**:
+The roadmap mentions "Fleet Management dashboard" (ADV-003) for managing multiple agent deployments.
+
+**Proposed Features**:
+- Agent status dashboard
+- Policy management UI
+- Audit log viewer
+- Real-time monitoring
+- Alert configuration
+- Agent deployment automation
+
+**Status**: P3 - Post-MVP feature
+
+**Related Issues**: #21, #22
+
+---
+
+### 🟢 Issue #29: Zero-Knowledge Proof integration not implemented
+
+**Type**: Feature / Future  
+**Priority**: Low  
+**Estimated Effort**: 8-12 weeks  
+
+**Description**:
+The roadmap mentions ZKP integration (ADV-001) for privacy-preserving verification but no implementation exists.
+
+**Use Cases**:
+- Prove policy compliance without revealing agent actions
+- Private audit trails
+- Cross-organization verification
+
+**Status**: P3 - Post-MVP research project
+
+**Related Issues**: #12
+
+---
+
+### 🟢 Issue #30: Constitution Protocol not implemented
+
+**Type**: Feature / Future  
+**Priority**: Low  
+**Estimated Effort**: 6-10 weeks  
+
+**Description**:
+The roadmap mentions "Constitution Protocol" (ADV-002) for hierarchical policy systems but no implementation exists.
+
+**Concept**:
+- Meta-policies that govern policy creation
+- Policy inheritance and overrides
+- Constitutional constraints on agent capabilities
+
+**Status**: P3 - Post-MVP feature
+
+**Related Issues**: #19
+
+---
+
+## 5. Documentation Issues
+
+### 📚 Issue #31: Missing API reference documentation
+
+**Type**: Documentation  
+**Priority**: Medium  
+**Estimated Effort**: 3-5 days  
+
+**Description**:
+While module-level docs exist, there's no generated API documentation website (docs.rs style).
+
+**Missing**:
+- Auto-generated API docs
+- Usage examples in docs
+- Tutorial documentation
+- Best practices guide
+
+**Recommended Fix**:
+1. Add comprehensive rustdoc comments
+2. Set up docs.rs publishing
+3. Add `examples/` to doc tests
+4. Create `docs/` directory with guides
+
+**Related Issues**: #23, #25
+
+---
+
+### 📚 Issue #32: Python SDK lacks type stubs quality
+
+**Type**: Documentation  
+**Priority**: Medium  
+**Estimated Effort**: 1-2 days  
+
+**Description**:
+The Python type stubs in `python/vak/_vak_native.pyi` exist but may be incomplete or outdated.
+
+**Recommendation**:
+- Auto-generate stubs from PyO3 bindings
+- Add comprehensive docstrings
+- Publish to PyPI with types
+
+**Related Issues**: #18
+
+---
+
+## 6. Testing Issues
+
+### 🧪 Issue #33: No property-based testing
+
+**Type**: Testing  
+**Priority**: Low  
+**Estimated Effort**: 1 week  
+
+**Description**:
+The test suite uses example-based testing but lacks property-based tests (using proptest/quickcheck) for invariant verification.
+
+**Examples of Properties to Test**:
+- Audit chain integrity under random operations
+- Policy evaluation determinism
+- Merkle proof verification
+- WASM sandbox isolation
+
+**Recommended Addition**:
+```rust
+use proptest::prelude::*;
+
+proptest! {
+    #[test]
+    fn audit_chain_integrity_preserved(actions in vec(any::<String>(), 0..100)) {
+        let mut logger = AuditLogger::new();
+        for action in actions {
+            logger.append(create_entry(action))?;
+        }
+        assert!(logger.verify_integrity().is_ok());
+    }
+}
+```
+
+**Related Issues**: #9
+
+---
+
+### 🧪 Issue #34: No fuzz testing for parsers
+
+**Type**: Testing / Security  
+**Priority**: Medium  
+**Estimated Effort**: 1 week  
+
+**Description**:
+Policy YAML parsing, JSON deserialization, and WASM module loading should be fuzz tested for robustness.
+
+**Recommendation**:
+1. Add cargo-fuzz targets:
+   ```bash
+   cargo fuzz add policy_parser
+   cargo fuzz add json_deserialize
+   cargo fuzz add wasm_loader
+   ```
+
+2. Run in CI:
+   ```yaml
+   - name: Fuzz Test
+     run: |
+       cargo install cargo-fuzz
+       cargo fuzz run policy_parser -- -max_total_time=300
+   ```
+
+**Related Issues**: #9, #19
+
+---
+
+## 7. Configuration & Dependencies
+
+### ⚙️ Issue #35: No MSRV (Minimum Supported Rust Version) specified
+
+**Type**: Build System  
+**Priority**: Medium  
+**Estimated Effort**: 1 hour  
+
+**Description**:
+The project doesn't specify a minimum Rust version, which can lead to compatibility issues.
+
+**Recommended Fix**:
+```toml
+[package]
+rust-version = "1.75"  # Match README claim
+```
+
+**Related Issues**: None
+
+---
+
+### ⚙️ Issue #36: Wasmtime version may have CVEs
+
+**Type**: Security / Dependencies  
+**Priority**: High  
+**Estimated Effort**: 1-2 days  
+
+**Description**:
+The project uses wasmtime 27.0, which should be monitored for security advisories.
+
+**Recommendation**:
+1. Run `cargo audit` regularly
+2. Subscribe to wasmtime security announcements
+3. Set up Dependabot for automatic updates
+4. Test updates in staging before production
+
+**Related Issues**: #7, #21
+
+---
+
+## 8. Security Concerns
+
+### 🔒 Issue #37: No secrets management integration
+
+**Type**: Security  
+**Priority**: High  
+**Estimated Effort**: 3-5 days  
+
+**Description**:
+The project doesn't integrate with secrets management systems (Vault, AWS Secrets Manager, etc.) for sensitive data like API keys, signing keys.
+
+**Current Risk**:
+- Keys stored in plain text config files
+- No key rotation
+- Credentials in environment variables
+
+**Recommended Fix**:
+1. Integrate with secrets managers:
+   ```rust
+   pub trait SecretsProvider {
+       async fn get_secret(&self, key: &str) -> Result<String>;
+   }
+   
+   pub struct VaultProvider { /* ... */ }
+   pub struct AwsSecretsProvider { /* ... */ }
+   ```
+
+2. Support multiple backends:
+   - Environment variables (dev)
+   - Vault (production)
+   - AWS Secrets Manager
+   - Azure Key Vault
+
+**Related Issues**: #19, #22
+
+---
+
+### 🔒 Issue #38: No security audit conducted
+
+**Type**: Security  
+**Priority**: High  
+**Estimated Effort**: 2-4 weeks (external)  
+
+**Description**:
+The codebase hasn't undergone a professional security audit, which is critical for a security-focused project.
+
+**Recommendation**:
+1. Conduct internal security review
+2. Hire external security firm for audit
+3. Publish security disclosure policy
+4. Set up bug bounty program
+
+**Related Issues**: All security issues
+
+---
+
+## 9. Performance & Optimization
+
+### ⚡ Issue #39: Policy evaluation not parallelized
+
+**Type**: Performance  
+**Priority**: Medium  
+**Estimated Effort**: 2-3 days  
+
+**Description**:
+Policy rules are evaluated sequentially even when they're independent, missing opportunities for parallelization.
+
+**Current**:
+```rust
+for rule in &self.rules {
+    if self.evaluate_rule(rule, request)? {
+        return Ok(PolicyDecision::from_rule(rule));
+    }
+}
+```
+
+**Optimized**:
+```rust
+use rayon::prelude::*;
+
+let decisions: Vec<_> = self.rules
+    .par_iter()
+    .filter_map(|rule| self.evaluate_rule(rule, request).ok())
+    .collect();
+```
+
+**Impact**: 2-5x speedup for 100+ rules
+
+**Related Issues**: #17
+
+---
+
+### ⚡ Issue #40: No caching for repeated policy evaluations
+
+**Type**: Performance  
+**Priority**: Medium  
+**Estimated Effort**: 2-3 days  
+
+**Description**:
+Identical policy requests are re-evaluated from scratch every time.
+
+**Recommendation**:
+```rust
+use moka::future::Cache;
+
+pub struct PolicyEngine {
+    cache: Cache<PolicyRequest, PolicyDecision>,
+    // ...
+}
+```
+
+**Related Issues**: #13, #17
+
+---
+
+## 10. Future Enhancements
+
+### 🚀 Issue #41: Multi-process agent coordination
+
+**Type**: Feature / Scalability  
+**Priority**: Low  
+**Estimated Effort**: 4-6 weeks  
+
+**Description**:
+Current swarm implementation is single-process only. Need distributed coordination for true multi-node deployments.
+
+**Required**:
+- Message broker integration (NATS, Redis)
+- Distributed consensus (Raft)
+- State synchronization
+- Leader election
+
+**Status**: P3 - Post-MVP
+
+**Related Issues**: #21, #28
+
+---
+
+### 🚀 Issue #42: WebAssembly Component Model support
+
+**Type**: Feature / Future  
+**Priority**: Low  
+**Estimated Effort**: 6-8 weeks  
+
+**Description**:
+Current WASM skills use custom ABI. WebAssembly Component Model (WIT) would provide better interop.
+
+**Benefits**:
+- Standard interface
+- Better tooling
+- Cross-language composition
+
+**Status**: P3 - Wait for wasmtime support maturity
+
+**Related Issues**: #6
+
+---
+
+## Issue Statistics
+
+### By Type
+- 🐛 Bugs: 6
+- 🔒 Security: 8
+- 📚 Documentation: 6
+- 🧪 Testing: 4
+- ⚡ Performance: 3
+- ✨ Features: 13
+
+### By Module
+- Kernel Core: 4 issues
+- Policy Engine: 5 issues
+- Audit Logging: 4 issues
+- Memory System: 5 issues
+- WASM Sandbox: 4 issues
+- Reasoner: 3 issues
+- Swarm: 2 issues
+- Python SDK: 3 issues
+- Infrastructure: 12 issues
+
+### Priority Distribution
+```
+Critical: ████████ (8)  🔴
+High:     ███████  (7)  🟠
+Medium:   █████████ (9) 🟡
+Low:      ██████   (6)  🟢
+```
+
+---
+
+## Recommended Action Plan
+
+### Sprint 1 (Week 1-2): Critical Stability
+1. Fix unwrap() calls (#1) - 5 days
+2. Error propagation in policy evaluation (#2) - 3 days
+3. Persistent audit logging (#3) - 5 days
+4. Integration tests (#9) - 5 days
+
+**Goal**: Production-stable core
+
+### Sprint 2 (Week 3-4): Feature Completion
+5. Skill registry integration (#5) - 3 days
+6. WASM execution integration (#6) - 5 days
+7. Signature verification enforcement (#7) - 2 days
+8. LLM retry logic (#8) - 3 days
+
+**Goal**: MVP feature complete
+
+### Sprint 3 (Week 5-6): Production Readiness
+9. Database schema and migrations (#4) - 7 days
+10. Vector store implementation (#10) - 7 days
+11. Monitoring and metrics (#21) - 7 days
+12. Deployment guide (#22) - 3 days
+
+**Goal**: Production deployment ready
+
+### Sprint 4 (Week 7-8): Hardening
+13. Security audit (#38) - 2 weeks
+14. Performance benchmarks (#17) - 5 days
+15. Documentation completion (#23, #31, #32) - 5 days
+
+**Goal**: Enterprise-ready v1.0
+
+---
+
+## Conclusion
+
+The Verifiable Agent Kernel (VAK) is a **well-architected, feature-rich alpha release** with comprehensive functionality across all modules. The codebase demonstrates:
+
+✅ **Strengths**:
+- Clean module separation and strong type safety
+- Comprehensive feature coverage (policy, audit, memory, reasoner, swarm)
+- Good test coverage (542 tests passing)
+- Excellent documentation in README and planning docs
+
+⚠️ **Areas for Improvement**:
+- Error handling needs hardening (replace unwrap calls)
+- Missing production infrastructure (persistence, monitoring)
+- Integration testing gaps
+- Some incomplete integrations (skill registry, WASM execution)
+
+🎯 **Path to Production (v1.0)**:
+- **Estimated Effort**: 8-10 weeks
+- **Team Size**: 2-3 developers
+- **Focus Areas**: Stability, persistence, monitoring, security audit
+
+The project is **ready for MVP demonstrations** but needs **4-6 weeks of hardening** for production enterprise deployments. The identified issues are well-scoped and prioritized for systematic resolution.
+
+---
+
+**Document Prepared By**: VAK Project Analysis  
+**Last Updated**: January 31, 2026  
+**Status**: Ready for Review
