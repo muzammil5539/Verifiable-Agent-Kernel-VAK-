@@ -1,0 +1,94 @@
+# Sample Constraint Definitions for VAK Formal Verification (NSR-002)
+# 
+# This file demonstrates the constraint DSL supported by the VAK verifier.
+# Load these constraints with ConstraintFile::from_file() to verify agent actions.
+
+version: "1.0"
+description: "Security and safety constraints for agent actions"
+
+constraints:
+  # Financial Constraints
+  - name: "max_refund_amount"
+    description: "Refunds must not exceed $1000"
+    type: LESS_THAN
+    field: "amount"
+    value: 1000
+    priority: 200
+
+  - name: "positive_amount"
+    description: "Amounts must be positive"
+    type: GREATER_THAN
+    field: "amount"
+    value: 0
+    priority: 100
+
+  # Resource Access Constraints
+  - name: "no_secrets_access"
+    description: "Prevent access to secret files"
+    type: FORBIDDEN
+    resources:
+      - "*.env"
+      - "secrets/*"
+      - "credentials/*"
+      - ".ssh/*"
+    priority: 300
+
+  # Role-Based Constraints
+  - name: "valid_user_role"
+    description: "Users must have a valid role"
+    type: IN
+    field: "role"
+    values:
+      - "admin"
+      - "user"
+      - "guest"
+    priority: 150
+
+  - name: "forbidden_actions"
+    description: "Block destructive actions for non-admin users"
+    type: NOT_IN
+    field: "action"
+    values:
+      - "delete_all"
+      - "drop_database"
+      - "rm_rf"
+    priority: 250
+
+  # String Validation
+  - name: "valid_email_domain"
+    description: "Emails must be from company domain"
+    type: CONTAINS
+    field: "email"
+    value: "@company.com"
+    priority: 100
+
+  - name: "valid_email_format"
+    description: "Emails must match valid format"
+    type: MATCHES
+    field: "email"
+    pattern: "^[\\w.+-]+@[\\w.-]+\\.\\w+$"
+    priority: 100
+
+  # Numeric Range Constraints
+  - name: "valid_score_range"
+    description: "Scores must be between 0 and 100"
+    type: BETWEEN
+    field: "score"
+    min: 0
+    max: 100
+    priority: 100
+
+  # Equality Constraints
+  - name: "status_active"
+    description: "User must be active"
+    type: EQUALS
+    field: "status"
+    value: "active"
+    priority: 100
+
+  - name: "not_suspended"
+    description: "User must not be suspended"
+    type: NOT_EQUALS
+    field: "status"
+    value: "suspended"
+    priority: 150

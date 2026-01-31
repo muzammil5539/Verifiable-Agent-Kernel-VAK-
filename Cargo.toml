@@ -56,6 +56,9 @@ tokio-stream = "0.1"
 # Configuration
 config = "0.14"
 
+# Regex for pattern matching
+regex = "1.10"
+
 # Testing
 proptest = "1.4"
 criterion = "0.5"
@@ -88,6 +91,10 @@ reqwest.workspace = true
 futures.workspace = true
 tokio-stream.workspace = true
 glob.workspace = true
+regex.workspace = true
+
+[features]
+default = []
 
 [dev-dependencies]
 proptest.workspace = true
