@@ -6,12 +6,35 @@
 //! - Semantic tier: Vector storage for semantic search (LanceDB backend)
 //! - Merkle tier: Verifiable key-value storage with cryptographic proofs
 //! - Episodic tier: Append-only episode chain with Merkle chain integrity
+//! - Knowledge Graph: Structured relationship storage (MEM-003)
+//! - Vector Store: Embedding-based similarity search (MEM-004)
+//! - Time Travel: Snapshots and rollbacks (MEM-005)
 
 pub mod episodic;
+pub mod knowledge_graph;
+pub mod time_travel;
+pub mod vector_store;
 pub mod working;
 
 pub use episodic::{
     ChainVerificationError, Episode, EpisodeChain, EpisodeId, EpisodicMemory, ImportError,
+};
+
+pub use knowledge_graph::{
+    Entity, EntityId, KnowledgeGraph, KnowledgeGraphConfig, KnowledgeGraphError,
+    KnowledgeGraphExport, KnowledgeGraphResult, PropertyValue, Relationship, RelationshipId,
+    RelationType,
+};
+
+pub use time_travel::{
+    Branch, SnapshotId, StateCheckpoint, StateDiff, StateEntry, TimeTravelConfig,
+    TimeTravelError, TimeTravelExport, TimeTravelManager, TimeTravelResult,
+};
+
+pub use vector_store::{
+    DistanceMetric, FilterOp, IndexType, InMemoryVectorStore, MetadataFilter, MetadataValue,
+    SearchFilter, SearchResult, VectorCollectionManager, VectorEntry, VectorStore,
+    VectorStoreConfig, VectorStoreError, VectorStoreResult,
 };
 
 pub use working::{
