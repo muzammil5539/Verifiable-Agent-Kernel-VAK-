@@ -1,8 +1,12 @@
 //! ABAC (Attribute-Based Access Control) Policy Engine
+//!
+//! This module provides rate-limited policy evaluation with "deny on error" security.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 /// Policy effect: allow or deny
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,16 +106,178 @@ pub struct PolicyConfig {
     pub rules: Vec<PolicyRule>,
 }
 
+// =============================================================================
+// Rate Limiting (Issue #13)
+// =============================================================================
+
+/// Configuration for rate limiting policy evaluations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateLimitConfig {
+    /// Maximum requests per agent per second
+    pub per_agent_per_second: u32,
+    /// Maximum burst size (tokens in bucket)
+    pub burst_size: u32,
+    /// Whether rate limiting is enabled
+    pub enabled: bool,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            per_agent_per_second: 100,
+            burst_size: 10,
+            enabled: true,
+        }
+    }
+}
+
+impl RateLimitConfig {
+    /// Create a permissive config for testing
+    pub fn permissive() -> Self {
+        Self {
+            per_agent_per_second: 10000,
+            burst_size: 1000,
+            enabled: false,
+        }
+    }
+}
+
+/// Token bucket state for a single agent
+#[derive(Debug, Clone)]
+struct TokenBucket {
+    /// Current number of tokens
+    tokens: f64,
+    /// Last time tokens were refilled
+    last_refill: Instant,
+    /// Tokens added per second
+    rate: f64,
+    /// Maximum tokens (burst size)
+    max_tokens: f64,
+}
+
+impl TokenBucket {
+    fn new(rate: f64, burst_size: f64) -> Self {
+        Self {
+            tokens: burst_size,
+            last_refill: Instant::now(),
+            rate,
+            max_tokens: burst_size,
+        }
+    }
+
+    /// Try to consume a token, returning true if allowed
+    fn try_consume(&mut self) -> bool {
+        self.refill();
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Refill tokens based on elapsed time
+    fn refill(&mut self) {
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.last_refill).as_secs_f64();
+        self.tokens = (self.tokens + elapsed * self.rate).min(self.max_tokens);
+        self.last_refill = now;
+    }
+}
+
+/// Rate limiter for policy evaluations
+#[derive(Debug)]
+pub struct RateLimiter {
+    config: RateLimitConfig,
+    buckets: Mutex<HashMap<String, TokenBucket>>,
+}
+
+impl RateLimiter {
+    /// Create a new rate limiter with the given configuration
+    pub fn new(config: RateLimitConfig) -> Self {
+        Self {
+            config,
+            buckets: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Check if a request from the given agent is allowed
+    pub fn check(&self, agent_id: &str) -> Result<(), PolicyError> {
+        if !self.config.enabled {
+            return Ok(());
+        }
+
+        let mut buckets = self.buckets.lock().map_err(|_| PolicyError::RateLimitError {
+            agent_id: agent_id.to_string(),
+            reason: "Failed to acquire rate limiter lock".to_string(),
+        })?;
+
+        let bucket = buckets
+            .entry(agent_id.to_string())
+            .or_insert_with(|| TokenBucket::new(
+                self.config.per_agent_per_second as f64,
+                self.config.burst_size as f64,
+            ));
+
+        if bucket.try_consume() {
+            Ok(())
+        } else {
+            Err(PolicyError::RateLimitExceeded {
+                agent_id: agent_id.to_string(),
+                limit: self.config.per_agent_per_second,
+            })
+        }
+    }
+
+    /// Get the current configuration
+    pub fn config(&self) -> &RateLimitConfig {
+        &self.config
+    }
+}
+
+impl Default for RateLimiter {
+    fn default() -> Self {
+        Self::new(RateLimitConfig::default())
+    }
+}
+
 /// The ABAC Policy Engine
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct PolicyEngine {
     rules: Vec<PolicyRule>,
+    /// Rate limiter for preventing DoS attacks (Issue #13)
+    rate_limiter: RateLimiter,
+}
+
+impl Default for PolicyEngine {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PolicyEngine {
-    /// Create a new empty policy engine
+    /// Create a new empty policy engine with default rate limiting
     pub fn new() -> Self {
-        Self { rules: Vec::new() }
+        Self {
+            rules: Vec::new(),
+            rate_limiter: RateLimiter::default(),
+        }
+    }
+
+    /// Create a new policy engine with custom rate limiting
+    pub fn with_rate_limit(config: RateLimitConfig) -> Self {
+        Self {
+            rules: Vec::new(),
+            rate_limiter: RateLimiter::new(config),
+        }
+    }
+
+    /// Create a new policy engine without rate limiting (for testing)
+    pub fn new_unlimited() -> Self {
+        Self {
+            rules: Vec::new(),
+            rate_limiter: RateLimiter::new(RateLimitConfig::permissive()),
+        }
     }
 
     /// Load rules from a YAML file
@@ -129,6 +295,58 @@ impl PolicyEngine {
     pub fn add_rule(&mut self, rule: PolicyRule) {
         self.rules.push(rule);
         self.rules.sort_by(|a, b| b.priority.cmp(&a.priority));
+    }
+
+    /// Check if the engine has any Allow rules (Issue #19: Default deny validation)
+    pub fn has_allow_rules(&self) -> bool {
+        self.rules.iter().any(|r| r.effect == PolicyEffect::Allow)
+    }
+
+    /// Get the number of loaded rules
+    pub fn rule_count(&self) -> usize {
+        self.rules.len()
+    }
+
+    /// Validate that the policy configuration is production-ready
+    /// Returns warnings for potentially problematic configurations
+    pub fn validate_config(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+
+        if self.rules.is_empty() {
+            warnings.push("No policies loaded - all actions will be denied (default deny)".to_string());
+        } else if !self.has_allow_rules() {
+            warnings.push("No Allow policies found - all actions will be denied".to_string());
+        }
+
+        // Check for overly permissive rules
+        for rule in &self.rules {
+            if rule.resource_pattern == "*" && rule.action_pattern == "*" 
+                && rule.effect == PolicyEffect::Allow && rule.conditions.is_empty() {
+                warnings.push(format!(
+                    "Rule '{}' allows all actions on all resources with no conditions (overly permissive)",
+                    rule.id
+                ));
+            }
+        }
+
+        warnings
+    }
+
+    /// Evaluate a request against loaded policies with rate limiting
+    ///
+    /// Security: Implements "deny on error" behavior - if any condition evaluation
+    /// fails, the request is denied to prevent security bypasses.
+    ///
+    /// Rate limiting: Returns error if agent exceeds request limit (Issue #13)
+    pub fn evaluate_with_rate_limit(
+        &self,
+        resource: &str,
+        action: &str,
+        context: &PolicyContext,
+    ) -> Result<PolicyDecision, PolicyError> {
+        // Check rate limit first (Issue #13)
+        self.rate_limiter.check(&context.agent_id)?;
+        Ok(self.evaluate(resource, action, context))
     }
 
     /// Evaluate a request against loaded policies
@@ -371,6 +589,20 @@ pub enum PolicyError {
     },
     /// Attribute not found during evaluation
     AttributeNotFound(String),
+    /// Rate limit exceeded (Issue #13)
+    RateLimitExceeded {
+        /// The agent that exceeded the limit
+        agent_id: String,
+        /// The limit that was exceeded
+        limit: u32,
+    },
+    /// Rate limiter internal error
+    RateLimitError {
+        /// The agent involved
+        agent_id: String,
+        /// The error reason
+        reason: String,
+    },
 }
 
 impl std::fmt::Display for PolicyError {
@@ -388,6 +620,20 @@ impl std::fmt::Display for PolicyError {
             }
             PolicyError::AttributeNotFound(attr) => {
                 write!(f, "Attribute not found: {}", attr)
+            }
+            PolicyError::RateLimitExceeded { agent_id, limit } => {
+                write!(
+                    f,
+                    "Rate limit exceeded for agent '{}': {} requests/second limit",
+                    agent_id, limit
+                )
+            }
+            PolicyError::RateLimitError { agent_id, reason } => {
+                write!(
+                    f,
+                    "Rate limiter error for agent '{}': {}",
+                    agent_id, reason
+                )
             }
         }
     }
@@ -475,7 +721,7 @@ mod tests {
 
     #[test]
     fn test_default_deny() {
-        let engine = PolicyEngine::new();
+        let engine = PolicyEngine::new_unlimited();
         let ctx = test_context();
         let decision = engine.evaluate("anything", "anything", &ctx);
         assert!(!decision.allowed);
@@ -485,7 +731,7 @@ mod tests {
     #[test]
     fn test_deny_on_type_mismatch_error() {
         // Test that condition evaluation errors result in denial (security)
-        let mut engine = PolicyEngine::new();
+        let mut engine = PolicyEngine::new_unlimited();
         engine.add_rule(PolicyRule {
             id: "allow-with-bad-condition".to_string(),
             effect: PolicyEffect::Allow,
@@ -510,7 +756,7 @@ mod tests {
 
     #[test]
     fn test_evaluate_strict_returns_error() {
-        let mut engine = PolicyEngine::new();
+        let mut engine = PolicyEngine::new_unlimited();
         engine.add_rule(PolicyRule {
             id: "allow-with-bad-condition".to_string(),
             effect: PolicyEffect::Allow,
@@ -528,5 +774,141 @@ mod tests {
         let ctx = test_context();
         let result = engine.evaluate_strict("anything", "anything", &ctx);
         assert!(result.is_err());
+    }
+
+    // Issue #13: Rate limiting tests
+    #[test]
+    fn test_rate_limiting_basic() {
+        let config = RateLimitConfig {
+            per_agent_per_second: 2,
+            burst_size: 2,
+            enabled: true,
+        };
+        let mut engine = PolicyEngine::with_rate_limit(config);
+        engine.add_rule(PolicyRule {
+            id: "allow-all".to_string(),
+            effect: PolicyEffect::Allow,
+            resource_pattern: "*".to_string(),
+            action_pattern: "*".to_string(),
+            conditions: vec![],
+            priority: 1,
+            description: None,
+        });
+
+        let ctx = test_context();
+
+        // First two requests should succeed (burst size = 2)
+        assert!(engine.evaluate_with_rate_limit("test", "read", &ctx).is_ok());
+        assert!(engine.evaluate_with_rate_limit("test", "read", &ctx).is_ok());
+        
+        // Third request should be rate limited
+        let result = engine.evaluate_with_rate_limit("test", "read", &ctx);
+        assert!(matches!(result, Err(PolicyError::RateLimitExceeded { .. })));
+    }
+
+    #[test]
+    fn test_rate_limit_per_agent() {
+        let config = RateLimitConfig {
+            per_agent_per_second: 1,
+            burst_size: 1,
+            enabled: true,
+        };
+        let engine = PolicyEngine::with_rate_limit(config);
+
+        let ctx1 = PolicyContext {
+            agent_id: "agent-001".to_string(),
+            role: "user".to_string(),
+            attributes: HashMap::new(),
+            environment: HashMap::new(),
+        };
+        let ctx2 = PolicyContext {
+            agent_id: "agent-002".to_string(),
+            role: "user".to_string(),
+            attributes: HashMap::new(),
+            environment: HashMap::new(),
+        };
+
+        // First request from agent-001 succeeds
+        assert!(engine.evaluate_with_rate_limit("test", "read", &ctx1).is_ok());
+        
+        // First request from agent-002 also succeeds (different agent)
+        assert!(engine.evaluate_with_rate_limit("test", "read", &ctx2).is_ok());
+        
+        // Second request from agent-001 should be rate limited
+        let result = engine.evaluate_with_rate_limit("test", "read", &ctx1);
+        assert!(matches!(result, Err(PolicyError::RateLimitExceeded { agent_id, .. }) if agent_id == "agent-001"));
+    }
+
+    // Issue #19: Default deny policy validation tests
+    #[test]
+    fn test_has_allow_rules() {
+        let mut engine = PolicyEngine::new_unlimited();
+        assert!(!engine.has_allow_rules());
+
+        engine.add_rule(PolicyRule {
+            id: "deny-all".to_string(),
+            effect: PolicyEffect::Deny,
+            resource_pattern: "*".to_string(),
+            action_pattern: "*".to_string(),
+            conditions: vec![],
+            priority: 1,
+            description: None,
+        });
+        assert!(!engine.has_allow_rules());
+
+        engine.add_rule(PolicyRule {
+            id: "allow-read".to_string(),
+            effect: PolicyEffect::Allow,
+            resource_pattern: "files/*".to_string(),
+            action_pattern: "read".to_string(),
+            conditions: vec![],
+            priority: 2,
+            description: None,
+        });
+        assert!(engine.has_allow_rules());
+    }
+
+    #[test]
+    fn test_validate_config_empty() {
+        let engine = PolicyEngine::new_unlimited();
+        let warnings = engine.validate_config();
+        assert!(!warnings.is_empty());
+        assert!(warnings[0].contains("No policies loaded"));
+    }
+
+    #[test]
+    fn test_validate_config_no_allow() {
+        let mut engine = PolicyEngine::new_unlimited();
+        engine.add_rule(PolicyRule {
+            id: "deny-all".to_string(),
+            effect: PolicyEffect::Deny,
+            resource_pattern: "*".to_string(),
+            action_pattern: "*".to_string(),
+            conditions: vec![],
+            priority: 1,
+            description: None,
+        });
+
+        let warnings = engine.validate_config();
+        assert!(!warnings.is_empty());
+        assert!(warnings[0].contains("No Allow policies"));
+    }
+
+    #[test]
+    fn test_validate_config_overly_permissive() {
+        let mut engine = PolicyEngine::new_unlimited();
+        engine.add_rule(PolicyRule {
+            id: "allow-everything".to_string(),
+            effect: PolicyEffect::Allow,
+            resource_pattern: "*".to_string(),
+            action_pattern: "*".to_string(),
+            conditions: vec![],
+            priority: 1,
+            description: None,
+        });
+
+        let warnings = engine.validate_config();
+        assert!(!warnings.is_empty());
+        assert!(warnings[0].contains("overly permissive"));
     }
 }

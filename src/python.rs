@@ -629,6 +629,30 @@ impl PyKernel {
         Ok(())
     }
 
+    /// Validate the policy configuration and return any warnings (Issue #19)
+    fn validate_policy_config(&self) -> PyResult<Vec<String>> {
+        if !self.initialized {
+            return Err(PyRuntimeError::new_err("Kernel not initialized"));
+        }
+        Ok(self.policy_engine.validate_config())
+    }
+
+    /// Check if any allow rules are defined
+    fn has_allow_policies(&self) -> PyResult<bool> {
+        if !self.initialized {
+            return Err(PyRuntimeError::new_err("Kernel not initialized"));
+        }
+        Ok(self.policy_engine.has_allow_rules())
+    }
+
+    /// Get the number of loaded policy rules
+    fn policy_rule_count(&self) -> PyResult<usize> {
+        if !self.initialized {
+            return Err(PyRuntimeError::new_err("Kernel not initialized"));
+        }
+        Ok(self.policy_engine.rule_count())
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "Kernel(initialized={}, agents={}, skills={}, audit_entries={})",
@@ -638,6 +662,128 @@ impl PyKernel {
             self.audit_logger.entries().len()
         )
     }
+}
+
+// ============================================================================
+// Async Python SDK Helpers (Issue #18)
+// ============================================================================
+
+/// Async-capable kernel wrapper for Python integration with FastAPI/aiohttp
+/// 
+/// This provides documentation for Python users on how to use VAK with async frameworks:
+/// 
+/// ```python
+/// # Example usage with FastAPI
+/// from vak import VakKernel
+/// import asyncio
+/// 
+/// kernel = VakKernel.default()
+/// 
+/// async def evaluate_async(agent_id: str, action: str, context: dict) -> dict:
+///     # Use run_in_executor for CPU-bound operations
+///     loop = asyncio.get_event_loop()
+///     import json
+///     context_json = json.dumps(context)
+///     result = await loop.run_in_executor(
+///         None, 
+///         lambda: kernel.evaluate_policy(agent_id, action, context_json)
+///     )
+///     return result
+/// 
+/// async def execute_tool_async(tool_id: str, agent_id: str, params: dict) -> dict:
+///     loop = asyncio.get_event_loop()
+///     import json
+///     params_json = json.dumps(params)
+///     result = await loop.run_in_executor(
+///         None,
+///         lambda: kernel.execute_tool(tool_id, agent_id, "execute", params_json, 30000, 1024*1024)
+///     )
+///     return result
+/// ```
+/// 
+/// For true async support with pyo3-asyncio (future enhancement):
+/// The kernel operations are CPU-bound, so using run_in_executor is the 
+/// recommended approach. True async would only benefit I/O-bound operations
+/// like database queries or network requests.
+#[cfg(feature = "python")]
+pub struct AsyncKernelHelper;
+
+#[cfg(feature = "python")]
+impl AsyncKernelHelper {
+    /// Documentation on async usage patterns
+    pub const ASYNC_USAGE_DOCS: &'static str = r#"
+# VAK Async Python SDK Usage Guide (Issue #18)
+
+The VAK kernel performs CPU-bound policy evaluation and audit logging.
+For async Python frameworks (FastAPI, aiohttp), wrap calls with run_in_executor:
+
+## Basic Pattern
+
+```python
+import asyncio
+from vak import VakKernel
+
+kernel = VakKernel.default()
+
+async def async_policy_check(agent_id: str, action: str, context: dict) -> dict:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None,  # Uses default executor
+        lambda: kernel.evaluate_policy(agent_id, action, json.dumps(context))
+    )
+```
+
+## FastAPI Integration
+
+```python
+from fastapi import FastAPI, HTTPException
+from vak import VakKernel
+import asyncio
+import json
+
+app = FastAPI()
+kernel = VakKernel.default()
+
+@app.post("/evaluate")
+async def evaluate_policy(agent_id: str, action: str, context: dict):
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: kernel.evaluate_policy(agent_id, action, json.dumps(context))
+    )
+    if result.get("effect") == "deny":
+        raise HTTPException(status_code=403, detail=result.get("reason"))
+    return result
+
+@app.post("/tools/{tool_id}")
+async def execute_tool(tool_id: str, agent_id: str, params: dict):
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: kernel.execute_tool(tool_id, agent_id, "execute", json.dumps(params), 30000, 1024*1024)
+    )
+    return result
+```
+
+## Thread Pool Optimization
+
+For high-throughput scenarios, use a dedicated ThreadPoolExecutor:
+
+```python
+from concurrent.futures import ThreadPoolExecutor
+import asyncio
+
+# Create dedicated executor for VAK operations
+vak_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="vak-")
+
+async def optimized_policy_check(agent_id: str, action: str, context: dict):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        vak_executor,
+        lambda: kernel.evaluate_policy(agent_id, action, json.dumps(context))
+    )
+```
+"#;
 }
 
 /// The PyO3 module definition

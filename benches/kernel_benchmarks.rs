@@ -4,9 +4,11 @@
 //!
 //! These benchmarks measure the performance of critical kernel operations:
 //! - Kernel initialization and configuration
-//! - Policy evaluation under various conditions
+//! - Policy evaluation under various conditions (Issue #17)
 //! - Audit logging with hash chain computation
 //! - Tool request creation and processing
+//! - Vector store operations
+//! - Rate limiting overhead
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::collections::HashMap;
@@ -18,6 +20,7 @@ use vak::kernel::types::{AgentId, PolicyDecision, SessionId, ToolRequest};
 use vak::kernel::Kernel;
 use vak::policy::{
     ConditionOperator, PolicyCondition, PolicyContext, PolicyEffect, PolicyEngine, PolicyRule,
+    RateLimitConfig,
 };
 
 /// Benchmark kernel initialization with default configuration.
@@ -322,6 +325,117 @@ fn bench_policy_decision_checks(c: &mut Criterion) {
     });
 }
 
+/// Benchmark rate limiting overhead (Issue #13).
+fn bench_rate_limiting(c: &mut Criterion) {
+    let mut group = c.benchmark_group("rate_limiting");
+
+    // Without rate limiting
+    let engine_unlimited = PolicyEngine::new_unlimited();
+    let context = PolicyContext {
+        agent_id: "bench-agent".to_string(),
+        role: "user".to_string(),
+        attributes: HashMap::new(),
+        environment: HashMap::new(),
+    };
+
+    group.bench_function("policy_eval_no_rate_limit", |b| {
+        b.iter(|| black_box(engine_unlimited.evaluate("test", "read", &context)))
+    });
+
+    // With rate limiting enabled (permissive limits for benchmark)
+    let config = RateLimitConfig {
+        per_agent_per_second: 100000,
+        burst_size: 10000,
+        enabled: true,
+    };
+    let engine_limited = PolicyEngine::with_rate_limit(config);
+
+    group.bench_function("policy_eval_with_rate_limit", |b| {
+        b.iter(|| {
+            black_box(
+                engine_limited
+                    .evaluate_with_rate_limit("test", "read", &context)
+                    .unwrap(),
+            )
+        })
+    });
+
+    group.finish();
+}
+
+/// Benchmark concurrent policy evaluations.
+fn bench_concurrent_policy_evaluation(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let mut group = c.benchmark_group("concurrent_policy");
+
+    for agent_count in [1, 10, 50].iter() {
+        let mut engine = PolicyEngine::new_unlimited();
+        engine.add_rule(PolicyRule {
+            id: "allow-all".to_string(),
+            effect: PolicyEffect::Allow,
+            resource_pattern: "*".to_string(),
+            action_pattern: "*".to_string(),
+            conditions: vec![],
+            priority: 1,
+            description: None,
+        });
+
+        let engine = std::sync::Arc::new(engine);
+
+        group.throughput(Throughput::Elements(*agent_count as u64));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(agent_count),
+            agent_count,
+            |b, &agent_count| {
+                b.iter(|| {
+                    rt.block_on(async {
+                        let mut handles = Vec::new();
+                        for i in 0..agent_count {
+                            let engine = engine.clone();
+                            handles.push(tokio::spawn(async move {
+                                let ctx = PolicyContext {
+                                    agent_id: format!("agent-{}", i),
+                                    role: "user".to_string(),
+                                    attributes: HashMap::new(),
+                                    environment: HashMap::new(),
+                                };
+                                engine.evaluate("resource", "action", &ctx)
+                            }));
+                        }
+                        for handle in handles {
+                            black_box(handle.await.unwrap());
+                        }
+                    })
+                })
+            },
+        );
+    }
+
+    group.finish();
+}
+
+/// Benchmark policy validation (Issue #19).
+fn bench_policy_validation(c: &mut Criterion) {
+    let mut engine = PolicyEngine::new_unlimited();
+    
+    // Add various rules
+    for i in 0..100 {
+        engine.add_rule(PolicyRule {
+            id: format!("rule-{}", i),
+            effect: if i % 2 == 0 { PolicyEffect::Allow } else { PolicyEffect::Deny },
+            resource_pattern: format!("resource-{}/*", i),
+            action_pattern: "*".to_string(),
+            conditions: vec![],
+            priority: i as i32,
+            description: None,
+        });
+    }
+
+    c.bench_function("policy_validate_config", |b| {
+        b.iter(|| black_box(engine.validate_config()))
+    });
+}
+
 criterion_group!(
     benches,
     bench_kernel_init,
@@ -336,5 +450,8 @@ criterion_group!(
     bench_kernel_execute,
     bench_id_creation,
     bench_policy_decision_checks,
+    bench_rate_limiting,
+    bench_concurrent_policy_evaluation,
+    bench_policy_validation,
 );
 criterion_main!(benches);

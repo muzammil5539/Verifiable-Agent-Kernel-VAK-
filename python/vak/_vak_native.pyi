@@ -101,6 +101,28 @@ class Kernel:
         """List available tools."""
         ...
     
+    def register_skill(
+        self,
+        skill_id: str,
+        name: str,
+        description: str,
+        version: str,
+    ) -> None:
+        """Register a new skill/tool with the kernel."""
+        ...
+    
+    def unregister_skill(self, skill_id: str) -> None:
+        """Unregister a skill/tool from the kernel."""
+        ...
+    
+    def set_skill_enabled(self, skill_id: str, enabled: bool) -> None:
+        """Enable or disable a skill."""
+        ...
+    
+    def get_skill_info(self, skill_id: str) -> Optional[Dict[str, str]]:
+        """Get detailed information about a specific skill."""
+        ...
+    
     def get_audit_logs(self, filters_json: str) -> List[Dict[str, str]]:
         """Get audit logs with optional filtering."""
         ...
@@ -112,3 +134,28 @@ class Kernel:
     def create_audit_entry(self, entry_json: str) -> str:
         """Create an audit entry and return its ID."""
         ...
+    
+    def verify_audit_chain(self) -> bool:
+        """Verify the integrity of the audit chain."""
+        ...
+    
+    def get_audit_root_hash(self) -> Optional[str]:
+        """Get the audit chain's current root hash."""
+        ...
+    
+    def add_policy_rule(self, rule_json: str) -> None:
+        """Add a policy rule."""
+        ...
+    
+    def validate_policy_config(self) -> List[str]:
+        """Validate the policy configuration and return any warnings (Issue #19)."""
+        ...
+    
+    def has_allow_policies(self) -> bool:
+        """Check if any allow rules are defined."""
+        ...
+    
+    def policy_rule_count(self) -> int:
+        """Get the number of loaded policy rules."""
+        ...
+
