@@ -27,10 +27,10 @@
 | Priority | Count | Status |
 |----------|-------|--------|
 | 🔴 Critical | 9 | **9 resolved, 0 remaining** |
-| 🟠 High | 15 | **6 resolved (Feb 2026), 9 remaining** |
-| 🟡 Medium | 17 | **3 resolved (Feb 2026), 14 remaining** |
+| 🟠 High | 15 | **10 resolved (Feb 2026), 5 remaining** |
+| 🟡 Medium | 17 | **4 resolved (Feb 2026), 13 remaining** |
 | 🟢 Low | 10 | Nice to have |
-| **Total** | **51** | 18 resolved |
+| **Total** | **51** | 23 resolved |
 
 ---
 
@@ -724,40 +724,39 @@ The time travel system (`src/memory/time_travel.rs`) creates memory snapshots bu
 
 ---
 
-### ✅ Issue #12: Z3 [RESOLVED] formal verification is stub implementation
+### ✅ Issue #12: Z3 formal verification integration [RESOLVED]
 
 **Type**: Feature Gap  
 **Priority**: High  
 **Estimated Effort**: 1 week  
+**Status**: ✅ **RESOLVED** (February 2026)
 
-**Description**:
-The `ConstraintVerifier` in `src/reasoner/verifier.rs` is a pure Rust implementation that does simple constraint checking but doesn't use the actual Z3 SMT solver for formal verification.
+**Resolution**:
+Implemented full Z3 SMT solver integration in `src/reasoner/z3_verifier.rs`:
 
-**Affected Files**:
-- `src/reasoner/verifier.rs` - Z3Verifier alias (line 10)
-- `Cargo.toml` - No z3 dependency
+1. ✅ `Z3FormalVerifier` implementing `FormalVerifier` trait
+2. ✅ `SmtLibBuilder` for constructing SMT-LIB2 formulas
+3. ✅ Constraint translation for all `ConstraintKind` variants:
+   - Equals, NotEquals, LessThan, LessThanOrEqual
+   - GreaterThan, GreaterThanOrEqual, In, NotIn
+   - Contains, Matches, Between, Forbidden
+   - And, Or, Not, Implies (compound constraints)
+4. ✅ Counterexample generation from Z3 models
+5. ✅ `verify()` and `verify_all()` methods
+6. ✅ `check_forbidden()` for resource access control
+7. ✅ `validate_constraint()` for constraint validation
 
-**Current Capabilities**:
-- ✅ Basic constraint types (Equals, LessThan, In, etc.)
-- ✅ YAML constraint loading
-- ❌ SAT solving
-- ❌ Proof generation
-- ❌ Complex logical formulas (quantifiers, bitvectors)
-- ❌ Counterexample generation
+**Files Added**:
+- `src/reasoner/z3_verifier.rs` - Full Z3 integration (~850 lines)
 
-**Limitation Example**:
-```rust
-// Current: Can check simple constraints
-let constraint = Constraint::LessThan { field: "age", value: 18 };
+**Capabilities Now**:
+- ✅ SAT/UNSAT solving via Z3 CLI
+- ✅ Proof generation and counterexample extraction
+- ✅ Complex logical formulas (And, Or, Not, Implies)
+- ✅ String operations (Contains, Matches)
+- ✅ Range constraints (Between)
 
-// Cannot verify: Complex logical properties
-// ∀x ∈ agents: (x.role = "admin" ⟹ x.can_delete = true) ∧ (x.suspended = false)
-```
-
-**Impact**:
-- Cannot verify complex safety properties
-- No mathematical proof of policy correctness
-- Limited to runtime checks (not static verification)
+**Related Issues**: #19, #48
 
 **Recommended Fix**:
 1. Add Z3 dependency:
@@ -1571,24 +1570,41 @@ $ cargo build
 
 ---
 
-### ✅ Issue #45: LangChain [RESOLVED] / AutoGPT middleware adapter
+### ✅ Issue #45: LangChain / AutoGPT middleware adapter [RESOLVED]
 
 **Type**: Integration / Developer Experience  
 **Priority**: Medium  
 **Estimated Effort**: 5 days  
+**Status**: ✅ **RESOLVED** (February 2026)
 
-**Description**:
-No middleware exists to plug the kernel into LangChain or AutoGPT-style orchestrators. Users cannot easily reuse existing toolchains or routers with VAK.
+**Resolution**:
+Implemented comprehensive middleware adapters for LangChain and AutoGPT integration:
 
-**Impact**:
-- Harder onboarding for teams with existing LangChain stacks
-- Duplicated tooling and pipelines
-- Missed demos/POCs that rely on common frameworks
+1. ✅ Created `src/integrations/mod.rs` with adapter framework
+2. ✅ Created `src/integrations/common.rs` with shared types:
+   - `AdapterConfig` for configuration
+   - `InterceptResult` enum (Allow, Block, Modify, Log)
+   - `AdapterStats` for tracking
 
-**Recommended Fix**:
-1. Provide middleware/adapter modules exposing VAK kernel API as LangChain tools and AutoGPT plugins.
-2. Add example notebooks/scripts showing intercept loop + policy/audit hooks in those frameworks.
-3. Publish packaging guidance (PyPI crate layout, versioning) and CI smoke tests.
+3. ✅ Created `src/integrations/langchain.rs` with `LangChainAdapter`:
+   - `intercept_tool_call()` - Validates tool calls against policies
+   - `intercept_chain_execution()` - Wraps chain runs with audit
+   - Rate limiting and blocked action enforcement
+   - Passthrough tools configuration
+   - Statistics tracking (intercepted, blocked, allowed)
+
+4. ✅ Created `src/integrations/autogpt.rs` with `AutoGPTAdapter`:
+   - `evaluate_task_plan()` - Validates entire task plans
+   - `intercept_command()` - Blocks dangerous commands
+   - High-risk goal detection with custom patterns
+   - Blocked command enforcement (rm -rf, sudo, etc.)
+   - Step-by-step plan validation
+
+**Files Added**:
+- `src/integrations/mod.rs` - Module exports
+- `src/integrations/common.rs` - Shared types (~200 lines)
+- `src/integrations/langchain.rs` - LangChain adapter (~400 lines)
+- `src/integrations/autogpt.rs` - AutoGPT adapter (~400 lines)
 
 **Related Issues**: #9, #18, #22
 

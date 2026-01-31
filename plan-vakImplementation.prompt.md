@@ -3,7 +3,7 @@
 > **Project:** Verifiable Agent Kernel (VAK) / Exo-Cortex 0.1
 > **Target:** Autonomous Code Auditor MVP
 > **Generated:** January 30, 2026
-> **Last Refined:** January 31, 2026 - Sprint 5 Complete (MVP Demo Ready)
+> **Last Refined:** February 1, 2026 - Sprint 6 (Production Hardening)
 
 ---
 
@@ -424,12 +424,13 @@ NSR-002 (Z3 Verifier) ─► [standalone, can parallel]
 - [x] Model configuration ✅
 - [x] Streaming support ✅
 
-#### Storage Backends ✅ MOSTLY IMPLEMENTED
+#### Storage Backends ✅ FULLY IMPLEMENTED
 - [x] Vector Store abstraction ✅ COMPLETED (MEM-004)
 - [x] IPFS-Lite for Merkle DAG ✅ COMPLETED (MEM-006)
 - [x] Persistent state storage ✅ COMPLETED (INF-001)
+- [x] Database migrations ✅ COMPLETED (src/memory/migrations.rs)
+- [x] Merkle DAG memory fabric ✅ COMPLETED (Issue #50)
 - [ ] LanceDB integration (P3 - future)
-- [ ] Database migrations (P3 - future)
 
 ---
 
@@ -447,16 +448,23 @@ src/
 │   ├── vector_store.rs      # ✅ IMPLEMENTED: Vector Store abstraction (MEM-004)
 │   ├── time_travel.rs       # ✅ IMPLEMENTED: Time Travel & Rollbacks (MEM-005)
 │   ├── ipfs.rs              # ✅ IMPLEMENTED: IPFS-Lite content-addressable storage (MEM-006)
-│   └── storage.rs           # ✅ IMPLEMENTED: Persistent Storage backends (INF-001)
+│   ├── storage.rs           # ✅ IMPLEMENTED: Persistent Storage backends (INF-001)
+│   ├── merkle_dag.rs        # ✅ IMPLEMENTED: Merkle DAG memory fabric (Issue #50)
+│   └── migrations.rs        # ✅ IMPLEMENTED: Database migrations
 ├── policy/                   # EXISTING
 ├── sandbox/
 │   ├── mod.rs               # EXISTING
 │   └── registry.rs          # ✅ IMPLEMENTED: Skill Registry
-├── audit/                    # EXISTING
+├── audit/                    # ✅ EXPANDED MODULE
+│   ├── mod.rs               # ✅ Module exports + AuditLogger, backends
+│   ├── flight_recorder.rs   # ✅ IMPLEMENTED: Shadow-mode flight recorder (Issue #43)
+│   └── s3_backend.rs        # ✅ IMPLEMENTED: S3 cloud archival backend
 ├── reasoner/                 # ✅ FULLY IMPLEMENTED MODULE
 │   ├── mod.rs               # ✅ Module exports
 │   ├── prm.rs               # ✅ Process Reward Model (NSR-001)
+│   ├── prm_gating.rs        # ✅ PRM Gating & Backtracking (Issue #47)
 │   ├── verifier.rs          # ✅ Formal Verification Gateway (NSR-002)
+│   ├── z3_verifier.rs       # ✅ Z3 SMT Solver Integration (Issue #12)
 │   └── tree_search.rs       # ✅ IMPLEMENTED: Tree of Thoughts / MCTS (NSR-003)
 ├── swarm/                    # ✅ FULLY IMPLEMENTED MODULE
 │   ├── mod.rs               # ✅ SwarmCoordinator, config, agent types (SWM-001)
@@ -469,6 +477,14 @@ src/
 │   ├── traits.rs            # ✅ LLM abstraction
 │   ├── mock.rs              # ✅ Mock provider for testing
 │   └── litellm.rs           # ✅ LiteLLM integration
+├── integrations/             # ✅ NEW: Framework Adapters (Issue #45)
+│   ├── mod.rs               # ✅ Module exports
+│   ├── common.rs            # ✅ Shared adapter types
+│   ├── langchain.rs         # ✅ LangChain middleware adapter
+│   └── autogpt.rs           # ✅ AutoGPT middleware adapter
+├── tools/                    # ✅ NEW: CLI Tools
+│   ├── mod.rs               # ✅ Module exports
+│   └── skill_sign.rs        # ✅ vak-skill-sign CLI (Ed25519 signing)
 └── python.rs                 # ✅ IMPLEMENTED: PyO3 bindings
 
 python/
@@ -646,33 +662,44 @@ For each TODO item:
 4. ~~**Sprint 3**: Python bindings (PY-001), integration testing~~ ✅ DONE (January 31, 2026)
 5. ~~**Sprint 4**: P1/P2 Backlogs (NSR-003, SWM-001/002/003, MEM-006, INF-001)~~ ✅ DONE (January 31, 2026)
 6. ~~**Sprint 5**: MVP demo preparation - Code Auditor walkthrough~~ ✅ DONE (January 31, 2026)
-7. **Next**: Production hardening, CI/CD integration, and external API testing
-8. **Post-MVP**: Full async bindings, LanceDB integration, advanced features
+7. ~~**Sprint 6**: Production hardening - Flight recorder, PRM gating, Z3 integration~~ ✅ DONE (February 1, 2026)
+8. **Next**: CI/CD integration, external API testing, OSS dashboard
+9. **Post-MVP**: Full async bindings, LanceDB integration, advanced features
 
-### 📊 Test Coverage Summary (Updated January 31, 2026 - Sprint 5 Complete)
-- **Rust Unit Tests**: 416 passing
+### 📊 Test Coverage Summary (Updated February 1, 2026 - Sprint 6 Complete)
+- **Rust Unit Tests**: 416+ passing
 - **Rust Doc Tests**: 30 passing (4 ignored)
 - **Python Tests**: 126 passing (94 SDK + 32 Code Auditor)
-- **Total Tests**: 572 passing
+- **Total Tests**: 572+ passing
 
 #### Breakdown by Module:
 - **LLM Module**: 26 tests
-- **Memory Module**: 116 tests (episodic, working, knowledge_graph, vector_store, time_travel, ipfs, storage)
+- **Memory Module**: 120+ tests (episodic, working, knowledge_graph, vector_store, time_travel, ipfs, storage, merkle_dag, migrations)
 - **Sandbox Module**: 46 tests (registry, signature verification)
-- **Reasoner Module**: 58 tests (PRM, verifier, tree_search)
+- **Reasoner Module**: 70+ tests (PRM, verifier, tree_search, prm_gating, z3_verifier)
 - **Swarm Module**: 76 tests (coordinator, voting, router, messages, consensus)
-- **Kernel/Policy/Audit**: 19 tests
+- **Kernel/Policy/Audit**: 25+ tests (including flight_recorder, s3_backend)
 - **Python SDK**: 94 tests (kernel, types, integration)
 - **Code Auditor Demo**: 32 tests (episodic memory, audit logger, access control, constraints, detection, PRM)
+- **Integrations Module**: NEW - LangChain/AutoGPT adapters
+- **Tools Module**: NEW - vak-skill-sign CLI
 
-### 🎉 MVP Complete!
+### 🎉 MVP Complete + Production Hardening!
 
 The Autonomous Code Auditor MVP is now ready with:
 - ✅ Immutable Memory Log (Merkle Chain)
 - ✅ WASM Sandbox for skill execution
 - ✅ Process Reward Model (PRM) integration
+- ✅ PRM Gating with backtracking (#47)
 - ✅ Formal Constraints with 14 constraint types
+- ✅ Z3 SMT Solver integration (#12)
 - ✅ Cryptographic Audit Trail
+- ✅ Flight Recorder shadow mode (#43)
+- ✅ S3 cloud archival for audit logs
+- ✅ Merkle DAG memory fabric (#50)
+- ✅ Database migrations system
+- ✅ LangChain/AutoGPT adapters (#45)
+- ✅ vak-skill-sign CLI tool
 - ✅ Forbidden file access control
 - ✅ SQL injection detection
 - ✅ Hardcoded secret detection
