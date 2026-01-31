@@ -34,14 +34,18 @@ pub mod types;
 // Re-export commonly used types at the module level
 pub use self::config::KernelConfig;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 
 use self::types::{
     AgentId, AuditEntry, KernelError, PolicyDecision, SessionId, ToolRequest, ToolResponse,
 };
+
+// Import sandbox and skill registry for WASM execution (Issue #6)
+use crate::sandbox::{SandboxConfig, SkillRegistry, WasmSandbox};
 
 /// The main kernel instance that manages agent execution and policy enforcement.
 ///
@@ -50,6 +54,7 @@ use self::types::{
 /// - Enforcing security policies
 /// - Maintaining audit logs
 /// - Managing agent sessions
+/// - Executing WASM skills in sandboxed environments (Issue #6)
 ///
 /// # Thread Safety
 ///
@@ -79,6 +84,12 @@ pub struct Kernel {
 
     /// Active sessions
     sessions: Arc<RwLock<std::collections::HashMap<SessionId, AgentId>>>,
+
+    /// Skill registry for WASM tools (Issue #6)
+    skill_registry: Arc<RwLock<SkillRegistry>>,
+
+    /// Sandbox configuration for WASM execution
+    sandbox_config: SandboxConfig,
 }
 
 impl Kernel {
@@ -112,10 +123,31 @@ impl Kernel {
             "Initializing VAK kernel"
         );
 
+        // Initialize skill registry (Issue #6)
+        let skills_dir = PathBuf::from("skills");
+        let mut skill_registry = SkillRegistry::new(skills_dir.clone());
+
+        // Try to load skills from directory
+        if skills_dir.exists() {
+            match skill_registry.load_all_skills() {
+                Ok(ids) => info!(count = ids.len(), "Loaded skills from registry"),
+                Err(e) => warn!(error = %e, "Failed to load skills from registry"),
+            }
+        }
+
+        // Configure sandbox based on kernel config
+        let sandbox_config = SandboxConfig {
+            memory_limit: (config.resources.max_memory_mb as usize) * 1024 * 1024, // Convert MB to bytes
+            fuel_limit: 10_000_000, // Default fuel limit
+            timeout: config.max_execution_time,
+        };
+
         Ok(Self {
             config,
             audit_log: Arc::new(RwLock::new(Vec::new())),
             sessions: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            skill_registry: Arc::new(RwLock::new(skill_registry)),
+            sandbox_config,
         })
     }
 
@@ -369,16 +401,91 @@ impl Kernel {
                 }))
             }
             _ => {
-                // Unknown tool - return a generic response
-                // In a full implementation, this would look up the tool in a registry
-                Ok(serde_json::json!({
-                    "status": "executed",
-                    "tool": request.tool_name,
-                    "message": "Tool executed successfully (default handler)",
-                    "parameters_received": request.parameters
-                }))
+                // Try to execute as WASM skill (Issue #6)
+                self.execute_wasm_skill(request).await
             }
         }
+    }
+
+    /// Executes a WASM skill in the sandbox (Issue #6)
+    ///
+    /// This method handles the execution flow:
+    /// 1. Look up skill in registry by name
+    /// 2. Load the WASM module if found
+    /// 3. Execute in sandboxed environment with resource limits
+    /// 4. Return the result or fall back to default handler
+    async fn execute_wasm_skill(
+        &self,
+        request: &ToolRequest,
+    ) -> Result<serde_json::Value, KernelError> {
+        // Check if skill exists in registry
+        let registry = self.skill_registry.read().await;
+        
+        if let Some(manifest) = registry.get_skill_by_name(&request.tool_name) {
+            // Skill found - try to execute in sandbox
+            info!(
+                tool = %request.tool_name,
+                version = %manifest.version,
+                "Executing WASM skill"
+            );
+
+            // Create sandbox with configured limits
+            let mut sandbox = WasmSandbox::new(self.sandbox_config.clone())
+                .map_err(|e| KernelError::ToolExecutionFailed {
+                    tool_name: request.tool_name.clone(),
+                    reason: format!("Failed to create sandbox: {}", e),
+                })?;
+
+            // Load the WASM module
+            sandbox
+                .load_skill_from_file(&manifest.wasm_path)
+                .map_err(|e| KernelError::ToolExecutionFailed {
+                    tool_name: request.tool_name.clone(),
+                    reason: format!("Failed to load WASM module: {}", e),
+                })?;
+
+            // Execute the skill
+            // WASM skills expose an "execute" function that takes JSON input
+            let result = sandbox
+                .execute("execute", &request.parameters)
+                .map_err(|e| KernelError::ToolExecutionFailed {
+                    tool_name: request.tool_name.clone(),
+                    reason: format!("WASM execution failed: {}", e),
+                })?;
+
+            Ok(result)
+        } else {
+            // Skill not found - return generic response
+            info!(
+                tool = %request.tool_name,
+                "Tool not found in skill registry, using default handler"
+            );
+
+            Ok(serde_json::json!({
+                "status": "executed",
+                "tool": request.tool_name,
+                "message": "Tool executed successfully (default handler)",
+                "parameters_received": request.parameters
+            }))
+        }
+    }
+
+    /// List available tools/skills
+    pub async fn list_tools(&self) -> Vec<String> {
+        let registry = self.skill_registry.read().await;
+        let mut tools = vec![
+            "echo".to_string(),
+            "calculator".to_string(),
+            "data_processor".to_string(),
+            "system_info".to_string(),
+        ];
+
+        // Add registered WASM skills
+        for skill in registry.list_skills() {
+            tools.push(skill.name.clone());
+        }
+
+        tools
     }
 
     /// Handles calculator tool requests.

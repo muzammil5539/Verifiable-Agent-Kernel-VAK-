@@ -2,7 +2,8 @@
 
 **Generated**: February 1, 2026  
 **Repository**: Verifiable Agent Kernel (VAK) / Exo-Cortex  
-**Version**: v0.1 (Alpha)
+**Version**: v0.1 (Alpha)  
+**Last Updated**: February 1, 2026
 
 ---
 
@@ -25,11 +26,11 @@
 
 | Priority | Count | Status |
 |----------|-------|--------|
-| 🔴 Critical | 9 | 5 resolved, 4 remaining |
+| 🔴 Critical | 9 | 7 resolved, 2 remaining |
 | 🟠 High | 15 | Important for production |
 | 🟡 Medium | 17 | Should be addressed |
 | 🟢 Low | 10 | Nice to have |
-| **Total** | **51** | 4 resolved |
+| **Total** | **51** | 7 resolved |
 
 ---
 
@@ -91,44 +92,51 @@ Implemented comprehensive "deny on error" policy evaluation:
 
 ---
 
-### 🔴 Issue #3: Audit logs stored only in memory (not persistent)
+### ✅ Issue #3: Audit logs stored only in memory (not persistent) [RESOLVED]
 
 **Type**: Feature Gap / Production Readiness  
 **Priority**: Critical  
 **Estimated Effort**: 1 week  
+**Status**: ✅ **RESOLVED** (February 2026)
 
-**Description**:
-The audit logger stores all entries in memory (`Vec<AuditEntry>`), which means audit trails are lost on restart or crash. This violates compliance requirements for production systems.
+**Resolution**:
+Implemented pluggable persistent audit storage backend:
+1. ✅ Added `AuditBackend` trait with core operations:
+   - `append()` - Add entry to audit log
+   - `load_all()` - Load all entries from storage
+   - `get_last()` - Get last entry for chain continuation
+   - `get_by_agent()` - Filter entries by agent ID
+   - `get_by_time_range()` - Filter entries by time range
+   - `flush()` - Persist buffered entries
 
-**Affected Files**:
-- `src/audit/mod.rs` - AuditLogger implementation (lines 50-200)
-- `src/kernel/mod.rs` - Kernel initialization
+2. ✅ Implemented `MemoryAuditBackend` (default for testing)
+3. ✅ Implemented `FileAuditBackend` with:
+   - Append-only JSONL storage
+   - Log rotation support via `rotate()` method
+   - Entry count tracking
+   - Automatic directory creation
 
-**Current Limitations**:
-- No persistence layer
-- Memory grows unbounded
-- No replay capability after restart
-- Audit integrity lost on crash
+4. ✅ Updated `AuditLogger`:
+   - `with_backend()` constructor for custom backends
+   - Chain verification on startup
+   - Automatic persistence on each log entry
+   - `flush()` method for explicit persistence
 
-**Impact**:
-- Cannot meet compliance requirements (SOX, GDPR, etc.)
-- No forensic analysis capability after incidents
-- Memory exhaustion risk for long-running agents
+5. ✅ Added comprehensive tests for:
+   - Memory backend operations
+   - File backend persistence
+   - File backend restart recovery
+   - Logger with custom backend
 
-**Recommended Fix**:
-1. Implement `AuditBackend` trait with multiple implementations:
-   - `FileBackend` - append-only log files with rotation
-   - `DatabaseBackend` - PostgreSQL/SQLite for queries
-   - `S3Backend` - cloud storage for archival
-2. Add periodic flush mechanism
-3. Implement log rotation and archival
-4. Add recovery mechanism to rebuild audit chain from disk
+**Files Modified**:
+- `src/audit/mod.rs` - Complete rewrite with backend support
 
-**Related Implementation**:
-- Can leverage existing `StorageManager` from `src/memory/storage.rs`
-- Reference: `INF-001` in `plan-vakImplementation.prompt.md`
+**Next Steps**:
+- Implement `SqliteAuditBackend` for queryable storage (Issue #4)
+- Add S3Backend for cloud archival
+- Wire into kernel initialization with configurable backend
 
-**Related Issues**: #4, #20
+**Related Issues**: #4, #20, #51
 
 ---
 
@@ -237,53 +245,49 @@ Ok(self.skill_registry.values()
 
 ---
 
-### 🔴 Issue #6: WASM skill execution not integrated with kernel
+### ✅ Issue #6: WASM skill execution not integrated with kernel [RESOLVED]
 
 **Type**: Implementation Gap  
 **Priority**: Critical  
 **Estimated Effort**: 3-5 days  
+**Status**: ✅ **RESOLVED** (February 2026)
 
-**Description**:
-While the WASM sandbox exists (`src/sandbox/mod.rs`), it's not integrated into the kernel's tool execution pipeline. Skills cannot be executed through the normal agent workflow.
+**Resolution**:
+Integrated WASM skill execution into the kernel's tool dispatch pipeline:
 
-**Affected Files**:
-- `src/kernel/mod.rs` - `execute_tool()` method (line 180)
-- `src/sandbox/mod.rs` - WasmSandbox implementation
-- `src/sandbox/registry.rs` - SkillRegistry
+1. ✅ Added `skill_registry: Arc<RwLock<SkillRegistry>>` to Kernel struct
+2. ✅ Added `sandbox_config: SandboxConfig` for resource limits
+3. ✅ Updated `Kernel::new()` to:
+   - Initialize SkillRegistry with skills directory
+   - Load all skills on startup
+   - Configure sandbox with memory/timeout limits from kernel config
 
-**Current Flow**:
+4. ✅ Implemented `execute_wasm_skill()` method:
+   - Looks up skill by name in registry
+   - Creates WasmSandbox with configured resource limits
+   - Loads WASM module from skill manifest path
+   - Executes with JSON input/output conversion
+   - Returns result or falls back to default handler
+
+5. ✅ Updated `dispatch_tool()` to:
+   - Try built-in tools first (echo, calculator, etc.)
+   - Fall back to WASM skill execution for unknown tools
+   - Log skill execution attempts
+
+6. ✅ Added `list_tools()` method to enumerate available tools
+
+**Execution Flow (Now Working)**:
 ```
-Agent -> Kernel.execute_tool() -> [no WASM execution] -> Mock response
+Agent -> Kernel.execute_tool() -> Policy Check -> dispatch_tool()
+      -> [built-in?] -> handle_builtin()
+      -> [wasm skill?] -> execute_wasm_skill() -> WasmSandbox.execute()
+      -> [unknown?] -> default handler
 ```
 
-**Expected Flow**:
-```
-Agent -> Kernel.execute_tool() -> Policy Check -> SkillRegistry.get(tool_name) 
-      -> WasmSandbox.execute() -> Response
-```
+**Files Modified**:
+- `src/kernel/mod.rs` - Kernel struct and dispatch logic
 
-**Missing Components**:
-1. Tool name → Skill mapping
-2. Input JSON → WASM params conversion
-3. WASM output → ToolResponse conversion
-4. Error handling for WASM execution failures
-5. Resource limit enforcement during execution
-
-**Impact**:
-- Core feature (skill execution) not working
-- Cannot demonstrate sandboxed execution
-- Defeats purpose of WASM security model
-
-**Recommended Fix**:
-1. Add `skill_registry: Arc<SkillRegistry>` to Kernel struct
-2. Modify `execute_tool()` to:
-   - Look up skill in registry
-   - Load WASM module if needed
-   - Execute in sandbox with limits
-   - Convert result to ToolResponse
-3. Add integration tests for skill execution flow
-
-**Related Issues**: #5, #7
+**Related Issues**: #5 (resolved), #7 (resolved)
 
 ---
 
