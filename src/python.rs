@@ -139,18 +139,25 @@ impl PyToolResponse {
 #[pyclass(name = "AuditEntry")]
 #[derive(Clone)]
 pub struct PyAuditEntry {
+    /// Unique identifier for this audit entry
     #[pyo3(get)]
     pub entry_id: String,
+    /// Timestamp when the entry was created
     #[pyo3(get)]
     pub timestamp: String,
+    /// Severity level of the audit entry
     #[pyo3(get)]
     pub level: String,
+    /// ID of the agent that performed the action
     #[pyo3(get)]
     pub agent_id: String,
+    /// The action that was performed
     #[pyo3(get)]
     pub action: String,
+    /// The resource that was acted upon
     #[pyo3(get)]
     pub resource: String,
+    /// Additional details about the audit entry
     #[pyo3(get)]
     pub details: HashMap<String, String>,
 }
@@ -169,11 +176,30 @@ impl PyAuditEntry {
 /// Python wrapper for the VAK Kernel
 #[cfg(feature = "python")]
 #[pyclass(name = "Kernel")]
+#[derive(Debug)]
 pub struct PyKernel {
     initialized: bool,
     agents: HashMap<String, HashMap<String, String>>,
     policy_engine: PolicyEngine,
     audit_logger: AuditLogger,
+    /// Registry of available tools/skills
+    skill_registry: HashMap<String, SkillInfo>,
+}
+
+/// Information about a registered skill/tool
+#[cfg(feature = "python")]
+#[derive(Clone, Debug)]
+pub struct SkillInfo {
+    /// Unique identifier for the skill
+    pub id: String,
+    /// Human-readable name
+    pub name: String,
+    /// Description of what the skill does
+    pub description: String,
+    /// Version string
+    pub version: String,
+    /// Whether the skill is currently enabled
+    pub enabled: bool,
 }
 
 #[cfg(feature = "python")]
@@ -182,11 +208,23 @@ impl PyKernel {
     /// Create a new kernel with default configuration
     #[staticmethod]
     fn default() -> PyResult<Self> {
+        let mut skill_registry = HashMap::new();
+        
+        // Register default built-in skills
+        skill_registry.insert("calculator".to_string(), SkillInfo {
+            id: "calculator".to_string(),
+            name: "Calculator".to_string(),
+            description: "Basic arithmetic operations".to_string(),
+            version: "1.0.0".to_string(),
+            enabled: true,
+        });
+        
         Ok(Self {
             initialized: true,
             agents: HashMap::new(),
             policy_engine: PolicyEngine::new(),
             audit_logger: AuditLogger::new(),
+            skill_registry,
         })
     }
 
@@ -215,6 +253,7 @@ impl PyKernel {
         self.agents.clear();
         self.policy_engine = PolicyEngine::new();
         self.audit_logger = AuditLogger::new();
+        self.skill_registry.clear();
     }
 
     /// Register an agent with the kernel
@@ -259,9 +298,9 @@ impl PyKernel {
             return Err(PyValueError::new_err(format!("Agent not found: {}", agent_id)));
         }
 
-        // Parse context JSON
+        // Parse context JSON with proper error handling
         let context_attrs: HashMap<String, serde_json::Value> = serde_json::from_str(context_json)
-            .unwrap_or_default();
+            .map_err(|e| PyValueError::new_err(format!("Invalid context JSON: {}", e)))?;
         
         // Build policy context
         let agent_config = self.agents.get(agent_id);
@@ -344,10 +383,81 @@ impl PyKernel {
         Ok(result)
     }
 
-    /// List available tools
+    /// List available tools from the skill registry
     fn list_tools(&self) -> Vec<String> {
-        // TODO: Integrate with skill registry
-        vec!["calculator".to_string(), "web_search".to_string(), "file_reader".to_string()]
+        self.skill_registry
+            .values()
+            .filter(|skill| skill.enabled)
+            .map(|skill| skill.id.clone())
+            .collect()
+    }
+
+    /// Register a new skill/tool with the kernel
+    fn register_skill(
+        &mut self,
+        skill_id: &str,
+        name: &str,
+        description: &str,
+        version: &str,
+    ) -> PyResult<()> {
+        if !self.initialized {
+            return Err(PyRuntimeError::new_err("Kernel not initialized"));
+        }
+
+        self.skill_registry.insert(skill_id.to_string(), SkillInfo {
+            id: skill_id.to_string(),
+            name: name.to_string(),
+            description: description.to_string(),
+            version: version.to_string(),
+            enabled: true,
+        });
+        
+        Ok(())
+    }
+
+    /// Unregister a skill/tool from the kernel
+    fn unregister_skill(&mut self, skill_id: &str) -> PyResult<()> {
+        if !self.initialized {
+            return Err(PyRuntimeError::new_err("Kernel not initialized"));
+        }
+
+        if self.skill_registry.remove(skill_id).is_none() {
+            return Err(PyValueError::new_err(format!("Skill not found: {}", skill_id)));
+        }
+        
+        Ok(())
+    }
+
+    /// Enable or disable a skill
+    fn set_skill_enabled(&mut self, skill_id: &str, enabled: bool) -> PyResult<()> {
+        if !self.initialized {
+            return Err(PyRuntimeError::new_err("Kernel not initialized"));
+        }
+
+        match self.skill_registry.get_mut(skill_id) {
+            Some(skill) => {
+                skill.enabled = enabled;
+                Ok(())
+            }
+            None => Err(PyValueError::new_err(format!("Skill not found: {}", skill_id))),
+        }
+    }
+
+    /// Get detailed information about a specific skill
+    fn get_skill_info(&self, skill_id: &str) -> PyResult<Option<HashMap<String, String>>> {
+        if !self.initialized {
+            return Err(PyRuntimeError::new_err("Kernel not initialized"));
+        }
+
+        Ok(self.skill_registry.get(skill_id).map(|skill| {
+            let mut info = HashMap::new();
+            info.insert("id".to_string(), skill.id.clone());
+            info.insert("name".to_string(), skill.name.clone());
+            info.insert("description".to_string(), skill.description.clone());
+            info.insert("version".to_string(), skill.version.clone());
+            info.insert("enabled".to_string(), skill.enabled.to_string());
+            info
+        }))
     }
 
     /// Get audit logs
@@ -356,9 +466,14 @@ impl PyKernel {
             return Err(PyRuntimeError::new_err("Kernel not initialized"));
         }
         
-        // Parse filters
-        let filters: HashMap<String, serde_json::Value> = serde_json::from_str(filters_json)
-            .unwrap_or_default();
+        // Parse filters - use defaults if parsing fails (non-critical)
+        let filters: HashMap<String, serde_json::Value> = match serde_json::from_str(filters_json) {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::debug!("Failed to parse audit log filters, using defaults: {}", e);
+                HashMap::new()
+            }
+        };
         
         let limit = filters.get("limit")
             .and_then(|v| v.as_u64())
@@ -475,9 +590,10 @@ impl PyKernel {
 
     fn __repr__(&self) -> String {
         format!(
-            "Kernel(initialized={}, agents={}, audit_entries={})",
+            "Kernel(initialized={}, agents={}, skills={}, audit_entries={})",
             self.initialized,
             self.agents.len(),
+            self.skill_registry.len(),
             self.audit_logger.entries().len()
         )
     }

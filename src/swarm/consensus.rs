@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
 
-use super::{SwarmAgentId, AgentRole};
+use super::SwarmAgentId;
 use super::voting::VoteDirection;
 
 // ============================================================================
@@ -326,7 +326,7 @@ impl ConsensusProtocol for MajorityConsensus {
     fn run_consensus(
         &self,
         votes: &[ConsensusVote],
-        eligible_voters: usize,
+        _eligible_voters: usize,
     ) -> Result<ConsensusResult, ConsensusError> {
         if votes.len() < self.config.min_participants {
             return Err(ConsensusError::InsufficientParticipants(
@@ -474,7 +474,7 @@ impl ConsensusProtocol for WeightedConsensus {
     fn run_consensus(
         &self,
         votes: &[ConsensusVote],
-        eligible_voters: usize,
+        _eligible_voters: usize,
     ) -> Result<ConsensusResult, ConsensusError> {
         if votes.len() < self.config.min_participants {
             return Err(ConsensusError::InsufficientParticipants(

@@ -851,7 +851,7 @@ impl<P: ProcessRewardModel, G: ThoughtGenerator> TreeOfThoughts<P, G> {
         tree: &Arc<RwLock<SearchTree>>,
         node_id: NodeId,
         context: &str,
-        max_steps: usize,
+        _max_steps: usize,
     ) -> TreeSearchResult<f64> {
         let tree_read = tree.read().await;
         let node = tree_read.get(node_id)
