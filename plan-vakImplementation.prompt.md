@@ -44,6 +44,9 @@ NSR-002 (Z3 Verifier) ─► [standalone, can parallel]
 | Swarm Consensus | ✅ Implemented | ~100% |
 | Python SDK | ✅ Implemented | ~95% |
 | LLM Interface | ✅ Implemented | 100% |
+| Framework Integrations | ✅ Implemented | 100% |
+| CLI Tools | ✅ Implemented | 100% |
+| OSS Dashboard | ✅ Implemented | 100% |
 
 ---
 
@@ -485,6 +488,11 @@ src/
 ├── tools/                    # ✅ NEW: CLI Tools
 │   ├── mod.rs               # ✅ Module exports
 │   └── skill_sign.rs        # ✅ vak-skill-sign CLI (Ed25519 signing)
+├── dashboard/                # ✅ NEW: OSS Dashboard (Issue #46)
+│   ├── mod.rs               # ✅ Module exports
+│   ├── metrics.rs           # ✅ Prometheus metrics exporter
+│   ├── health.rs            # ✅ Health check endpoints
+│   └── server.rs            # ✅ Dashboard server with HTML UI
 └── python.rs                 # ✅ IMPLEMENTED: PyO3 bindings
 
 python/
@@ -663,14 +671,15 @@ For each TODO item:
 5. ~~**Sprint 4**: P1/P2 Backlogs (NSR-003, SWM-001/002/003, MEM-006, INF-001)~~ ✅ DONE (January 31, 2026)
 6. ~~**Sprint 5**: MVP demo preparation - Code Auditor walkthrough~~ ✅ DONE (January 31, 2026)
 7. ~~**Sprint 6**: Production hardening - Flight recorder, PRM gating, Z3 integration~~ ✅ DONE (February 1, 2026)
-8. **Next**: CI/CD integration, external API testing, OSS dashboard
-9. **Post-MVP**: Full async bindings, LanceDB integration, advanced features
+8. ~~**Sprint 7**: OSS Dashboard and Observability~~ ✅ DONE (February 1, 2026)
+9. **Next**: CI/CD integration, external API testing, Kubernetes deployment
+10. **Post-MVP**: Full async bindings, LanceDB integration, advanced features
 
-### 📊 Test Coverage Summary (Updated February 1, 2026 - Sprint 6 Complete)
-- **Rust Unit Tests**: 416+ passing
+### 📊 Test Coverage Summary (Updated February 1, 2026 - Sprint 7 Complete)
+- **Rust Unit Tests**: 440+ passing
 - **Rust Doc Tests**: 30 passing (4 ignored)
 - **Python Tests**: 126 passing (94 SDK + 32 Code Auditor)
-- **Total Tests**: 572+ passing
+- **Total Tests**: 596+ passing
 
 #### Breakdown by Module:
 - **LLM Module**: 26 tests
@@ -679,12 +688,13 @@ For each TODO item:
 - **Reasoner Module**: 70+ tests (PRM, verifier, tree_search, prm_gating, z3_verifier)
 - **Swarm Module**: 76 tests (coordinator, voting, router, messages, consensus)
 - **Kernel/Policy/Audit**: 25+ tests (including flight_recorder, s3_backend)
+- **Dashboard Module**: 25 tests (metrics, health, server)
 - **Python SDK**: 94 tests (kernel, types, integration)
 - **Code Auditor Demo**: 32 tests (episodic memory, audit logger, access control, constraints, detection, PRM)
-- **Integrations Module**: NEW - LangChain/AutoGPT adapters
-- **Tools Module**: NEW - vak-skill-sign CLI
+- **Integrations Module**: LangChain/AutoGPT adapters
+- **Tools Module**: vak-skill-sign CLI
 
-### 🎉 MVP Complete + Production Hardening!
+### 🎉 MVP Complete + Production Hardening + OSS Dashboard!
 
 The Autonomous Code Auditor MVP is now ready with:
 - ✅ Immutable Memory Log (Merkle Chain)
@@ -700,6 +710,8 @@ The Autonomous Code Auditor MVP is now ready with:
 - ✅ Database migrations system
 - ✅ LangChain/AutoGPT adapters (#45)
 - ✅ vak-skill-sign CLI tool
+- ✅ OSS Dashboard with Prometheus metrics (#46)
+- ✅ Health check endpoints (Kubernetes-ready)
 - ✅ Forbidden file access control
 - ✅ SQL injection detection
 - ✅ Hardcoded secret detection

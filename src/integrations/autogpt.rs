@@ -473,7 +473,7 @@ impl AutoGPTAdapter {
                     started_at: Instant::now(),
                     current_step: 0,
                     completed_steps: 0,
-                    blocked_steps,
+                    blocked_steps: blocked_steps.clone(),
                 },
             );
         } else {

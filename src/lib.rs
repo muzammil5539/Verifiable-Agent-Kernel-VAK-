@@ -89,6 +89,24 @@ pub mod reasoner;
 /// for multi-agent collaboration scenarios.
 pub mod swarm;
 
+/// External framework integrations (Issue #45).
+///
+/// Provides middleware adapters for LangChain, AutoGPT, and other
+/// agent frameworks to use VAK as a verification layer.
+pub mod integrations;
+
+/// CLI tools module.
+///
+/// Provides command-line utilities for VAK operations including
+/// skill signing with vak-skill-sign.
+pub mod tools;
+
+/// Dashboard and observability module (Issue #46).
+///
+/// Provides metrics endpoints, health checks, and a web-based
+/// dashboard for monitoring VAK operations.
+pub mod dashboard;
+
 /// PyO3 Python bindings module (PY-001).
 ///
 /// Provides Python bindings for the VAK Kernel via PyO3.

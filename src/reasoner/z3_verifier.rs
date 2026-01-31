@@ -596,7 +596,7 @@ impl FormalVerifier for Z3FormalVerifier {
             Ok(VerificationResult::satisfied(constraint.name.clone(), time_us))
         } else if output.unsatisfiable {
             let counterexample = output.model.map(|model| {
-                Counterexample::new(model, explanation)
+                Counterexample::new(model, explanation.clone())
             }).unwrap_or_else(|| {
                 Counterexample::new(HashMap::new(), explanation)
             });
@@ -822,8 +822,8 @@ mod tests {
         let mut context = HashMap::new();
         context.insert("amount".to_string(), ConstraintValue::Integer(500));
 
-        let result = verifier.verify(&constraint, &context).await.unwrap();
-        assert!(result.satisfied);
+        let result = verifier.verify(&constraint, &context).unwrap();
+        assert!(result.is_satisfied());
     }
 
     #[tokio::test]
@@ -847,7 +847,7 @@ mod tests {
         let mut context = HashMap::new();
         context.insert("amount".to_string(), ConstraintValue::Integer(1500));
 
-        let result = verifier.verify(&constraint, &context).await.unwrap();
-        assert!(!result.satisfied);
+        let result = verifier.verify(&constraint, &context).unwrap();
+        assert!(!result.is_satisfied());
     }
 }

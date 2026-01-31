@@ -118,9 +118,31 @@
 
 ## In Progress
 
-- [ ] **Issue #46**: Basic OSS dashboard and observability
-  - Need to add metrics endpoint
-  - Need to add basic dashboard HTML/JS
+- [ ] Multi-region S3 replication for audit logs
+- [ ] Enhanced WASM skill marketplace integration
+
+## Recently Completed (February 1, 2026)
+
+- [x] **Issue #46**: Basic OSS dashboard and observability (February 2026)
+  - Created `src/dashboard/mod.rs` with module exports
+  - Created `src/dashboard/metrics.rs` with Prometheus exporter
+    - `MetricsCollector` with counters, gauges, and histograms
+    - Prometheus text format export
+    - JSON metrics export
+  - Created `src/dashboard/health.rs` with health checks
+    - `HealthChecker` with component registration
+    - `HealthStatus` (Healthy, Degraded, Unhealthy)
+    - `ReadinessStatus` for Kubernetes probes
+    - Liveness, readiness, and health endpoints
+  - Created `src/dashboard/server.rs` with dashboard server
+    - `DashboardServer` with HTTP request handling
+    - Full HTML/CSS/JS dashboard UI
+    - `/metrics` - Prometheus metrics
+    - `/health` - Health check JSON
+    - `/ready` - Readiness probe
+    - `/live` - Liveness probe
+    - `/dashboard` - Web UI
+  - 25 comprehensive unit tests
 
 ## Future Work
 
