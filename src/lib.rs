@@ -84,6 +84,13 @@ pub mod llm;
 /// to detect errors early and enable backtracking when needed.
 pub mod reasoner;
 
+/// PyO3 Python bindings module (PY-001).
+///
+/// Provides Python bindings for the VAK Kernel via PyO3.
+/// Build with `maturin develop --features python` to enable.
+#[cfg(feature = "python")]
+pub mod python;
+
 /// Prelude module for convenient imports.
 ///
 /// # Example

@@ -1,15 +1,21 @@
 //! Multi-tier Memory/State Manager
 //!
 //! Provides a hierarchical state management system with:
+//! - Working tier: Hot context window with dynamic summarization (MEM-002)
 //! - Ephemeral tier: Fast in-memory session state
 //! - Semantic tier: Vector storage for semantic search (LanceDB backend)
 //! - Merkle tier: Verifiable key-value storage with cryptographic proofs
 //! - Episodic tier: Append-only episode chain with Merkle chain integrity
 
 pub mod episodic;
+pub mod working;
 
 pub use episodic::{
     ChainVerificationError, Episode, EpisodeChain, EpisodeId, EpisodicMemory, ImportError,
+};
+
+pub use working::{
+    ItemPriority, ItemType, MemoryItem, WorkingMemory, WorkingMemoryConfig, WorkingMemoryError,
 };
 
 use std::collections::HashMap;

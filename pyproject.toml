@@ -1,0 +1,73 @@
+[build-system]
+requires = ["maturin>=1.4,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "vak"
+version = "0.1.0"
+description = "Verifiable Agent Kernel - Python SDK with Rust bindings"
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.9"
+authors = [
+    {name = "VAK Team", email = "team@vak-project.dev"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+keywords = ["ai", "agents", "kernel", "verification", "security", "audit", "policy"]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "mypy>=1.0",
+    "ruff>=0.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/vak-project/verifiable-agent-kernel"
+Documentation = "https://docs.vak-project.dev"
+Repository = "https://github.com/vak-project/verifiable-agent-kernel"
+Issues = "https://github.com/vak-project/verifiable-agent-kernel/issues"
+
+[tool.maturin]
+# Build settings
+features = ["python"]
+python-source = "python"
+module-name = "vak._vak_native"
+
+# Strip debug info from release builds
+strip = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["python/tests"]
+
+[tool.mypy]
+python_version = "3.9"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "C4", "DTZ", "T10", "EXE", "ISC", "PIE", "PT", "RSE", "SIM", "TID", "TCH", "ARG", "PL"]
+ignore = ["PLR0913"]  # Too many arguments in function definition

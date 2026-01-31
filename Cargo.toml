@@ -59,6 +59,9 @@ config = "0.14"
 # Regex for pattern matching
 regex = "1.10"
 
+# Python bindings
+pyo3 = { version = "0.20", features = ["extension-module"] }
+
 # Testing
 proptest = "1.4"
 criterion = "0.5"
@@ -70,6 +73,9 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 description.workspace = true
+
+[lib]
+crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 tokio.workspace = true
@@ -93,8 +99,12 @@ tokio-stream.workspace = true
 glob.workspace = true
 regex.workspace = true
 
+# Optional Python bindings
+pyo3 = { workspace = true, optional = true }
+
 [features]
 default = []
+python = ["pyo3"]
 
 [dev-dependencies]
 proptest.workspace = true

@@ -2,8 +2,20 @@
 //!
 //! Provides isolated execution environment with resource limits
 //! using wasmtime for WebAssembly runtime.
+//!
+//! # Features
+//! - Resource-limited WASM execution (memory, CPU, time)
+//! - Skill registry with manifest-based permissions
+//! - Cryptographic signature verification (SBX-002)
 
 pub mod registry;
+
+// Re-export registry types for convenient access
+pub use registry::{
+    PermissionError, RegistryError, SignatureConfig, SignatureError,
+    SignatureVerificationResult, SkillId, SkillManifest, SkillPermissions, SkillRegistry,
+    SkillSignatureVerifier,
+};
 
 use std::time::{Duration, Instant};
 use wasmtime::{Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
