@@ -9,9 +9,13 @@
 //! - Knowledge Graph: Structured relationship storage (MEM-003)
 //! - Vector Store: Embedding-based similarity search (MEM-004)
 //! - Time Travel: Snapshots and rollbacks (MEM-005)
+//! - IPFS-Lite: Content-addressable storage (MEM-006)
+//! - Persistent Storage: File and database backends (INF-001)
 
 pub mod episodic;
+pub mod ipfs;
 pub mod knowledge_graph;
+pub mod storage;
 pub mod time_travel;
 pub mod vector_store;
 pub mod working;
@@ -20,10 +24,20 @@ pub use episodic::{
     ChainVerificationError, Episode, EpisodeChain, EpisodeId, EpisodicMemory, ImportError,
 };
 
+pub use ipfs::{
+    Block, Codec, ContentId, DagLink, DagNode, IpfsConfig, IpfsError, IpfsLiteStore, IpfsResult,
+    Link, StoreStats,
+};
+
 pub use knowledge_graph::{
     Entity, EntityId, KnowledgeGraph, KnowledgeGraphConfig, KnowledgeGraphError,
     KnowledgeGraphExport, KnowledgeGraphResult, PropertyValue, Relationship, RelationshipId,
     RelationType,
+};
+
+pub use storage::{
+    BackendType, FileBackend, MemoryBackend, NamespacedStorage, StorageBackend, StorageConfig,
+    StorageError, StorageManager, StorageResult, StorageStats,
 };
 
 pub use time_travel::{

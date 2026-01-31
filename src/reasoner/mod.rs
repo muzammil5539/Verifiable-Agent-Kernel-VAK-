@@ -66,11 +66,19 @@
 //! ```
 
 mod prm;
+pub mod tree_search;
 pub mod verifier;
 
 // Re-export all public types from PRM
 pub use prm::{
     LlmPrm, MockPrm, PrmConfig, PrmError, ProcessRewardModel, ReasoningStep, ThoughtScore,
+};
+
+// Re-export all public types from tree_search (NSR-003)
+pub use tree_search::{
+    NodeId, NodeState, NodeStats, SearchNode, SearchResult, SearchTree, SimpleThoughtGenerator,
+    ThoughtGenerator, TreeOfThoughts, TreeOfThoughtsBuilder, TreeSearchConfig, TreeSearchError,
+    TreeSearchResult,
 };
 
 // Re-export all public types from verifier

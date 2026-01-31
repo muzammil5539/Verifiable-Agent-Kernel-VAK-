@@ -84,6 +84,12 @@ pub mod llm;
 /// to detect errors early and enable backtracking when needed.
 pub mod reasoner;
 
+/// Swarm consensus module for multi-agent coordination (SWM-001/002/003).
+///
+/// Provides swarm coordination, quadratic voting, and protocol routing
+/// for multi-agent collaboration scenarios.
+pub mod swarm;
+
 /// PyO3 Python bindings module (PY-001).
 ///
 /// Provides Python bindings for the VAK Kernel via PyO3.
