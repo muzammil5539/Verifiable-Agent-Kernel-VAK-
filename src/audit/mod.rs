@@ -194,6 +194,11 @@ impl AuditLogger {
         &self.entries
     }
 
+    /// Get a specific entry by ID
+    pub fn get_entry(&self, id: u64) -> Option<&AuditEntry> {
+        self.entries.iter().find(|e| e.id == id)
+    }
+
     /// Computes SHA-256 hash for an entry
     fn compute_hash(
         &self,

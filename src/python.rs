@@ -3,9 +3,11 @@
 //! This module provides Python bindings for the Verifiable Agent Kernel
 //! using PyO3. It exposes the core functionality including:
 //! - Kernel initialization and configuration
-//! - Policy evaluation
-//! - Tool execution
-//! - Audit logging
+//! - Policy evaluation with ABAC support
+//! - Tool execution in WASM sandbox
+//! - Cryptographic audit logging
+//! - Memory management (episodic, working, knowledge graph)
+//! - Formal verification via constraint checking
 //!
 //! # Building
 //!
@@ -39,6 +41,12 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 
 #[cfg(feature = "python")]
 use std::collections::HashMap;
+
+#[cfg(feature = "python")]
+use crate::policy::{PolicyContext, PolicyEffect, PolicyEngine, PolicyRule};
+
+#[cfg(feature = "python")]
+use crate::audit::{AuditDecision, AuditLogger};
 
 /// Python wrapper for PolicyDecision
 #[cfg(feature = "python")]
@@ -164,6 +172,8 @@ impl PyAuditEntry {
 pub struct PyKernel {
     initialized: bool,
     agents: HashMap<String, HashMap<String, String>>,
+    policy_engine: PolicyEngine,
+    audit_logger: AuditLogger,
 }
 
 #[cfg(feature = "python")]
@@ -175,14 +185,23 @@ impl PyKernel {
         Ok(Self {
             initialized: true,
             agents: HashMap::new(),
+            policy_engine: PolicyEngine::new(),
+            audit_logger: AuditLogger::new(),
         })
     }
 
     /// Create a kernel from a configuration file
     #[staticmethod]
-    fn from_config(_path: &str) -> PyResult<Self> {
-        // TODO: Implement config loading
-        Self::default()
+    fn from_config(path: &str) -> PyResult<Self> {
+        let mut kernel = Self::default()?;
+        
+        // Try to load policy rules from config
+        if let Err(e) = kernel.policy_engine.load_rules(path) {
+            // Log warning but don't fail - use default policies
+            tracing::warn!("Failed to load policy rules from {}: {}", path, e);
+        }
+        
+        Ok(kernel)
     }
 
     /// Check if the kernel is initialized
@@ -194,6 +213,8 @@ impl PyKernel {
     fn shutdown(&mut self) {
         self.initialized = false;
         self.agents.clear();
+        self.policy_engine = PolicyEngine::new();
+        self.audit_logger = AuditLogger::new();
     }
 
     /// Register an agent with the kernel
@@ -224,10 +245,10 @@ impl PyKernel {
 
     /// Evaluate a policy for an action
     fn evaluate_policy(
-        &self,
+        &mut self,
         agent_id: &str,
         action: &str,
-        _context_json: &str,
+        context_json: &str,
     ) -> PyResult<HashMap<String, String>> {
         if !self.initialized {
             return Err(PyRuntimeError::new_err("Kernel not initialized"));
@@ -238,18 +259,53 @@ impl PyKernel {
             return Err(PyValueError::new_err(format!("Agent not found: {}", agent_id)));
         }
 
-        // Default allow for now - will integrate with Rust policy engine
+        // Parse context JSON
+        let context_attrs: HashMap<String, serde_json::Value> = serde_json::from_str(context_json)
+            .unwrap_or_default();
+        
+        // Build policy context
+        let agent_config = self.agents.get(agent_id);
+        let role = agent_config
+            .and_then(|c| c.get("role"))
+            .map(|r| r.to_string())
+            .unwrap_or_else(|| "default".to_string());
+        
+        let policy_context = PolicyContext {
+            agent_id: agent_id.to_string(),
+            role,
+            attributes: context_attrs.clone(),
+            environment: HashMap::new(),
+        };
+
+        // Get resource from context
+        let resource = context_attrs
+            .get("resource")
+            .and_then(|v| v.as_str())
+            .unwrap_or("*")
+            .to_string();
+
+        // Evaluate using real policy engine
+        let decision = self.policy_engine.evaluate(&resource, action, &policy_context);
+        
+        // Log to audit trail
+        let audit_decision = if decision.allowed {
+            AuditDecision::Allowed
+        } else {
+            AuditDecision::Denied
+        };
+        self.audit_logger.log(agent_id, action, &resource, audit_decision);
+
         let mut result = HashMap::new();
-        result.insert("effect".to_string(), "allow".to_string());
-        result.insert("policy_id".to_string(), "default".to_string());
-        result.insert("reason".to_string(), format!("Action '{}' allowed by default policy", action));
+        result.insert("effect".to_string(), if decision.allowed { "allow" } else { "deny" }.to_string());
+        result.insert("policy_id".to_string(), decision.matched_rule.unwrap_or_else(|| "default".to_string()));
+        result.insert("reason".to_string(), decision.reason);
         
         Ok(result)
     }
 
     /// Execute a tool
     fn execute_tool(
-        &self,
+        &mut self,
         tool_id: &str,
         agent_id: &str,
         action: &str,
@@ -265,7 +321,15 @@ impl PyKernel {
             return Err(PyValueError::new_err(format!("Agent not found: {}", agent_id)));
         }
 
-        let request_id = format!("{}-{}-{}", tool_id, agent_id, action);
+        let request_id = uuid::Uuid::now_v7().to_string();
+        
+        // Log tool execution to audit trail
+        self.audit_logger.log(
+            agent_id, 
+            format!("tool.execute:{}", tool_id),
+            action,
+            AuditDecision::Allowed
+        );
         
         let mut result = HashMap::new();
         result.insert("request_id".to_string(), request_id);
@@ -287,39 +351,134 @@ impl PyKernel {
     }
 
     /// Get audit logs
-    fn get_audit_logs(&self, _filters_json: &str) -> PyResult<Vec<HashMap<String, String>>> {
+    fn get_audit_logs(&self, filters_json: &str) -> PyResult<Vec<HashMap<String, String>>> {
         if !self.initialized {
             return Err(PyRuntimeError::new_err("Kernel not initialized"));
         }
         
-        // TODO: Integrate with audit system
-        Ok(Vec::new())
+        // Parse filters
+        let filters: HashMap<String, serde_json::Value> = serde_json::from_str(filters_json)
+            .unwrap_or_default();
+        
+        let limit = filters.get("limit")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(100) as usize;
+        
+        let agent_filter = filters.get("agent_id")
+            .and_then(|v| v.as_str());
+        
+        // Get audit entries from logger
+        let mut results = Vec::new();
+        for entry in self.audit_logger.entries() {
+            if let Some(agent) = agent_filter {
+                if entry.agent_id != agent {
+                    continue;
+                }
+            }
+            
+            let mut entry_map = HashMap::new();
+            entry_map.insert("entry_id".to_string(), entry.id.to_string());
+            entry_map.insert("timestamp".to_string(), entry.timestamp.to_string());
+            entry_map.insert("agent_id".to_string(), entry.agent_id.clone());
+            entry_map.insert("action".to_string(), entry.action.clone());
+            entry_map.insert("resource".to_string(), entry.resource.clone());
+            entry_map.insert("decision".to_string(), entry.decision.to_string());
+            entry_map.insert("hash".to_string(), entry.hash.clone());
+            
+            results.push(entry_map);
+            
+            if results.len() >= limit {
+                break;
+            }
+        }
+        
+        Ok(results)
     }
 
     /// Get a specific audit entry
-    fn get_audit_entry(&self, _entry_id: &str) -> PyResult<Option<HashMap<String, String>>> {
+    fn get_audit_entry(&self, entry_id: &str) -> PyResult<Option<HashMap<String, String>>> {
         if !self.initialized {
             return Err(PyRuntimeError::new_err("Kernel not initialized"));
+        }
+        
+        let id: u64 = entry_id.parse().map_err(|_| PyValueError::new_err("Invalid entry ID"))?;
+        
+        if let Some(entry) = self.audit_logger.get_entry(id) {
+            let mut entry_map = HashMap::new();
+            entry_map.insert("entry_id".to_string(), entry.id.to_string());
+            entry_map.insert("timestamp".to_string(), entry.timestamp.to_string());
+            entry_map.insert("agent_id".to_string(), entry.agent_id.clone());
+            entry_map.insert("action".to_string(), entry.action.clone());
+            entry_map.insert("resource".to_string(), entry.resource.clone());
+            entry_map.insert("decision".to_string(), entry.decision.to_string());
+            entry_map.insert("hash".to_string(), entry.hash.clone());
+            entry_map.insert("prev_hash".to_string(), entry.prev_hash.clone());
+            return Ok(Some(entry_map));
         }
         
         Ok(None)
     }
 
     /// Create an audit entry
-    fn create_audit_entry(&self, _entry_json: &str) -> PyResult<String> {
+    fn create_audit_entry(&mut self, entry_json: &str) -> PyResult<String> {
         if !self.initialized {
             return Err(PyRuntimeError::new_err("Kernel not initialized"));
         }
 
-        let entry_id = uuid::Uuid::now_v7().to_string();
-        Ok(entry_id)
+        let entry_data: HashMap<String, serde_json::Value> = serde_json::from_str(entry_json)
+            .map_err(|e| PyValueError::new_err(format!("Invalid JSON: {}", e)))?;
+        
+        let agent_id = entry_data.get("agent_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let action = entry_data.get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let resource = entry_data.get("resource")
+            .and_then(|v| v.as_str())
+            .unwrap_or("*");
+        
+        let entry = self.audit_logger.log(agent_id, action, resource, AuditDecision::Allowed);
+        Ok(entry.id.to_string())
+    }
+
+    /// Verify the integrity of the audit chain
+    fn verify_audit_chain(&self) -> PyResult<bool> {
+        if !self.initialized {
+            return Err(PyRuntimeError::new_err("Kernel not initialized"));
+        }
+        
+        Ok(self.audit_logger.verify_chain().is_ok())
+    }
+
+    /// Get the audit chain's current root hash
+    fn get_audit_root_hash(&self) -> PyResult<Option<String>> {
+        if !self.initialized {
+            return Err(PyRuntimeError::new_err("Kernel not initialized"));
+        }
+        
+        Ok(self.audit_logger.entries().last().map(|e| e.hash.clone()))
+    }
+
+    /// Add a policy rule
+    fn add_policy_rule(&mut self, rule_json: &str) -> PyResult<()> {
+        if !self.initialized {
+            return Err(PyRuntimeError::new_err("Kernel not initialized"));
+        }
+        
+        let rule: PolicyRule = serde_json::from_str(rule_json)
+            .map_err(|e| PyValueError::new_err(format!("Invalid rule JSON: {}", e)))?;
+        
+        self.policy_engine.add_rule(rule);
+        Ok(())
     }
 
     fn __repr__(&self) -> String {
         format!(
-            "Kernel(initialized={}, agents={})",
+            "Kernel(initialized={}, agents={}, audit_entries={})",
             self.initialized,
-            self.agents.len()
+            self.agents.len(),
+            self.audit_logger.entries().len()
         )
     }
 }
