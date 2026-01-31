@@ -120,9 +120,40 @@
 
 - [ ] Multi-region S3 replication for audit logs
 - [ ] Enhanced WASM skill marketplace integration
+- [ ] Real-time audit log streaming
+- [ ] GraphQL API for audit queries
+- [ ] Enhanced PRM model fine-tuning tools
+- [ ] Kubernetes operator for VAK deployment
 
 ## Recently Completed (February 1, 2026)
 
+- [x] **Issue #11**: Persistent storage backend for memory snapshots (February 2026)
+  - Created `src/memory/snapshot_backend.rs` with `SnapshotBackend` trait
+  - `FileSnapshotBackend` - File-based storage with JSON/bincode serialization and optional compression
+  - `InMemorySnapshotBackend` - In-memory backend for testing
+  - `SnapshotConfig` - Configuration for storage path, format, compression, and retention
+  - Automatic snapshot pruning (configurable max snapshots)
+  - Lazy loading support via list_snapshots()
+  - Integration with time_travel.rs for transparent persistence
+- [x] **Issue #44**: Async intercept loop for multi-agent throughput (February 2026)
+  - Created `src/kernel/async_pipeline.rs` with full async request processing
+  - `AsyncPipeline` - Full async request processing with Tokio tasks
+  - `PipelineHandle` - Submit interface with bounded channels and backpressure
+  - `RequestBatch` and `BatchProcessor` - Batch processing for efficiency
+  - `PipelineMetrics` - Queue depth, latency, and throughput tracking
+  - Priority queuing with `RequestPriority` enum
+  - Graceful shutdown with timeout propagation
+  - Configurable via `PipelineConfig` (batch size, timeouts, concurrency limits)
+- [x] **Issue #48**: Formal verification gateway for high-stakes actions (February 2026)
+  - Created `src/reasoner/verification_gateway.rs` with Z3/SMT integration
+  - `VerificationGateway` - Central gateway for routing high-stakes actions through Z3/SMT verification
+  - `HighStakesAction` - Defined categories: FileWrite, FileDelete, HttpRequest, DatabaseWrite, TransferFunds, ShellExecute
+  - `ActionCategory` and `RiskLevel` - Classification system (Critical, High, Medium, Low)
+  - `ForbiddenPattern` - Configurable patterns to block dangerous operations
+  - `GatewayConfig` - Configuration for thresholds, caching, and fail-closed behavior
+  - `GatewayVerificationResult` - Detailed results with cache support and statistics
+  - Integration with existing Z3 prover infrastructure
+  - Default invariants for file I/O, network, database, and financial operations
 - [x] **Issue #46**: Basic OSS dashboard and observability (February 2026)
   - Created `src/dashboard/mod.rs` with module exports
   - Created `src/dashboard/metrics.rs` with Prometheus exporter

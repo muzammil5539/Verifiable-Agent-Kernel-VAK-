@@ -27,10 +27,10 @@
 | Priority | Count | Status |
 |----------|-------|--------|
 | 🔴 Critical | 9 | **9 resolved, 0 remaining** |
-| 🟠 High | 15 | **12 resolved (Feb 2026), 3 remaining** |
+| 🟠 High | 15 | **15 resolved (Feb 2026), 0 remaining** ✅ |
 | 🟡 Medium | 17 | **5 resolved (Feb 2026), 12 remaining** |
 | 🟢 Low | 10 | Nice to have |
-| **Total** | **51** | 26 resolved |
+| **Total** | **51** | 29 resolved |
 
 ---
 
@@ -574,11 +574,13 @@ Kernel lacks a “shadow-mode” flight recorder that mirrors all requests/respo
 
 ---
 
-### 🟠 Issue #44: Async intercept loop for multi-agent throughput
+### ✅ Issue #44: Async intercept loop for multi-agent throughput [RESOLVED]
 
 **Type**: Architecture / Performance  
 **Priority**: High  
 **Estimated Effort**: 1 week  
+**Status**: ✅ RESOLVED (February 2026)
+
 
 **Description**:
 The kernel’s intercept loop is largely synchronous, limiting concurrent agent/tool execution. Multi-agent scenarios suffer head-of-line blocking and latency spikes.
@@ -593,6 +595,16 @@ The kernel’s intercept loop is largely synchronous, limiting concurrent agent/
 2. Decouple policy evaluation, audit logging, and sandbox execution via futures; batch when safe.
 3. Add metrics for queue depth/latency and benchmarks covering 1, 10, 50 concurrent agents.
 4. Ensure cancellations/timeouts propagate to sandboxed tool runs.
+
+**Resolution**:
+Implemented in `src/kernel/async_pipeline.rs` with:
+- `AsyncPipeline` - Full async request processing with Tokio tasks
+- `PipelineHandle` - Submit interface with bounded channels and backpressure
+- `RequestBatch` and `BatchProcessor` - Batch processing for efficiency
+- `PipelineMetrics` - Queue depth, latency, and throughput tracking
+- Priority queuing with `RequestPriority` enum
+- Graceful shutdown with timeout propagation
+- Configurable via `PipelineConfig` (batch size, timeouts, concurrency limits)
 
 **Related Issues**: #9, #39
 
@@ -622,11 +634,13 @@ PRM scoring exists conceptually but kernel does not gate or backtrack actions ba
 
 ---
 
-### 🟠 Issue #48: Formal verification gateway for high-stakes actions
+### ✅ Issue #48: Formal verification gateway for high-stakes actions [RESOLVED]
 
 **Type**: Security / Verification  
 **Priority**: High  
 **Estimated Effort**: 1-2 weeks  
+**Status**: ✅ RESOLVED (February 2026)
+
 
 **Description**:
 High-stakes actions (writes, external calls) are not passed through a formal verification gate (e.g., SMT/Z3) to validate pre/post conditions. The existing Z3 stub (#12) is unused in the execution path.
@@ -641,6 +655,17 @@ High-stakes actions (writes, external calls) are not passed through a formal ver
 2. Wire Z3/SMT checks into the policy/audit pipeline with fail-closed behavior on solver errors.
 3. Provide schema for constraints (YAML/JSON) and sample specs for file I/O, network calls, and memory writes.
 4. Add CI harness to run verification on representative scenarios.
+
+**Resolution**:
+Implemented in `src/reasoner/verification_gateway.rs` with:
+- `VerificationGateway` - Central gateway for routing high-stakes actions through Z3/SMT verification
+- `HighStakesAction` - Defined categories: FileWrite, FileDelete, HttpRequest, DatabaseWrite, TransferFunds, ShellExecute
+- `ActionCategory` and `RiskLevel` - Classification system (Critical, High, Medium, Low)
+- `ForbiddenPattern` - Configurable patterns to block dangerous operations
+- `GatewayConfig` - Configuration for thresholds, caching, and fail-closed behavior
+- `GatewayVerificationResult` - Detailed results with cache support and statistics
+- Integration with existing Z3 prover infrastructure
+- Default invariants for file I/O, network, database, and financial operations
 
 **Related Issues**: #12, #19
 
@@ -670,11 +695,12 @@ Memory snapshots are not stored as a Merkle DAG with verifiable proofs. There is
 
 ---
 
-### 🟠 Issue #11: No persistent storage backend for memory snapshots
+### ✅ Issue #11: Persistent storage backend for memory snapshots [RESOLVED]
 
 **Type**: Feature Gap  
 **Priority**: High  
 **Estimated Effort**: 1 week  
+**Status**: ✅ RESOLVED
 
 **Description**:
 The time travel system (`src/memory/time_travel.rs`) creates memory snapshots but stores them only in memory. Agent state is lost on restart.
@@ -719,6 +745,16 @@ The time travel system (`src/memory/time_travel.rs`) creates memory snapshots bu
 
 3. Add automatic snapshot pruning (keep last N or by time)
 4. Implement lazy loading of old snapshots
+
+**Resolution**:
+Implemented in `src/memory/snapshot_backend.rs` with:
+- `SnapshotBackend` trait - Async interface for save/load/list/delete operations
+- `FileSnapshotBackend` - File-based storage with JSON/bincode serialization and optional compression
+- `InMemorySnapshotBackend` - In-memory backend for testing
+- `SnapshotConfig` - Configuration for storage path, format, compression, and retention
+- Automatic snapshot pruning (configurable max snapshots)
+- Lazy loading support via list_snapshots()
+- Integration with time_travel.rs for transparent persistence
 
 **Related Issues**: #3, #4
 

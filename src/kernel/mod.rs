@@ -8,6 +8,7 @@
 //! - [`types`]: Core type definitions (AgentId, SessionId, PolicyDecision, etc.)
 //! - [`config`]: Kernel configuration structures and validation
 //! - [`traits`]: Async traits for policy evaluation, audit, state, and tool execution
+//! - [`async_pipeline`]: Async request processing pipeline for multi-agent throughput (Issue #44)
 //!
 //! ## Architecture Overview
 //!
@@ -26,6 +27,7 @@
 //! └─────────────────────────────────────────────────────────────┘
 //! ```
 
+pub mod async_pipeline;
 pub mod config;
 pub mod error;
 pub mod traits;

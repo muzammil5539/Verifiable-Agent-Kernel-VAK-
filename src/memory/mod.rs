@@ -11,12 +11,14 @@
 //! - Time Travel: Snapshots and rollbacks (MEM-005)
 //! - IPFS-Lite: Content-addressable storage (MEM-006)
 //! - Persistent Storage: File and database backends (INF-001)
+//! - Snapshot Backend: Persistent storage for memory snapshots (Issue #11)
 
 pub mod episodic;
 pub mod ipfs;
 pub mod knowledge_graph;
 pub mod merkle_dag;
 pub mod migrations;
+pub mod snapshot_backend;
 pub mod storage;
 pub mod time_travel;
 pub mod vector_store;
@@ -45,6 +47,11 @@ pub use merkle_dag::{
 pub use migrations::{
     Migration, MigrationError, MigrationRecord, MigrationRunner, MigrationStatus,
     get_all_migrations,
+};
+
+pub use snapshot_backend::{
+    FileSnapshotBackend, InMemorySnapshotBackend, SnapshotBackend, SnapshotConfig, SnapshotError,
+    SnapshotIndex, SnapshotIndexEntry, SnapshotResult, StoredSnapshot,
 };
 
 pub use storage::{

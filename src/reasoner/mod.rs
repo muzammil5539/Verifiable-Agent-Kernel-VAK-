@@ -68,6 +68,7 @@
 mod prm;
 pub mod prm_gating;
 pub mod tree_search;
+pub mod verification_gateway;
 pub mod verifier;
 pub mod z3_verifier;
 
@@ -100,4 +101,11 @@ pub use verifier::{
 // Re-export Z3 formal verifier types (Issue #12)
 pub use z3_verifier::{
     SmtLibBuilder, Z3Config as Z3SolverConfig, Z3Error, Z3FormalVerifier, Z3Output,
+};
+
+// Re-export verification gateway types (Issue #48)
+pub use verification_gateway::{
+    ActionCategory, ConditionResult, ForbiddenPattern, GatewayConfig, GatewayError,
+    GatewayResult, GatewayVerificationResult, HighStakesAction, RiskLevel,
+    VerificationGateway, VerificationStats, ViolationDetail,
 };
