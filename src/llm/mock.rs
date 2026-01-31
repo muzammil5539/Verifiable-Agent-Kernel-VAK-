@@ -300,26 +300,26 @@ impl Default for MockLlmProvider {
 impl LlmProvider for MockLlmProvider {
     async fn complete(&self, request: CompletionRequest) -> Result<CompletionResponse, LlmError> {
         self.record_call(request.clone());
-        
+
         let response = self.get_next_response();
-        
+
         // Apply delay if configured
         if response.delay_ms > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(response.delay_ms)).await;
         }
-        
+
         // Return error if configured
         if let Some(error) = response.error {
             return Err(error);
         }
-        
+
         // Use the model from request or response
         let model = if request.model.is_empty() {
             response.model
         } else {
             request.model
         };
-        
+
         Ok(CompletionResponse {
             content: response.content,
             model,
@@ -334,14 +334,14 @@ impl LlmProvider for MockLlmProvider {
         request: CompletionRequest,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk, LlmError>> + Send>>, LlmError> {
         self.record_call(request.clone());
-        
+
         let response = self.get_next_response();
-        
+
         // Return error if configured
         if let Some(error) = response.error {
             return Err(error);
         }
-        
+
         // Create a channel to send chunks
         let (tx, rx) = mpsc::channel(100);
         let content = response.content.clone();
@@ -352,38 +352,38 @@ impl LlmProvider for MockLlmProvider {
         };
         let delay_ms = response.delay_ms;
         let finish_reason = response.finish_reason.clone();
-        
+
         // Spawn a task to send chunks
         tokio::spawn(async move {
             // Split content into words for streaming simulation
             let words: Vec<&str> = content.split_whitespace().collect();
-            
+
             for (i, word) in words.iter().enumerate() {
                 if delay_ms > 0 {
                     // Distribute delay across chunks
                     let chunk_delay = delay_ms / (words.len() as u64).max(1);
                     tokio::time::sleep(std::time::Duration::from_millis(chunk_delay)).await;
                 }
-                
+
                 // Add space before word (except first word)
                 let chunk_content = if i == 0 {
                     word.to_string()
                 } else {
                     format!(" {}", word)
                 };
-                
+
                 let chunk = StreamChunk {
                     content: chunk_content,
                     model: Some(model.clone()),
                     finish_reason: None,
                     index: i,
                 };
-                
+
                 if tx.send(Ok(chunk)).await.is_err() {
                     return;
                 }
             }
-            
+
             // Send final chunk
             let final_chunk = StreamChunk {
                 content: String::new(),
@@ -393,23 +393,23 @@ impl LlmProvider for MockLlmProvider {
             };
             let _ = tx.send(Ok(final_chunk)).await;
         });
-        
+
         Ok(Box::pin(ReceiverStream::new(rx)))
     }
 
     async fn embed(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>, LlmError> {
         let embeddings = self.embeddings.lock().unwrap().clone();
-        
+
         // Return error if configured
         if let Some(error) = embeddings.error {
             return Err(error);
         }
-        
+
         // Return custom embeddings if set
         if let Some(custom) = embeddings.custom {
             return Ok(custom);
         }
-        
+
         // Generate deterministic mock embeddings
         let result = texts
             .iter()
@@ -425,7 +425,7 @@ impl LlmProvider for MockLlmProvider {
                     .collect()
             })
             .collect();
-        
+
         Ok(result)
     }
 
@@ -451,12 +451,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_mock_provider_basic() {
-        let mock = MockLlmProvider::new()
-            .with_response(MockResponse::success("Hello!"));
-        
-        let request = CompletionRequest::new("test-model")
-            .with_message(Message::user("Hi"));
-        
+        let mock = MockLlmProvider::new().with_response(MockResponse::success("Hello!"));
+
+        let request = CompletionRequest::new("test-model").with_message(Message::user("Hi"));
+
         let response = mock.complete(request).await.unwrap();
         assert_eq!(response.content, "Hello!");
         assert_eq!(mock.call_count(), 1);
@@ -465,25 +463,23 @@ mod tests {
     #[tokio::test]
     async fn test_mock_provider_always() {
         let mock = MockLlmProvider::always("Always this response");
-        
+
         for _ in 0..3 {
-            let request = CompletionRequest::new("test")
-                .with_message(Message::user("test"));
+            let request = CompletionRequest::new("test").with_message(Message::user("test"));
             let response = mock.complete(request).await.unwrap();
             assert_eq!(response.content, "Always this response");
         }
-        
+
         assert_eq!(mock.call_count(), 3);
     }
 
     #[tokio::test]
     async fn test_mock_provider_error() {
         let mock = MockLlmProvider::always_error(LlmError::Timeout);
-        
-        let request = CompletionRequest::new("test")
-            .with_message(Message::user("test"));
+
+        let request = CompletionRequest::new("test").with_message(Message::user("test"));
         let result = mock.complete(request).await;
-        
+
         assert!(matches!(result, Err(LlmError::Timeout)));
     }
 
@@ -493,11 +489,9 @@ mod tests {
             .with_response(MockResponse::success("First"))
             .with_response(MockResponse::success("Second"))
             .with_default_response(MockResponse::success("Default"));
-        
-        let request = || {
-            CompletionRequest::new("test").with_message(Message::user("test"))
-        };
-        
+
+        let request = || CompletionRequest::new("test").with_message(Message::user("test"));
+
         assert_eq!(mock.complete(request()).await.unwrap().content, "First");
         assert_eq!(mock.complete(request()).await.unwrap().content, "Second");
         assert_eq!(mock.complete(request()).await.unwrap().content, "Default");
@@ -507,17 +501,16 @@ mod tests {
     #[tokio::test]
     async fn test_mock_provider_call_recording() {
         let mock = MockLlmProvider::new();
-        
+
         let request1 = CompletionRequest::new("model1")
             .with_message(Message::system("You are helpful"))
             .with_message(Message::user("Hello"));
-        
-        let request2 = CompletionRequest::new("model2")
-            .with_message(Message::user("Goodbye"));
-        
+
+        let request2 = CompletionRequest::new("model2").with_message(Message::user("Goodbye"));
+
         mock.complete(request1).await.unwrap();
         mock.complete(request2).await.unwrap();
-        
+
         let calls = mock.calls();
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].request.model, "model1");
@@ -529,13 +522,13 @@ mod tests {
     #[tokio::test]
     async fn test_mock_provider_last_call() {
         let mock = MockLlmProvider::new();
-        
+
         let request = CompletionRequest::new("test")
             .with_message(Message::user("Hello"))
             .with_temperature(0.7);
-        
+
         mock.complete(request).await.unwrap();
-        
+
         let last = mock.last_call().unwrap();
         assert_eq!(last.request.model, "test");
         assert_eq!(last.request.temperature, Some(0.7));
@@ -546,16 +539,14 @@ mod tests {
         let mock = MockLlmProvider::new()
             .with_response(MockResponse::success("One"))
             .with_response(MockResponse::success("Two"));
-        
-        let request = || {
-            CompletionRequest::new("test").with_message(Message::user("test"))
-        };
-        
+
+        let request = || CompletionRequest::new("test").with_message(Message::user("test"));
+
         mock.complete(request()).await.unwrap();
         assert_eq!(mock.call_count(), 1);
-        
+
         mock.reset();
-        
+
         assert_eq!(mock.call_count(), 0);
         // Queue should be empty, so default response
         assert_eq!(
@@ -567,32 +558,30 @@ mod tests {
     #[tokio::test]
     async fn test_mock_provider_streaming() {
         use futures::StreamExt;
-        
-        let mock = MockLlmProvider::new()
-            .with_response(MockResponse::success("Hello world streaming"));
-        
-        let request = CompletionRequest::new("test")
-            .with_message(Message::user("test"));
-        
+
+        let mock =
+            MockLlmProvider::new().with_response(MockResponse::success("Hello world streaming"));
+
+        let request = CompletionRequest::new("test").with_message(Message::user("test"));
+
         let mut stream = mock.complete_streaming(request).await.unwrap();
         let mut content = String::new();
-        
+
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.unwrap();
             content.push_str(&chunk.content);
         }
-        
+
         assert_eq!(content, "Hello world streaming");
     }
 
     #[tokio::test]
     async fn test_mock_provider_embeddings() {
-        let mock = MockLlmProvider::new()
-            .with_embedding_dimension(768);
-        
+        let mock = MockLlmProvider::new().with_embedding_dimension(768);
+
         let texts = vec!["Hello".to_string(), "World".to_string()];
         let embeddings = mock.embed(texts).await.unwrap();
-        
+
         assert_eq!(embeddings.len(), 2);
         assert_eq!(embeddings[0].len(), 768);
         assert_eq!(embeddings[1].len(), 768);
@@ -600,48 +589,42 @@ mod tests {
 
     #[tokio::test]
     async fn test_mock_provider_custom_embeddings() {
-        let custom = vec![
-            vec![0.1, 0.2, 0.3],
-            vec![0.4, 0.5, 0.6],
-        ];
-        
-        let mock = MockLlmProvider::new()
-            .with_custom_embeddings(custom.clone());
-        
+        let custom = vec![vec![0.1, 0.2, 0.3], vec![0.4, 0.5, 0.6]];
+
+        let mock = MockLlmProvider::new().with_custom_embeddings(custom.clone());
+
         let texts = vec!["a".to_string(), "b".to_string()];
         let embeddings = mock.embed(texts).await.unwrap();
-        
+
         assert_eq!(embeddings, custom);
     }
 
     #[tokio::test]
     async fn test_mock_provider_embeddings_error() {
-        let mock = MockLlmProvider::new()
-            .with_embeddings(MockEmbeddings {
-                dimension: 1536,
-                error: Some(LlmError::ApiError {
-                    status: 500,
-                    message: "Embedding service unavailable".to_string(),
-                }),
-                custom: None,
-            });
-        
+        let mock = MockLlmProvider::new().with_embeddings(MockEmbeddings {
+            dimension: 1536,
+            error: Some(LlmError::ApiError {
+                status: 500,
+                message: "Embedding service unavailable".to_string(),
+            }),
+            custom: None,
+        });
+
         let result = mock.embed(vec!["test".to_string()]).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_mock_provider_delay() {
-        let mock = MockLlmProvider::new()
-            .with_response(MockResponse::success("Delayed").with_delay(100));
-        
-        let request = CompletionRequest::new("test")
-            .with_message(Message::user("test"));
-        
+        let mock =
+            MockLlmProvider::new().with_response(MockResponse::success("Delayed").with_delay(100));
+
+        let request = CompletionRequest::new("test").with_message(Message::user("test"));
+
         let start = std::time::Instant::now();
         mock.complete(request).await.unwrap();
         let elapsed = start.elapsed();
-        
+
         assert!(elapsed >= std::time::Duration::from_millis(100));
     }
 
@@ -649,10 +632,9 @@ mod tests {
     async fn test_mock_provider_with_usage() {
         let mock = MockLlmProvider::new()
             .with_response(MockResponse::success("Response").with_usage(50, 100));
-        
-        let request = CompletionRequest::new("test")
-            .with_message(Message::user("test"));
-        
+
+        let request = CompletionRequest::new("test").with_message(Message::user("test"));
+
         let response = mock.complete(request).await.unwrap();
         assert_eq!(response.usage.prompt_tokens, 50);
         assert_eq!(response.usage.completion_tokens, 100);
@@ -663,7 +645,7 @@ mod tests {
     async fn test_mock_provider_health_check() {
         let mock = MockLlmProvider::new();
         assert!(mock.health_check().await.is_ok());
-        
+
         let failing_mock = MockLlmProvider::always_error(LlmError::Timeout);
         assert!(failing_mock.health_check().await.is_err());
     }
@@ -673,7 +655,7 @@ mod tests {
         let mock = MockLlmProvider::new()
             .with_name("TestProvider")
             .with_response(MockResponse::success("test"));
-        
+
         let debug = format!("{:?}", mock);
         assert!(debug.contains("TestProvider"));
     }

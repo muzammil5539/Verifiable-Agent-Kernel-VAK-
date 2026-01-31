@@ -168,34 +168,31 @@ impl KernelConfig {
     /// ```
     pub fn from_file(path: impl Into<PathBuf>) -> Result<Self, KernelError> {
         let path = path.into();
-        
-        let content = std::fs::read_to_string(&path).map_err(|e| {
-            KernelError::InvalidConfiguration {
-                message: format!("Failed to read config file '{}': {}", path.display(), e),
-            }
-        })?;
 
-        let extension = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or("");
+        let content =
+            std::fs::read_to_string(&path).map_err(|e| KernelError::InvalidConfiguration {
+                message: format!("Failed to read config file '{}': {}", path.display(), e),
+            })?;
+
+        let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
 
         let config: Self = match extension.to_lowercase().as_str() {
-            "yaml" | "yml" => serde_yaml::from_str(&content).map_err(|e| {
-                KernelError::InvalidConfiguration {
+            "yaml" | "yml" => {
+                serde_yaml::from_str(&content).map_err(|e| KernelError::InvalidConfiguration {
                     message: format!("Failed to parse YAML config: {}", e),
-                }
-            })?,
-            "json" => serde_json::from_str(&content).map_err(|e| {
-                KernelError::InvalidConfiguration {
+                })?
+            }
+            "json" => {
+                serde_json::from_str(&content).map_err(|e| KernelError::InvalidConfiguration {
                     message: format!("Failed to parse JSON config: {}", e),
-                }
-            })?,
+                })?
+            }
             "toml" => {
                 // For TOML, we need to handle Duration serialization specially
                 // Using a simple key-value approach for now
                 return Err(KernelError::InvalidConfiguration {
-                    message: "TOML configuration is not yet supported. Use YAML or JSON.".to_string(),
+                    message: "TOML configuration is not yet supported. Use YAML or JSON."
+                        .to_string(),
                 });
             }
             _ => {
@@ -387,8 +384,12 @@ impl KernelConfigBuilder {
     pub fn build(self) -> KernelConfig {
         KernelConfig {
             name: self.name.unwrap_or_else(default_name),
-            max_concurrent_agents: self.max_concurrent_agents.unwrap_or_else(default_max_concurrent_agents),
-            max_execution_time: self.max_execution_time.unwrap_or_else(default_max_execution_time),
+            max_concurrent_agents: self
+                .max_concurrent_agents
+                .unwrap_or_else(default_max_concurrent_agents),
+            max_execution_time: self
+                .max_execution_time
+                .unwrap_or_else(default_max_execution_time),
             security: self.security.unwrap_or_default(),
             audit: self.audit.unwrap_or_default(),
             policy: self.policy.unwrap_or_default(),

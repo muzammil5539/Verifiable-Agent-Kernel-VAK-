@@ -23,8 +23,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
 
-use super::SwarmAgentId;
 use super::voting::VoteDirection;
+use super::SwarmAgentId;
 
 // ============================================================================
 // Error Types
@@ -348,11 +348,7 @@ impl ConsensusProtocol for MajorityConsensus {
         }
 
         let total = votes_for + votes_against;
-        let pass_percentage = if total > 0.0 {
-            votes_for / total
-        } else {
-            0.0
-        };
+        let pass_percentage = if total > 0.0 { votes_for / total } else { 0.0 };
 
         let passed = pass_percentage > self.config.pass_threshold;
         let reached = pass_percentage > self.config.pass_threshold
@@ -497,11 +493,7 @@ impl ConsensusProtocol for WeightedConsensus {
         }
 
         let total = votes_for + votes_against;
-        let pass_percentage = if total > 0.0 {
-            votes_for / total
-        } else {
-            0.0
-        };
+        let pass_percentage = if total > 0.0 { votes_for / total } else { 0.0 };
 
         let passed = pass_percentage > self.config.pass_threshold;
         let reached = pass_percentage > self.config.pass_threshold
@@ -587,7 +579,7 @@ impl ConsensusProtocol for BftConsensus {
 
         // Check for Byzantine behavior (duplicate votes, contradictory votes)
         let mut seen_agents: HashMap<SwarmAgentId, VoteDirection> = HashMap::new();
-        
+
         for vote in votes {
             if let Some(prev_direction) = seen_agents.get(&vote.agent_id) {
                 if *prev_direction != vote.direction {
@@ -609,11 +601,7 @@ impl ConsensusProtocol for BftConsensus {
 
         // BFT requires > 2/3 agreement
         let total = votes_for + votes_against;
-        let pass_percentage = if total > 0.0 {
-            votes_for / total
-        } else {
-            0.0
-        };
+        let pass_percentage = if total > 0.0 { votes_for / total } else { 0.0 };
 
         // For BFT, we need more than 2/3 to pass
         let bft_threshold = 2.0 / 3.0;
@@ -694,8 +682,8 @@ mod tests {
 
     #[test]
     fn test_majority_consensus_pass() {
-        let config = ConsensusConfig::new(ConsensusMechanism::SimpleMajority)
-            .with_min_participants(3);
+        let config =
+            ConsensusConfig::new(ConsensusMechanism::SimpleMajority).with_min_participants(3);
         let consensus = MajorityConsensus::new(config);
 
         let votes = vec![
@@ -711,8 +699,8 @@ mod tests {
 
     #[test]
     fn test_majority_consensus_fail() {
-        let config = ConsensusConfig::new(ConsensusMechanism::SimpleMajority)
-            .with_min_participants(3);
+        let config =
+            ConsensusConfig::new(ConsensusMechanism::SimpleMajority).with_min_participants(3);
         let consensus = MajorityConsensus::new(config);
 
         let votes = vec![
@@ -728,14 +716,11 @@ mod tests {
 
     #[test]
     fn test_majority_consensus_insufficient_participants() {
-        let config = ConsensusConfig::new(ConsensusMechanism::SimpleMajority)
-            .with_min_participants(5);
+        let config =
+            ConsensusConfig::new(ConsensusMechanism::SimpleMajority).with_min_participants(5);
         let consensus = MajorityConsensus::new(config);
 
-        let votes = vec![
-            make_vote(VoteDirection::For),
-            make_vote(VoteDirection::For),
-        ];
+        let votes = vec![make_vote(VoteDirection::For), make_vote(VoteDirection::For)];
 
         let result = consensus.run_consensus(&votes, 5);
         assert!(matches!(
@@ -746,8 +731,8 @@ mod tests {
 
     #[test]
     fn test_weighted_consensus() {
-        let config = ConsensusConfig::new(ConsensusMechanism::WeightedReputation)
-            .with_min_participants(2);
+        let config =
+            ConsensusConfig::new(ConsensusMechanism::WeightedReputation).with_min_participants(2);
         let consensus = WeightedConsensus::new(config);
 
         // Even though there are 2 against, the for vote has higher weight
@@ -765,12 +750,12 @@ mod tests {
 
     #[test]
     fn test_weighted_consensus_with_agent_weights() {
-        let config = ConsensusConfig::new(ConsensusMechanism::WeightedReputation)
-            .with_min_participants(2);
-        
+        let config =
+            ConsensusConfig::new(ConsensusMechanism::WeightedReputation).with_min_participants(2);
+
         let agent1 = SwarmAgentId::new();
         let agent2 = SwarmAgentId::new();
-        
+
         let mut weights = HashMap::new();
         weights.insert(
             agent1.clone(),
@@ -779,9 +764,9 @@ mod tests {
                 .with_expertise(1.5)
                 .with_role(1.0),
         );
-        
+
         let consensus = WeightedConsensus::new(config).with_weights(weights);
-        
+
         // Agent1's weight = (2.0 + 1.5 + 1.0) / 3 = 1.5
         // Agent2's weight = 1.0 (default)
         let votes = vec![
@@ -826,14 +811,14 @@ mod tests {
         let config = ConsensusConfig::default().with_byzantine_tolerance(1);
         let bft = BftConsensus::new(config);
 
-        let votes = vec![
-            make_vote(VoteDirection::For),
-            make_vote(VoteDirection::For),
-        ];
+        let votes = vec![make_vote(VoteDirection::For), make_vote(VoteDirection::For)];
 
         // Only 2 eligible voters, need 4
         let result = bft.run_consensus(&votes, 2);
-        assert!(matches!(result, Err(ConsensusError::InsufficientParticipants(_, _))));
+        assert!(matches!(
+            result,
+            Err(ConsensusError::InsufficientParticipants(_, _))
+        ));
     }
 
     #[test]
@@ -842,7 +827,7 @@ mod tests {
         let bft = BftConsensus::new(config);
 
         let agent = SwarmAgentId::new();
-        
+
         // Same agent votes twice with different directions (Byzantine behavior)
         let votes = vec![
             ConsensusVote::new(agent.clone(), VoteDirection::For),
@@ -895,7 +880,7 @@ mod tests {
         let consensus = MajorityConsensus::new(config);
 
         assert!(consensus.has_quorum(5, 10)); // 5/10 >= 50%
-        assert!(consensus.has_quorum(3, 5));  // 3/5 >= 50%
+        assert!(consensus.has_quorum(3, 5)); // 3/5 >= 50%
         assert!(!consensus.has_quorum(2, 10)); // 2/10 < 50%
     }
 }

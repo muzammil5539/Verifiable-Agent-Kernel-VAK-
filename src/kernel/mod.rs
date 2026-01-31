@@ -155,7 +155,12 @@ impl Kernel {
         );
 
         // Check if the tool is explicitly blocked
-        if self.config.security.blocked_tools.contains(&request.tool_name) {
+        if self
+            .config
+            .security
+            .blocked_tools
+            .contains(&request.tool_name)
+        {
             tracing::warn!(
                 tool = %request.tool_name,
                 "Tool is in blocked list"
@@ -168,7 +173,11 @@ impl Kernel {
 
         // Check if allowed_tools is non-empty and tool is not in it
         if !self.config.security.allowed_tools.is_empty()
-            && !self.config.security.allowed_tools.contains(&request.tool_name)
+            && !self
+                .config
+                .security
+                .allowed_tools
+                .contains(&request.tool_name)
         {
             tracing::warn!(
                 tool = %request.tool_name,
@@ -193,7 +202,7 @@ impl Kernel {
 
         // Build constraints based on configuration
         let mut constraints = Vec::new();
-        
+
         // Add timeout constraint if configured
         if self.config.max_execution_time.as_millis() > 0 {
             constraints.push(format!(
@@ -290,14 +299,14 @@ impl Kernel {
         // Step 3: Execute the tool
         // Measure execution time
         let start_time = std::time::Instant::now();
-        
+
         // Execute the tool based on its name
         // In a full implementation, this would dispatch to a tool registry
         // For now, we handle some built-in tools and return a default response for others
         let execution_result = self.dispatch_tool(&request).await;
-        
+
         let execution_time_ms = start_time.elapsed().as_millis() as u64;
-        
+
         let response = match execution_result {
             Ok(result) => ToolResponse {
                 request_id: request.request_id,
@@ -335,10 +344,7 @@ impl Kernel {
     /// - `calculator`: Performs basic arithmetic operations
     /// - `data_processor`: Processes data arrays with various operations
     /// - `system_info`: Returns system information (kernel version, etc.)
-    async fn dispatch_tool(
-        &self,
-        request: &ToolRequest,
-    ) -> Result<serde_json::Value, KernelError> {
+    async fn dispatch_tool(&self, request: &ToolRequest) -> Result<serde_json::Value, KernelError> {
         match request.tool_name.as_str() {
             "echo" => {
                 // Echo tool: returns the input parameters
@@ -380,14 +386,18 @@ impl Kernel {
         &self,
         request: &ToolRequest,
     ) -> Result<serde_json::Value, KernelError> {
-        let operation = request.parameters.get("operation")
+        let operation = request
+            .parameters
+            .get("operation")
             .and_then(|v| v.as_str())
             .ok_or_else(|| KernelError::ToolExecutionFailed {
                 tool_name: "calculator".to_string(),
                 reason: "Missing 'operation' parameter".to_string(),
             })?;
 
-        let operands = request.parameters.get("operands")
+        let operands = request
+            .parameters
+            .get("operands")
             .and_then(|v| v.as_array())
             .ok_or_else(|| KernelError::ToolExecutionFailed {
                 tool_name: "calculator".to_string(),
@@ -396,12 +406,14 @@ impl Kernel {
 
         let numbers: Result<Vec<f64>, _> = operands
             .iter()
-            .map(|v| v.as_f64().ok_or_else(|| KernelError::ToolExecutionFailed {
-                tool_name: "calculator".to_string(),
-                reason: "Operands must be numbers".to_string(),
-            }))
+            .map(|v| {
+                v.as_f64().ok_or_else(|| KernelError::ToolExecutionFailed {
+                    tool_name: "calculator".to_string(),
+                    reason: "Operands must be numbers".to_string(),
+                })
+            })
             .collect();
-        
+
         let numbers = numbers?;
 
         let result = match operation {
@@ -449,14 +461,18 @@ impl Kernel {
         &self,
         request: &ToolRequest,
     ) -> Result<serde_json::Value, KernelError> {
-        let action = request.parameters.get("action")
+        let action = request
+            .parameters
+            .get("action")
             .and_then(|v| v.as_str())
             .ok_or_else(|| KernelError::ToolExecutionFailed {
                 tool_name: "data_processor".to_string(),
                 reason: "Missing 'action' parameter".to_string(),
             })?;
 
-        let data = request.parameters.get("data")
+        let data = request
+            .parameters
+            .get("data")
             .and_then(|v| v.as_array())
             .ok_or_else(|| KernelError::ToolExecutionFailed {
                 tool_name: "data_processor".to_string(),
@@ -465,10 +481,7 @@ impl Kernel {
 
         match action {
             "summarize" => {
-                let numbers: Vec<f64> = data
-                    .iter()
-                    .filter_map(|v| v.as_f64())
-                    .collect();
+                let numbers: Vec<f64> = data.iter().filter_map(|v| v.as_f64()).collect();
 
                 if numbers.is_empty() {
                     return Ok(serde_json::json!({
@@ -493,14 +506,14 @@ impl Kernel {
                     "max": max
                 }))
             }
-            "count" => {
-                Ok(serde_json::json!({
-                    "action": "count",
-                    "count": data.len()
-                }))
-            }
+            "count" => Ok(serde_json::json!({
+                "action": "count",
+                "count": data.len()
+            })),
             "filter" => {
-                let predicate = request.parameters.get("predicate")
+                let predicate = request
+                    .parameters
+                    .get("predicate")
                     .and_then(|v| v.as_str())
                     .unwrap_or("non_null");
 
@@ -519,12 +532,10 @@ impl Kernel {
                     "filtered_data": filtered
                 }))
             }
-            _ => {
-                Err(KernelError::ToolExecutionFailed {
-                    tool_name: "data_processor".to_string(),
-                    reason: format!("Unknown action: {}", action),
-                })
-            }
+            _ => Err(KernelError::ToolExecutionFailed {
+                tool_name: "data_processor".to_string(),
+                reason: format!("Unknown action: {}", action),
+            }),
         }
     }
 

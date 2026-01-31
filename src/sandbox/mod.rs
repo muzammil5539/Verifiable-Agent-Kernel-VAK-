@@ -12,9 +12,8 @@ pub mod registry;
 
 // Re-export registry types for convenient access
 pub use registry::{
-    PermissionError, RegistryError, SignatureConfig, SignatureError,
-    SignatureVerificationResult, SkillId, SkillManifest, SkillPermissions, SkillRegistry,
-    SkillSignatureVerifier,
+    PermissionError, RegistryError, SignatureConfig, SignatureError, SignatureVerificationResult,
+    SkillId, SkillManifest, SkillPermissions, SkillRegistry, SkillSignatureVerifier,
 };
 
 use std::time::{Duration, Instant};
@@ -141,15 +140,15 @@ impl WasmSandbox {
     /// Create a new WASM sandbox with the given configuration
     pub fn new(config: SandboxConfig) -> Result<Self, SandboxError> {
         let mut wasm_config = Config::new();
-        
+
         // Enable fuel consumption for CPU limiting
         wasm_config.consume_fuel(true);
-        
+
         // Enable epoch interruption for timeout handling
         wasm_config.epoch_interruption(true);
 
-        let engine = Engine::new(&wasm_config)
-            .map_err(|e| SandboxError::EngineCreation(e.to_string()))?;
+        let engine =
+            Engine::new(&wasm_config).map_err(|e| SandboxError::EngineCreation(e.to_string()))?;
 
         Ok(Self {
             engine,
@@ -167,7 +166,7 @@ impl WasmSandbox {
     pub fn load_skill(&mut self, wasm_bytes: &[u8]) -> Result<(), SandboxError> {
         let module = Module::new(&self.engine, wasm_bytes)
             .map_err(|e| SandboxError::ModuleLoad(e.to_string()))?;
-        
+
         self.module = Some(module);
         Ok(())
     }
@@ -176,7 +175,7 @@ impl WasmSandbox {
     pub fn load_skill_from_file(&mut self, path: &std::path::Path) -> Result<(), SandboxError> {
         let module = Module::from_file(&self.engine, path)
             .map_err(|e| SandboxError::ModuleLoad(e.to_string()))?;
-        
+
         self.module = Some(module);
         Ok(())
     }
@@ -201,16 +200,16 @@ impl WasmSandbox {
         // Create store with resource limits
         let state = SandboxState::new(&self.config);
         let mut store = Store::new(&self.engine, state);
-        
+
         // Configure resource limits
         store.limiter(|state| &mut state.limits);
-        store.set_fuel(self.config.fuel_limit).map_err(|e| {
-            SandboxError::EngineCreation(format!("Failed to set fuel: {}", e))
-        })?;
+        store
+            .set_fuel(self.config.fuel_limit)
+            .map_err(|e| SandboxError::EngineCreation(format!("Failed to set fuel: {}", e)))?;
 
         // Set up epoch deadline for timeout
         store.epoch_deadline_trap();
-        
+
         // Create linker and instantiate module
         let linker = Linker::new(&self.engine);
         let instance = linker
@@ -218,8 +217,8 @@ impl WasmSandbox {
             .map_err(|e| SandboxError::Instantiation(e.to_string()))?;
 
         // Serialize input to JSON string
-        let input_json = serde_json::to_string(input)
-            .map_err(|e| SandboxError::InvalidInput(e.to_string()))?;
+        let input_json =
+            serde_json::to_string(input).map_err(|e| SandboxError::InvalidInput(e.to_string()))?;
 
         // Get memory and required functions
         let memory = instance
@@ -234,20 +233,18 @@ impl WasmSandbox {
         // Allocate memory for input in guest
         let input_bytes = input_json.as_bytes();
         let input_len = input_bytes.len() as i32;
-        
+
         store.data_mut().start_execution();
-        
-        let input_ptr = alloc_fn
-            .call(&mut store, input_len)
-            .map_err(|_e| {
-                if store.get_fuel().unwrap_or(0) == 0 {
-                    SandboxError::FuelExhausted
-                } else if store.data().check_timeout() {
-                    SandboxError::Timeout(self.config.timeout)
-                } else {
-                    SandboxError::GuestAllocation
-                }
-            })?;
+
+        let input_ptr = alloc_fn.call(&mut store, input_len).map_err(|_e| {
+            if store.get_fuel().unwrap_or(0) == 0 {
+                SandboxError::FuelExhausted
+            } else if store.data().check_timeout() {
+                SandboxError::Timeout(self.config.timeout)
+            } else {
+                SandboxError::GuestAllocation
+            }
+        })?;
 
         // Write input to guest memory
         memory
@@ -288,9 +285,8 @@ impl WasmSandbox {
         // Parse output JSON
         let output_json = String::from_utf8(output_bytes)
             .map_err(|e| SandboxError::InvalidOutput(e.to_string()))?;
-        
-        serde_json::from_str(&output_json)
-            .map_err(|e| SandboxError::InvalidOutput(e.to_string()))
+
+        serde_json::from_str(&output_json).map_err(|e| SandboxError::InvalidOutput(e.to_string()))
     }
 
     /// Execute a simple function that takes no input and returns an i32
@@ -302,11 +298,11 @@ impl WasmSandbox {
 
         let state = SandboxState::new(&self.config);
         let mut store = Store::new(&self.engine, state);
-        
+
         store.limiter(|state| &mut state.limits);
-        store.set_fuel(self.config.fuel_limit).map_err(|e| {
-            SandboxError::EngineCreation(format!("Failed to set fuel: {}", e))
-        })?;
+        store
+            .set_fuel(self.config.fuel_limit)
+            .map_err(|e| SandboxError::EngineCreation(format!("Failed to set fuel: {}", e)))?;
 
         let linker = Linker::new(&self.engine);
         let instance = linker
@@ -362,7 +358,7 @@ mod tests {
     fn test_sandbox_creation() {
         let sandbox = WasmSandbox::with_defaults();
         assert!(sandbox.is_ok());
-        
+
         let sandbox = sandbox.unwrap();
         assert!(!sandbox.has_module());
     }
@@ -374,10 +370,10 @@ mod tests {
             fuel_limit: 500_000,
             timeout: Duration::from_secs(10),
         };
-        
+
         let sandbox = WasmSandbox::new(config.clone());
         assert!(sandbox.is_ok());
-        
+
         let sandbox = sandbox.unwrap();
         assert_eq!(sandbox.config().memory_limit, 8 * 1024 * 1024);
         assert_eq!(sandbox.config().fuel_limit, 500_000);
@@ -388,7 +384,7 @@ mod tests {
         let mut sandbox = WasmSandbox::with_defaults().unwrap();
         let result = sandbox.load_skill(b"not valid wasm");
         assert!(result.is_err());
-        
+
         if let Err(SandboxError::ModuleLoad(_)) = result {
             // Expected error type
         } else {

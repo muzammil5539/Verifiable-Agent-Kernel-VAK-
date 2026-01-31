@@ -362,7 +362,11 @@ pub trait ProcessRewardModel: Send + Sync {
     /// # Returns
     /// * `Ok(ThoughtScore)` - The score for this step
     /// * `Err(PrmError)` - If scoring failed
-    async fn score_step(&self, step: &ReasoningStep, context: &str) -> Result<ThoughtScore, PrmError>;
+    async fn score_step(
+        &self,
+        step: &ReasoningStep,
+        context: &str,
+    ) -> Result<ThoughtScore, PrmError>;
 
     /// Score a complete reasoning trajectory
     ///
@@ -561,7 +565,11 @@ struct ScoreResponse {
 
 #[async_trait]
 impl<P: LlmProvider + 'static> ProcessRewardModel for LlmPrm<P> {
-    async fn score_step(&self, step: &ReasoningStep, context: &str) -> Result<ThoughtScore, PrmError> {
+    async fn score_step(
+        &self,
+        step: &ReasoningStep,
+        context: &str,
+    ) -> Result<ThoughtScore, PrmError> {
         let prompt = self.build_step_prompt(step, context);
 
         let request = CompletionRequest::new(&self.config.model)
@@ -657,7 +665,11 @@ impl Default for MockPrm {
 
 #[async_trait]
 impl ProcessRewardModel for MockPrm {
-    async fn score_step(&self, step: &ReasoningStep, _context: &str) -> Result<ThoughtScore, PrmError> {
+    async fn score_step(
+        &self,
+        step: &ReasoningStep,
+        _context: &str,
+    ) -> Result<ThoughtScore, PrmError> {
         Ok(ThoughtScore::new_unchecked(
             self.default_score,
             self.default_confidence,
@@ -806,10 +818,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_llm_prm_with_mock_provider() {
-        let mock_response = r#"{"score": 0.85, "confidence": 0.9, "reasoning": "Good logical step"}"#;
-        let provider = Arc::new(
-            MockLlmProvider::new().with_response(MockResponse::success(mock_response)),
-        );
+        let mock_response =
+            r#"{"score": 0.85, "confidence": 0.9, "reasoning": "Good logical step"}"#;
+        let provider =
+            Arc::new(MockLlmProvider::new().with_response(MockResponse::success(mock_response)));
 
         let prm = LlmPrm::new(provider, PrmConfig::default());
         let step = ReasoningStep::new(1, "Calculate the sum of 2 and 3");
@@ -828,9 +840,8 @@ mod tests {
 
 That's my assessment."#;
 
-        let provider = Arc::new(
-            MockLlmProvider::new().with_response(MockResponse::success(mock_response)),
-        );
+        let provider =
+            Arc::new(MockLlmProvider::new().with_response(MockResponse::success(mock_response)));
 
         let prm = LlmPrm::new(provider, PrmConfig::default());
         let step = ReasoningStep::new(1, "Test step");
@@ -843,8 +854,12 @@ That's my assessment."#;
     async fn test_llm_prm_trajectory_individual_scoring() {
         // For small trajectories (<=3 steps), LlmPrm scores each step individually
         let responses = vec![
-            MockResponse::success(r#"{"score": 0.9, "confidence": 0.95, "reasoning": "Step 1 good"}"#),
-            MockResponse::success(r#"{"score": 0.85, "confidence": 0.9, "reasoning": "Step 2 good"}"#),
+            MockResponse::success(
+                r#"{"score": 0.9, "confidence": 0.95, "reasoning": "Step 1 good"}"#,
+            ),
+            MockResponse::success(
+                r#"{"score": 0.85, "confidence": 0.9, "reasoning": "Step 2 good"}"#,
+            ),
         ];
 
         let provider = Arc::new(MockLlmProvider::new().with_responses(responses));

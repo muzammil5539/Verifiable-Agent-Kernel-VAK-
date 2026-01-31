@@ -592,17 +592,14 @@ mod tests {
 
     #[test]
     fn test_stream_chunk() {
-        let chunk = StreamChunk::new("Hello")
-            .with_model("gpt-4")
-            .with_index(0);
-        
+        let chunk = StreamChunk::new("Hello").with_model("gpt-4").with_index(0);
+
         assert_eq!(chunk.content, "Hello");
         assert_eq!(chunk.model, Some("gpt-4".to_string()));
         assert_eq!(chunk.index, 0);
         assert!(!chunk.is_final());
 
-        let final_chunk = StreamChunk::new("")
-            .with_finish_reason("stop");
+        let final_chunk = StreamChunk::new("").with_finish_reason("stop");
         assert!(final_chunk.is_final());
     }
 

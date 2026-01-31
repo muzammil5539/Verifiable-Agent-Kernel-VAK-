@@ -7,10 +7,10 @@
 
 extern crate alloc;
 
-use alloc::string::String;
-use alloc::vec::Vec;
-use alloc::vec;
 use alloc::format;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
 use core::slice;
 use serde::{Deserialize, Serialize};
 
@@ -124,7 +124,7 @@ fn divide(a: f64, b: f64) -> Option<f64> {
 fn process_input(input: &str) -> SkillOutput {
     // Parse input JSON
     let parsed: Result<SkillInput, _> = serde_json::from_str(input);
-    
+
     let input = match parsed {
         Ok(i) => i,
         Err(_) => return SkillOutput::error("Invalid JSON input"),
@@ -138,18 +138,16 @@ fn process_input(input: &str) -> SkillOutput {
         "add" => SkillOutput::success(add(a, b)),
         "subtract" => SkillOutput::success(subtract(a, b)),
         "multiply" => SkillOutput::success(multiply(a, b)),
-        "divide" => {
-            match divide(a, b) {
-                Some(result) => SkillOutput::success(result),
-                None => SkillOutput::error("Division by zero"),
-            }
-        }
+        "divide" => match divide(a, b) {
+            Some(result) => SkillOutput::success(result),
+            None => SkillOutput::error("Division by zero"),
+        },
         _ => SkillOutput::error("Unknown action. Supported: add, subtract, multiply, divide"),
     }
 }
 
 /// Main entry point for the skill.
-/// 
+///
 /// Receives a pointer to JSON input and its length.
 /// Returns a pointer to the output buffer where:
 /// - First 4 bytes: length of the JSON output (little-endian u32)
@@ -158,7 +156,7 @@ fn process_input(input: &str) -> SkillOutput {
 pub extern "C" fn execute(input_ptr: *const u8, input_len: usize) -> *const u8 {
     // Safety: We trust the host to provide valid pointer and length
     let input_bytes = unsafe { slice::from_raw_parts(input_ptr, input_len) };
-    
+
     // Convert to string (UTF-8)
     let input_str = match core::str::from_utf8(input_bytes) {
         Ok(s) => s,
@@ -181,19 +179,19 @@ fn create_output_buffer(output: &SkillOutput) -> *const u8 {
 
     let json_bytes = json.as_bytes();
     let len = json_bytes.len() as u32;
-    
+
     // Create buffer: 4 bytes for length + JSON bytes
     let mut buffer: Vec<u8> = vec![0u8; 4 + json_bytes.len()];
-    
+
     // Write length as little-endian u32
     buffer[0] = (len & 0xFF) as u8;
     buffer[1] = ((len >> 8) & 0xFF) as u8;
     buffer[2] = ((len >> 16) & 0xFF) as u8;
     buffer[3] = ((len >> 24) & 0xFF) as u8;
-    
+
     // Copy JSON bytes
     buffer[4..].copy_from_slice(json_bytes);
-    
+
     let ptr = buffer.as_ptr();
     core::mem::forget(buffer);
     ptr

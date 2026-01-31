@@ -81,8 +81,15 @@ impl std::fmt::Display for TimeTravelError {
             TimeTravelError::NoSnapshotsAvailable => {
                 write!(f, "No snapshots available for rollback")
             }
-            TimeTravelError::VerificationFailed { snapshot_id, reason } => {
-                write!(f, "Snapshot {} verification failed: {}", snapshot_id, reason)
+            TimeTravelError::VerificationFailed {
+                snapshot_id,
+                reason,
+            } => {
+                write!(
+                    f,
+                    "Snapshot {} verification failed: {}",
+                    snapshot_id, reason
+                )
             }
             TimeTravelError::BranchNotFound(name) => {
                 write!(f, "Branch not found: {}", name)
@@ -236,18 +243,18 @@ impl StateCheckpoint {
     /// Compute the hash for this checkpoint
     fn compute_hash(&mut self) {
         let mut hasher = Sha256::new();
-        
+
         // Include ID
         hasher.update(self.id.0.as_bytes());
-        
+
         // Include label
         hasher.update(self.label.as_bytes());
-        
+
         // Include parent hash for chain integrity
         if let Some(parent_id) = &self.parent_id {
             hasher.update(parent_id.0.as_bytes());
         }
-        
+
         // Include state entries in deterministic order
         let mut keys: Vec<_> = self.state.keys().collect();
         keys.sort();
@@ -255,7 +262,7 @@ impl StateCheckpoint {
             hasher.update(key.as_bytes());
             hasher.update(&self.state[key].value_hash);
         }
-        
+
         // Include metadata in deterministic order
         let mut meta_keys: Vec<_> = self.metadata.keys().collect();
         meta_keys.sort();
@@ -263,7 +270,7 @@ impl StateCheckpoint {
             hasher.update(key.as_bytes());
             hasher.update(self.metadata[key].as_bytes());
         }
-        
+
         self.hash = hasher.finalize().into();
     }
 
@@ -275,30 +282,30 @@ impl StateCheckpoint {
                 return false;
             }
         }
-        
+
         // Recompute and verify hash
         let mut hasher = Sha256::new();
         hasher.update(self.id.0.as_bytes());
         hasher.update(self.label.as_bytes());
-        
+
         if let Some(parent_id) = &self.parent_id {
             hasher.update(parent_id.0.as_bytes());
         }
-        
+
         let mut keys: Vec<_> = self.state.keys().collect();
         keys.sort();
         for key in keys {
             hasher.update(key.as_bytes());
             hasher.update(&self.state[key].value_hash);
         }
-        
+
         let mut meta_keys: Vec<_> = self.metadata.keys().collect();
         meta_keys.sort();
         for key in meta_keys {
             hasher.update(key.as_bytes());
             hasher.update(self.metadata[key].as_bytes());
         }
-        
+
         let computed: [u8; 32] = hasher.finalize().into();
         computed == self.hash
     }
@@ -344,26 +351,19 @@ impl StateDiff {
     pub fn compute(from: &StateCheckpoint, to: &StateCheckpoint) -> Self {
         let from_keys: std::collections::HashSet<_> = from.state.keys().collect();
         let to_keys: std::collections::HashSet<_> = to.state.keys().collect();
-        
-        let added: Vec<String> = to_keys
-            .difference(&from_keys)
-            .map(|&k| k.clone())
-            .collect();
-        
-        let removed: Vec<String> = from_keys
-            .difference(&to_keys)
-            .map(|&k| k.clone())
-            .collect();
-        
+
+        let added: Vec<String> = to_keys.difference(&from_keys).map(|&k| k.clone()).collect();
+
+        let removed: Vec<String> = from_keys.difference(&to_keys).map(|&k| k.clone()).collect();
+
         let modified: Vec<String> = from_keys
             .intersection(&to_keys)
             .filter(|&&k| {
-                from.state.get(k).map(|e| &e.value_hash)
-                    != to.state.get(k).map(|e| &e.value_hash)
+                from.state.get(k).map(|e| &e.value_hash) != to.state.get(k).map(|e| &e.value_hash)
             })
             .map(|&k| k.clone())
             .collect();
-        
+
         Self {
             from_id: from.id,
             to_id: to.id,
@@ -579,11 +579,11 @@ impl TimeTravelManager {
     /// Get a snapshot by ID
     pub fn get_snapshot(&self, id: SnapshotId) -> Option<&StateCheckpoint> {
         let snapshot = self.snapshots.get(&id)?;
-        
+
         if self.config.verify_on_access && !snapshot.verify() {
             return None;
         }
-        
+
         Some(snapshot)
     }
 
@@ -618,9 +618,7 @@ impl TimeTravelManager {
 
     /// Rollback to the previous snapshot
     pub fn rollback(&mut self) -> TimeTravelResult<()> {
-        let current_id = self
-            .head
-            .ok_or(TimeTravelError::NoSnapshotsAvailable)?;
+        let current_id = self.head.ok_or(TimeTravelError::NoSnapshotsAvailable)?;
 
         let current = self
             .snapshots
@@ -839,21 +837,21 @@ impl TimeTravelManager {
     /// Import from exported state
     pub fn import(data: TimeTravelExport) -> TimeTravelResult<Self> {
         let mut manager = Self::new(data.namespace);
-        
+
         for snapshot in data.snapshots {
             manager.snapshots.insert(snapshot.id, snapshot);
         }
-        
+
         for branch in data.branches {
             manager.branches.insert(branch.name.clone(), branch);
         }
-        
+
         manager.head = data.head;
         manager.working_state = data.working_state;
-        
+
         // Verify the imported chain
         manager.verify_chain()?;
-        
+
         Ok(manager)
     }
 }
@@ -931,7 +929,10 @@ mod tests {
             .with_metadata("author", "test_user")
             .with_metadata("reason", "testing");
 
-        assert_eq!(checkpoint.metadata.get("author"), Some(&"test_user".to_string()));
+        assert_eq!(
+            checkpoint.metadata.get("author"),
+            Some(&"test_user".to_string())
+        );
         assert!(checkpoint.verify());
     }
 
@@ -1054,7 +1055,8 @@ mod tests {
         let mut ttm = TimeTravelManager::new("agent1");
 
         let id1 = ttm.create_checkpoint_with_state("First", vec![("k".to_string(), b"1".to_vec())]);
-        let id2 = ttm.create_checkpoint_with_state("Second", vec![("k".to_string(), b"2".to_vec())]);
+        let id2 =
+            ttm.create_checkpoint_with_state("Second", vec![("k".to_string(), b"2".to_vec())]);
         let id3 = ttm.create_checkpoint_with_state("Third", vec![("k".to_string(), b"3".to_vec())]);
 
         let history = ttm.get_history();

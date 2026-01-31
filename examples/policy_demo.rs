@@ -12,8 +12,8 @@ use std::collections::HashMap;
 
 // Import policy types from the VAK policy module
 use vak::policy::{
-    PolicyEngine, PolicyRule, PolicyEffect, PolicyCondition, 
-    ConditionOperator, PolicyContext, PolicyConfig, PolicyDecision,
+    ConditionOperator, PolicyCondition, PolicyConfig, PolicyContext, PolicyDecision, PolicyEffect,
+    PolicyEngine, PolicyRule,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -22,55 +22,53 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // =========================================================================
     // Part 1: Create and Configure the Policy Engine
     // =========================================================================
-    
+
     println!("Part 1: Setting up the Policy Engine\n");
-    
+
     let mut engine = PolicyEngine::new();
-    
+
     // -------------------------------------------------------------------------
     // Rule 1: Allow admins to access any resource
     // -------------------------------------------------------------------------
     // This is a high-priority rule that grants full access to administrators
-    
+
     let admin_rule = PolicyRule {
         id: "admin-full-access".to_string(),
         effect: PolicyEffect::Allow,
-        resource_pattern: "*".to_string(),        // Match any resource
-        action_pattern: "*".to_string(),          // Match any action
-        conditions: vec![
-            PolicyCondition {
-                attribute: "role".to_string(),
-                operator: ConditionOperator::Equals,
-                value: serde_json::json!("admin"),
-            },
-        ],
-        priority: 100,  // High priority - evaluated first
+        resource_pattern: "*".to_string(), // Match any resource
+        action_pattern: "*".to_string(),   // Match any action
+        conditions: vec![PolicyCondition {
+            attribute: "role".to_string(),
+            operator: ConditionOperator::Equals,
+            value: serde_json::json!("admin"),
+        }],
+        priority: 100, // High priority - evaluated first
         description: Some("Administrators have unrestricted access".to_string()),
     };
     engine.add_rule(admin_rule);
     println!("✓ Added rule: admin-full-access (priority: 100)");
-    
+
     // -------------------------------------------------------------------------
     // Rule 2: Allow users to read public resources
     // -------------------------------------------------------------------------
-    
+
     let public_read_rule = PolicyRule {
         id: "public-read".to_string(),
         effect: PolicyEffect::Allow,
-        resource_pattern: "public/*".to_string(),  // Only public resources
-        action_pattern: "read".to_string(),        // Only read actions
-        conditions: vec![],                        // No additional conditions
+        resource_pattern: "public/*".to_string(), // Only public resources
+        action_pattern: "read".to_string(),       // Only read actions
+        conditions: vec![],                       // No additional conditions
         priority: 50,
         description: Some("Anyone can read public resources".to_string()),
     };
     engine.add_rule(public_read_rule);
     println!("✓ Added rule: public-read (priority: 50)");
-    
+
     // -------------------------------------------------------------------------
     // Rule 3: Allow analysts to access data resources during business hours
     // -------------------------------------------------------------------------
     // This demonstrates ABAC with environment-based conditions
-    
+
     let analyst_rule = PolicyRule {
         id: "analyst-data-access".to_string(),
         effect: PolicyEffect::Allow,
@@ -93,39 +91,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     engine.add_rule(analyst_rule);
     println!("✓ Added rule: analyst-data-access (priority: 60)");
-    
+
     // -------------------------------------------------------------------------
     // Rule 4: Deny access to sensitive resources by default
     // -------------------------------------------------------------------------
-    
+
     let sensitive_deny_rule = PolicyRule {
         id: "sensitive-deny-default".to_string(),
         effect: PolicyEffect::Deny,
         resource_pattern: "sensitive/*".to_string(),
         action_pattern: "*".to_string(),
         conditions: vec![],
-        priority: 10,  // Low priority - acts as fallback
+        priority: 10, // Low priority - acts as fallback
         description: Some("Deny access to sensitive resources by default".to_string()),
     };
     engine.add_rule(sensitive_deny_rule);
     println!("✓ Added rule: sensitive-deny-default (priority: 10)");
-    
+
     // -------------------------------------------------------------------------
     // Rule 5: Allow security team to access sensitive resources
     // -------------------------------------------------------------------------
-    
+
     let security_sensitive_rule = PolicyRule {
         id: "security-sensitive-access".to_string(),
         effect: PolicyEffect::Allow,
         resource_pattern: "sensitive/*".to_string(),
         action_pattern: "*".to_string(),
-        conditions: vec![
-            PolicyCondition {
-                attribute: "attr.clearance_level".to_string(),
-                operator: ConditionOperator::GreaterThan,
-                value: serde_json::json!(3),
-            },
-        ],
+        conditions: vec![PolicyCondition {
+            attribute: "attr.clearance_level".to_string(),
+            operator: ConditionOperator::GreaterThan,
+            value: serde_json::json!(3),
+        }],
         priority: 70,
         description: Some("High-clearance users can access sensitive resources".to_string()),
     };
@@ -135,9 +131,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // =========================================================================
     // Part 2: Create Different Policy Contexts
     // =========================================================================
-    
+
     println!("Part 2: Creating Policy Contexts\n");
-    
+
     // Context for an admin user
     let admin_context = PolicyContext {
         agent_id: "admin-agent-001".to_string(),
@@ -147,12 +143,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ("clearance_level".to_string(), serde_json::json!(5)),
         ]),
         environment: HashMap::from([
-            ("time_of_day".to_string(), serde_json::json!("business_hours")),
+            (
+                "time_of_day".to_string(),
+                serde_json::json!("business_hours"),
+            ),
             ("ip_range".to_string(), serde_json::json!("internal")),
         ]),
     };
     println!("✓ Created context: Admin (role=admin, clearance=5)");
-    
+
     // Context for an analyst user
     let analyst_context = PolicyContext {
         agent_id: "analyst-agent-042".to_string(),
@@ -161,12 +160,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ("department".to_string(), serde_json::json!("analytics")),
             ("clearance_level".to_string(), serde_json::json!(2)),
         ]),
-        environment: HashMap::from([
-            ("time_of_day".to_string(), serde_json::json!("business_hours")),
-        ]),
+        environment: HashMap::from([(
+            "time_of_day".to_string(),
+            serde_json::json!("business_hours"),
+        )]),
     };
     println!("✓ Created context: Analyst (role=analyst, dept=analytics, clearance=2)");
-    
+
     // Context for a regular user
     let user_context = PolicyContext {
         agent_id: "user-agent-123".to_string(),
@@ -178,7 +178,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         environment: HashMap::new(),
     };
     println!("✓ Created context: User (role=user, dept=sales, clearance=1)");
-    
+
     // Context for a security team member
     let security_context = PolicyContext {
         agent_id: "security-agent-007".to_string(),
@@ -194,31 +194,85 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // =========================================================================
     // Part 3: Evaluate Policies with Different Contexts
     // =========================================================================
-    
+
     println!("Part 3: Policy Evaluation Results\n");
     println!("{:-<70}", "");
-    
+
     // Test cases demonstrating various scenarios
     let test_cases = vec![
         // (resource, action, context, description)
-        ("public/docs/readme.txt", "read", &admin_context, "Admin reading public doc"),
-        ("public/docs/readme.txt", "read", &user_context, "User reading public doc"),
-        ("data/analytics/report.csv", "read", &analyst_context, "Analyst reading analytics data"),
-        ("data/analytics/report.csv", "read", &user_context, "User reading analytics data"),
-        ("data/analytics/report.csv", "write", &analyst_context, "Analyst writing analytics data"),
-        ("sensitive/credentials/api-keys.json", "read", &user_context, "User accessing sensitive data"),
-        ("sensitive/credentials/api-keys.json", "read", &security_context, "Security team accessing sensitive data"),
-        ("sensitive/audit/logs.json", "read", &admin_context, "Admin accessing sensitive audit logs"),
-        ("private/user-data/profile.json", "delete", &user_context, "User deleting private data"),
-        ("private/user-data/profile.json", "delete", &admin_context, "Admin deleting private data"),
+        (
+            "public/docs/readme.txt",
+            "read",
+            &admin_context,
+            "Admin reading public doc",
+        ),
+        (
+            "public/docs/readme.txt",
+            "read",
+            &user_context,
+            "User reading public doc",
+        ),
+        (
+            "data/analytics/report.csv",
+            "read",
+            &analyst_context,
+            "Analyst reading analytics data",
+        ),
+        (
+            "data/analytics/report.csv",
+            "read",
+            &user_context,
+            "User reading analytics data",
+        ),
+        (
+            "data/analytics/report.csv",
+            "write",
+            &analyst_context,
+            "Analyst writing analytics data",
+        ),
+        (
+            "sensitive/credentials/api-keys.json",
+            "read",
+            &user_context,
+            "User accessing sensitive data",
+        ),
+        (
+            "sensitive/credentials/api-keys.json",
+            "read",
+            &security_context,
+            "Security team accessing sensitive data",
+        ),
+        (
+            "sensitive/audit/logs.json",
+            "read",
+            &admin_context,
+            "Admin accessing sensitive audit logs",
+        ),
+        (
+            "private/user-data/profile.json",
+            "delete",
+            &user_context,
+            "User deleting private data",
+        ),
+        (
+            "private/user-data/profile.json",
+            "delete",
+            &admin_context,
+            "Admin deleting private data",
+        ),
     ];
-    
+
     for (resource, action, context, description) in test_cases {
         let decision = engine.evaluate(resource, action, context);
-        
-        let status = if decision.allowed { "✓ ALLOW" } else { "✗ DENY " };
+
+        let status = if decision.allowed {
+            "✓ ALLOW"
+        } else {
+            "✗ DENY "
+        };
         let rule = decision.matched_rule.as_deref().unwrap_or("(default)");
-        
+
         println!("{} | {} ", status, description);
         println!("         Resource: {}", resource);
         println!("         Action: {}", action);
@@ -230,9 +284,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // =========================================================================
     // Part 4: Loading Policies from YAML (Alternative Approach)
     // =========================================================================
-    
+
     println!("\nPart 4: Loading Policies from YAML File\n");
-    
+
     // In production, you would typically load policies from a file:
     //
     // let mut engine = PolicyEngine::new();
@@ -252,7 +306,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //     priority: 100
     //     description: "Full admin access"
     // ```
-    
+
     // Create a sample YAML config (in memory for demo)
     let yaml_config = r#"
 rules:
@@ -264,42 +318,84 @@ rules:
     priority: 50
     description: "Demo rule loaded from YAML"
 "#;
-    
+
     // Parse the YAML configuration
     let config: PolicyConfig = serde_yaml::from_str(yaml_config)?;
-    
+
     println!("✓ Parsed YAML configuration");
     println!("  Rules loaded: {}", config.rules.len());
     for rule in &config.rules {
-        println!("  - {}: {:?} on {}/{}", 
-            rule.id, rule.effect, rule.resource_pattern, rule.action_pattern);
+        println!(
+            "  - {}: {:?} on {}/{}",
+            rule.id, rule.effect, rule.resource_pattern, rule.action_pattern
+        );
     }
 
     // =========================================================================
     // Part 5: Complex ABAC Conditions
     // =========================================================================
-    
+
     println!("\nPart 5: Advanced ABAC Condition Examples\n");
-    
+
     // Demonstrate all available condition operators
     let operators_demo = vec![
-        ("Equals", ConditionOperator::Equals, "role", serde_json::json!("admin")),
-        ("NotEquals", ConditionOperator::NotEquals, "status", serde_json::json!("suspended")),
-        ("Contains", ConditionOperator::Contains, "permissions", serde_json::json!("write")),
-        ("StartsWith", ConditionOperator::StartsWith, "email", serde_json::json!("admin@")),
-        ("EndsWith", ConditionOperator::EndsWith, "email", serde_json::json!("@company.com")),
-        ("GreaterThan", ConditionOperator::GreaterThan, "clearance_level", serde_json::json!(3)),
-        ("LessThan", ConditionOperator::LessThan, "risk_score", serde_json::json!(50)),
-        ("In", ConditionOperator::In, "department", serde_json::json!(["eng", "security", "admin"])),
+        (
+            "Equals",
+            ConditionOperator::Equals,
+            "role",
+            serde_json::json!("admin"),
+        ),
+        (
+            "NotEquals",
+            ConditionOperator::NotEquals,
+            "status",
+            serde_json::json!("suspended"),
+        ),
+        (
+            "Contains",
+            ConditionOperator::Contains,
+            "permissions",
+            serde_json::json!("write"),
+        ),
+        (
+            "StartsWith",
+            ConditionOperator::StartsWith,
+            "email",
+            serde_json::json!("admin@"),
+        ),
+        (
+            "EndsWith",
+            ConditionOperator::EndsWith,
+            "email",
+            serde_json::json!("@company.com"),
+        ),
+        (
+            "GreaterThan",
+            ConditionOperator::GreaterThan,
+            "clearance_level",
+            serde_json::json!(3),
+        ),
+        (
+            "LessThan",
+            ConditionOperator::LessThan,
+            "risk_score",
+            serde_json::json!(50),
+        ),
+        (
+            "In",
+            ConditionOperator::In,
+            "department",
+            serde_json::json!(["eng", "security", "admin"]),
+        ),
     ];
-    
+
     println!("Available condition operators:");
     for (name, _operator, attr, value) in operators_demo {
         println!("  • {} - Example: {} {:?}", name, attr, value);
     }
 
     println!("\n=== Policy Demo Complete ===");
-    
+
     Ok(())
 }
 
@@ -308,13 +404,14 @@ rules:
 // =============================================================================
 
 #[allow(dead_code)]
-fn print_decision(
-    description: &str,
-    decision: &PolicyDecision,
-) {
+fn print_decision(description: &str, decision: &PolicyDecision) {
     let icon = if decision.allowed { "✓" } else { "✗" };
-    let status = if decision.allowed { "ALLOWED" } else { "DENIED" };
-    
+    let status = if decision.allowed {
+        "ALLOWED"
+    } else {
+        "DENIED"
+    };
+
     println!("{} {} - {}", icon, status, description);
     println!("  Reason: {}", decision.reason);
     if let Some(rule) = &decision.matched_rule {

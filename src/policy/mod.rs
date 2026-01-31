@@ -116,10 +116,10 @@ impl PolicyEngine {
 
     /// Load rules from a YAML file
     pub fn load_rules<P: AsRef<Path>>(&mut self, path: P) -> Result<(), PolicyError> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| PolicyError::IoError(e.to_string()))?;
-        let config: PolicyConfig = serde_yaml::from_str(&content)
-            .map_err(|e| PolicyError::ParseError(e.to_string()))?;
+        let content =
+            std::fs::read_to_string(path).map_err(|e| PolicyError::IoError(e.to_string()))?;
+        let config: PolicyConfig =
+            serde_yaml::from_str(&content).map_err(|e| PolicyError::ParseError(e.to_string()))?;
         self.rules = config.rules;
         self.rules.sort_by(|a, b| b.priority.cmp(&a.priority));
         Ok(())
@@ -132,7 +132,7 @@ impl PolicyEngine {
     }
 
     /// Evaluate a request against loaded policies
-    /// 
+    ///
     /// Security: Implements "deny on error" behavior - if any condition evaluation
     /// fails, the request is denied to prevent security bypasses.
     pub fn evaluate(
@@ -159,10 +159,7 @@ impl PolicyEngine {
                         decision = PolicyDecision {
                             allowed: rule.effect == PolicyEffect::Allow,
                             matched_rule: Some(rule.id.clone()),
-                            reason: format!(
-                                "Matched rule '{}': {:?}",
-                                rule.id, rule.effect
-                            ),
+                            reason: format!("Matched rule '{}': {:?}", rule.id, rule.effect),
                             evaluation_errors: Vec::new(),
                         };
                         break;
@@ -200,14 +197,14 @@ impl PolicyEngine {
         context: &PolicyContext,
     ) -> Result<PolicyDecision, PolicyError> {
         let decision = self.evaluate(resource, action, context);
-        
+
         if !decision.evaluation_errors.is_empty() {
             return Err(PolicyError::ConditionEvaluationError {
                 attribute: "multiple".to_string(),
                 reason: decision.evaluation_errors.join("; "),
             });
         }
-        
+
         Ok(decision)
     }
 
@@ -236,7 +233,7 @@ impl PolicyEngine {
         context: &PolicyContext,
     ) -> Result<bool, Vec<String>> {
         let mut errors = Vec::new();
-        
+
         for condition in conditions {
             match self.evaluate_condition_safe(condition, context) {
                 Ok(true) => continue,
@@ -244,7 +241,7 @@ impl PolicyEngine {
                 Err(e) => errors.push(e),
             }
         }
-        
+
         if errors.is_empty() {
             Ok(true)
         } else {
@@ -259,7 +256,7 @@ impl PolicyEngine {
         context: &PolicyContext,
     ) -> Result<bool, String> {
         let attr_value = self.resolve_attribute(&condition.attribute, context);
-        
+
         match attr_value {
             Some(value) => {
                 match self.compare_values_safe(&condition.operator, &value, &condition.value) {
@@ -309,47 +306,49 @@ impl PolicyEngine {
         match operator {
             ConditionOperator::Equals => Ok(actual == expected),
             ConditionOperator::NotEquals => Ok(actual != expected),
-            ConditionOperator::Contains => {
-                match (actual.as_str(), expected.as_str()) {
-                    (Some(haystack), Some(needle)) => Ok(haystack.contains(needle)),
-                    (None, _) => Err("Actual value is not a string for Contains operator".to_string()),
-                    (_, None) => Err("Expected value is not a string for Contains operator".to_string()),
+            ConditionOperator::Contains => match (actual.as_str(), expected.as_str()) {
+                (Some(haystack), Some(needle)) => Ok(haystack.contains(needle)),
+                (None, _) => Err("Actual value is not a string for Contains operator".to_string()),
+                (_, None) => {
+                    Err("Expected value is not a string for Contains operator".to_string())
                 }
-            }
-            ConditionOperator::StartsWith => {
-                match (actual.as_str(), expected.as_str()) {
-                    (Some(s), Some(prefix)) => Ok(s.starts_with(prefix)),
-                    (None, _) => Err("Actual value is not a string for StartsWith operator".to_string()),
-                    (_, None) => Err("Expected value is not a string for StartsWith operator".to_string()),
+            },
+            ConditionOperator::StartsWith => match (actual.as_str(), expected.as_str()) {
+                (Some(s), Some(prefix)) => Ok(s.starts_with(prefix)),
+                (None, _) => {
+                    Err("Actual value is not a string for StartsWith operator".to_string())
                 }
-            }
-            ConditionOperator::EndsWith => {
-                match (actual.as_str(), expected.as_str()) {
-                    (Some(s), Some(suffix)) => Ok(s.ends_with(suffix)),
-                    (None, _) => Err("Actual value is not a string for EndsWith operator".to_string()),
-                    (_, None) => Err("Expected value is not a string for EndsWith operator".to_string()),
+                (_, None) => {
+                    Err("Expected value is not a string for StartsWith operator".to_string())
                 }
-            }
-            ConditionOperator::GreaterThan => {
-                match (actual.as_f64(), expected.as_f64()) {
-                    (Some(a), Some(b)) => Ok(a > b),
-                    (None, _) => Err("Actual value is not a number for GreaterThan operator".to_string()),
-                    (_, None) => Err("Expected value is not a number for GreaterThan operator".to_string()),
+            },
+            ConditionOperator::EndsWith => match (actual.as_str(), expected.as_str()) {
+                (Some(s), Some(suffix)) => Ok(s.ends_with(suffix)),
+                (None, _) => Err("Actual value is not a string for EndsWith operator".to_string()),
+                (_, None) => {
+                    Err("Expected value is not a string for EndsWith operator".to_string())
                 }
-            }
-            ConditionOperator::LessThan => {
-                match (actual.as_f64(), expected.as_f64()) {
-                    (Some(a), Some(b)) => Ok(a < b),
-                    (None, _) => Err("Actual value is not a number for LessThan operator".to_string()),
-                    (_, None) => Err("Expected value is not a number for LessThan operator".to_string()),
+            },
+            ConditionOperator::GreaterThan => match (actual.as_f64(), expected.as_f64()) {
+                (Some(a), Some(b)) => Ok(a > b),
+                (None, _) => {
+                    Err("Actual value is not a number for GreaterThan operator".to_string())
                 }
-            }
-            ConditionOperator::In => {
-                match expected.as_array() {
-                    Some(arr) => Ok(arr.contains(actual)),
-                    None => Err("Expected value is not an array for In operator".to_string()),
+                (_, None) => {
+                    Err("Expected value is not a number for GreaterThan operator".to_string())
                 }
-            }
+            },
+            ConditionOperator::LessThan => match (actual.as_f64(), expected.as_f64()) {
+                (Some(a), Some(b)) => Ok(a < b),
+                (None, _) => Err("Actual value is not a number for LessThan operator".to_string()),
+                (_, None) => {
+                    Err("Expected value is not a number for LessThan operator".to_string())
+                }
+            },
+            ConditionOperator::In => match expected.as_array() {
+                Some(arr) => Ok(arr.contains(actual)),
+                None => Err("Expected value is not an array for In operator".to_string()),
+            },
         }
     }
 }
@@ -381,7 +380,11 @@ impl std::fmt::Display for PolicyError {
             PolicyError::ParseError(e) => write!(f, "Parse error: {}", e),
             PolicyError::InvalidRule(e) => write!(f, "Invalid rule: {}", e),
             PolicyError::ConditionEvaluationError { attribute, reason } => {
-                write!(f, "Condition evaluation error for '{}': {}", attribute, reason)
+                write!(
+                    f,
+                    "Condition evaluation error for '{}': {}",
+                    attribute, reason
+                )
             }
             PolicyError::AttributeNotFound(attr) => {
                 write!(f, "Attribute not found: {}", attr)
@@ -400,7 +403,7 @@ mod tests {
         let mut attributes = HashMap::new();
         attributes.insert("clearance".to_string(), serde_json::json!("secret"));
         attributes.insert("department".to_string(), serde_json::json!("engineering"));
-        
+
         PolicyContext {
             agent_id: "agent-001".to_string(),
             role: "developer".to_string(),

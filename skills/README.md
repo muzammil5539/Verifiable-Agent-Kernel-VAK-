@@ -182,6 +182,12 @@ policies:
     enforce: true
 ```
 
+## Signing & Verification (required by default)
+
+- The skill registry now enforces signature verification by default. Unsigned manifests are rejected unless you explicitly opt into development mode.
+- To allow unsigned skills while iterating locally, construct the registry with `SignatureConfig::permissive_dev()` (or `SkillRegistry::new_permissive_dev(...)`).
+- Make sure your published skills are signed; a signing helper (`vak-skill-sign`) should be used once available to generate the manifest signature before distribution.
+
 ## Example Skills
 
 See the following example skills in this directory:

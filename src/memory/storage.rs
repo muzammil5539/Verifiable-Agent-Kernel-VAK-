@@ -261,14 +261,18 @@ impl StorageBackend for MemoryBackend {
     }
 
     fn put(&self, key: &str, value: &[u8]) -> StorageResult<()> {
-        let mut data = self.data.write()
+        let mut data = self
+            .data
+            .write()
             .map_err(|e| StorageError::LockError(e.to_string()))?;
-        let mut stats = self.stats.write()
+        let mut stats = self
+            .stats
+            .write()
             .map_err(|e| StorageError::LockError(e.to_string()))?;
 
         let is_new = !data.contains_key(key);
         data.insert(key.to_string(), value.to_vec());
-        
+
         stats.writes += 1;
         if is_new {
             stats.key_count += 1;
@@ -279,9 +283,13 @@ impl StorageBackend for MemoryBackend {
     }
 
     fn get(&self, key: &str) -> StorageResult<Vec<u8>> {
-        let data = self.data.read()
+        let data = self
+            .data
+            .read()
             .map_err(|e| StorageError::LockError(e.to_string()))?;
-        let mut stats = self.stats.write()
+        let mut stats = self
+            .stats
+            .write()
             .map_err(|e| StorageError::LockError(e.to_string()))?;
 
         stats.reads += 1;
@@ -292,9 +300,13 @@ impl StorageBackend for MemoryBackend {
     }
 
     fn delete(&self, key: &str) -> StorageResult<()> {
-        let mut data = self.data.write()
+        let mut data = self
+            .data
+            .write()
             .map_err(|e| StorageError::LockError(e.to_string()))?;
-        let mut stats = self.stats.write()
+        let mut stats = self
+            .stats
+            .write()
             .map_err(|e| StorageError::LockError(e.to_string()))?;
 
         if data.remove(key).is_some() {
@@ -307,14 +319,18 @@ impl StorageBackend for MemoryBackend {
     }
 
     fn exists(&self, key: &str) -> StorageResult<bool> {
-        let data = self.data.read()
+        let data = self
+            .data
+            .read()
             .map_err(|e| StorageError::LockError(e.to_string()))?;
 
         Ok(data.contains_key(key))
     }
 
     fn list_keys(&self, prefix: Option<&str>) -> StorageResult<Vec<String>> {
-        let data = self.data.read()
+        let data = self
+            .data
+            .read()
             .map_err(|e| StorageError::LockError(e.to_string()))?;
 
         let keys: Vec<String> = match prefix {
@@ -326,7 +342,9 @@ impl StorageBackend for MemoryBackend {
     }
 
     fn stats(&self) -> StorageResult<StorageStats> {
-        let stats = self.stats.read()
+        let stats = self
+            .stats
+            .read()
             .map_err(|e| StorageError::LockError(e.to_string()))?;
 
         Ok(stats.clone())
@@ -361,8 +379,9 @@ pub struct FileBackend {
 impl FileBackend {
     /// Create a new file backend
     pub fn new(config: StorageConfig) -> StorageResult<Self> {
-        let base_path = config.base_path.clone()
-            .ok_or_else(|| StorageError::ConfigError("Base path required for file backend".to_string()))?;
+        let base_path = config.base_path.clone().ok_or_else(|| {
+            StorageError::ConfigError("Base path required for file backend".to_string())
+        })?;
 
         if config.create_dirs {
             fs::create_dir_all(&base_path)?;
@@ -403,7 +422,7 @@ impl StorageBackend for FileBackend {
 
     fn put(&self, key: &str, value: &[u8]) -> StorageResult<()> {
         let path = self.key_path(key);
-        
+
         let mut file = OpenOptions::new()
             .write(true)
             .create(true)
@@ -426,7 +445,7 @@ impl StorageBackend for FileBackend {
 
     fn get(&self, key: &str) -> StorageResult<Vec<u8>> {
         let path = self.key_path(key);
-        
+
         if !path.exists() {
             return Err(StorageError::KeyNotFound(key.to_string()));
         }
@@ -473,11 +492,11 @@ impl StorageBackend for FileBackend {
         for entry in fs::read_dir(&self.base_path)? {
             let entry = entry?;
             let path = entry.path();
-            
+
             if path.extension().map(|e| e == "dat").unwrap_or(false) {
                 if let Some(stem) = path.file_stem() {
                     let key = stem.to_string_lossy().to_string();
-                    
+
                     match prefix {
                         Some(p) if !key.starts_with(p) => continue,
                         _ => keys.push(key),
@@ -490,7 +509,9 @@ impl StorageBackend for FileBackend {
     }
 
     fn stats(&self) -> StorageResult<StorageStats> {
-        let mut stats = self.stats.write()
+        let mut stats = self
+            .stats
+            .write()
             .map_err(|e| StorageError::LockError(e.to_string()))?;
 
         // Calculate actual storage
@@ -500,7 +521,7 @@ impl StorageBackend for FileBackend {
         for entry in fs::read_dir(&self.base_path)? {
             let entry = entry?;
             let path = entry.path();
-            
+
             if path.extension().map(|e| e == "dat").unwrap_or(false) {
                 if let Ok(metadata) = entry.metadata() {
                     storage_used += metadata.len() as usize;
@@ -590,8 +611,7 @@ impl StorageManager {
     /// Retrieve and deserialize a value
     pub fn get_json<T: for<'de> Deserialize<'de>>(&self, key: &str) -> StorageResult<T> {
         let data = self.get(key)?;
-        serde_json::from_slice(&data)
-            .map_err(|e| StorageError::SerializationError(e.to_string()))
+        serde_json::from_slice(&data).map_err(|e| StorageError::SerializationError(e.to_string()))
     }
 
     /// Delete a key
@@ -637,7 +657,11 @@ impl StorageManager {
 
 impl fmt::Debug for StorageManager {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "StorageManager {{ backend: {:?} }}", self.config.backend_type)
+        write!(
+            f,
+            "StorageManager {{ backend: {:?} }}",
+            self.config.backend_type
+        )
     }
 }
 
@@ -699,7 +723,7 @@ impl NamespacedStorage {
     pub fn list_keys(&self) -> StorageResult<Vec<String>> {
         let prefix = format!("{}:", self.namespace);
         let keys = self.manager.list_keys(Some(&prefix))?;
-        
+
         Ok(keys
             .into_iter()
             .map(|k| k.strip_prefix(&prefix).unwrap_or(&k).to_string())
@@ -764,7 +788,7 @@ mod tests {
 
         backend.put("key1", b"value1").unwrap();
         assert!(backend.exists("key1").unwrap());
-        
+
         backend.delete("key1").unwrap();
         assert!(!backend.exists("key1").unwrap());
     }
@@ -801,8 +825,7 @@ mod tests {
     #[test]
     fn test_file_backend_put_get() {
         let temp_dir = TempDir::new().unwrap();
-        let config = StorageConfig::new(BackendType::File)
-            .with_path(temp_dir.path());
+        let config = StorageConfig::new(BackendType::File).with_path(temp_dir.path());
 
         let backend = FileBackend::new(config).unwrap();
 
@@ -814,8 +837,7 @@ mod tests {
     #[test]
     fn test_file_backend_exists() {
         let temp_dir = TempDir::new().unwrap();
-        let config = StorageConfig::new(BackendType::File)
-            .with_path(temp_dir.path());
+        let config = StorageConfig::new(BackendType::File).with_path(temp_dir.path());
 
         let backend = FileBackend::new(config).unwrap();
 
@@ -827,8 +849,7 @@ mod tests {
     #[test]
     fn test_file_backend_delete() {
         let temp_dir = TempDir::new().unwrap();
-        let config = StorageConfig::new(BackendType::File)
-            .with_path(temp_dir.path());
+        let config = StorageConfig::new(BackendType::File).with_path(temp_dir.path());
 
         let backend = FileBackend::new(config).unwrap();
 
@@ -863,7 +884,7 @@ mod tests {
 
         manager.put_json("test_data", &data).unwrap();
         let retrieved: TestData = manager.get_json("test_data").unwrap();
-        
+
         assert_eq!(retrieved, data);
     }
 
@@ -893,7 +914,7 @@ mod tests {
     #[test]
     fn test_namespaced_storage_list_keys() {
         let manager = StorageManager::memory();
-        
+
         // Put some keys directly
         manager.put("ns1:key1", b"1").unwrap();
         manager.put("ns1:key2", b"2").unwrap();
@@ -901,7 +922,7 @@ mod tests {
 
         let ns1 = NamespacedStorage::new(manager, "ns1");
         let keys = ns1.list_keys().unwrap();
-        
+
         assert_eq!(keys.len(), 2);
         assert!(keys.contains(&"key1".to_string()));
         assert!(keys.contains(&"key2".to_string()));
@@ -910,8 +931,7 @@ mod tests {
     #[test]
     fn test_file_backend_list_keys() {
         let temp_dir = TempDir::new().unwrap();
-        let config = StorageConfig::new(BackendType::File)
-            .with_path(temp_dir.path());
+        let config = StorageConfig::new(BackendType::File).with_path(temp_dir.path());
 
         let backend = FileBackend::new(config).unwrap();
 
@@ -925,8 +945,7 @@ mod tests {
     #[test]
     fn test_storage_manager_file_backend() {
         let temp_dir = TempDir::new().unwrap();
-        let config = StorageConfig::new(BackendType::File)
-            .with_path(temp_dir.path());
+        let config = StorageConfig::new(BackendType::File).with_path(temp_dir.path());
 
         let manager = StorageManager::new(config).unwrap();
         assert_eq!(manager.backend_type(), BackendType::File);

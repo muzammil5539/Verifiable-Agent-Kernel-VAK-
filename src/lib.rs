@@ -54,8 +54,7 @@
 
 // Re-export core types at the crate root for convenience
 pub use kernel::types::{
-    AgentId, AuditEntry, AuditId, KernelError, PolicyDecision, SessionId, ToolRequest,
-    ToolResponse,
+    AgentId, AuditEntry, AuditId, KernelError, PolicyDecision, SessionId, ToolRequest, ToolResponse,
 };
 
 pub use kernel::config::KernelConfig;
@@ -121,10 +120,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Returns the library version as a tuple of (major, minor, patch).
 #[must_use]
 pub fn version() -> (u32, u32, u32) {
-    let parts: Vec<u32> = VERSION
-        .split('.')
-        .filter_map(|s| s.parse().ok())
-        .collect();
+    let parts: Vec<u32> = VERSION.split('.').filter_map(|s| s.parse().ok()).collect();
 
     (
         parts.first().copied().unwrap_or(0),

@@ -121,7 +121,9 @@ impl PyToolResponse {
             Ok(self.result.clone().unwrap_or_default())
         } else {
             Err(PyRuntimeError::new_err(
-                self.error.clone().unwrap_or_else(|| "Unknown error".to_string())
+                self.error
+                    .clone()
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             ))
         }
     }
@@ -209,16 +211,19 @@ impl PyKernel {
     #[staticmethod]
     fn default() -> PyResult<Self> {
         let mut skill_registry = HashMap::new();
-        
+
         // Register default built-in skills
-        skill_registry.insert("calculator".to_string(), SkillInfo {
-            id: "calculator".to_string(),
-            name: "Calculator".to_string(),
-            description: "Basic arithmetic operations".to_string(),
-            version: "1.0.0".to_string(),
-            enabled: true,
-        });
-        
+        skill_registry.insert(
+            "calculator".to_string(),
+            SkillInfo {
+                id: "calculator".to_string(),
+                name: "Calculator".to_string(),
+                description: "Basic arithmetic operations".to_string(),
+                version: "1.0.0".to_string(),
+                enabled: true,
+            },
+        );
+
         Ok(Self {
             initialized: true,
             agents: HashMap::new(),
@@ -232,13 +237,13 @@ impl PyKernel {
     #[staticmethod]
     fn from_config(path: &str) -> PyResult<Self> {
         let mut kernel = Self::default()?;
-        
+
         // Try to load policy rules from config
         if let Err(e) = kernel.policy_engine.load_rules(path) {
             // Log warning but don't fail - use default policies
             tracing::warn!("Failed to load policy rules from {}: {}", path, e);
         }
-        
+
         Ok(kernel)
     }
 
@@ -265,7 +270,7 @@ impl PyKernel {
         let mut agent_data = HashMap::new();
         agent_data.insert("name".to_string(), name.to_string());
         agent_data.insert("config".to_string(), config_json.to_string());
-        
+
         self.agents.insert(agent_id.to_string(), agent_data);
         Ok(())
     }
@@ -277,7 +282,10 @@ impl PyKernel {
         }
 
         if self.agents.remove(agent_id).is_none() {
-            return Err(PyValueError::new_err(format!("Agent not found: {}", agent_id)));
+            return Err(PyValueError::new_err(format!(
+                "Agent not found: {}",
+                agent_id
+            )));
         }
         Ok(())
     }
@@ -295,20 +303,23 @@ impl PyKernel {
 
         // Check if agent is registered
         if !self.agents.contains_key(agent_id) && agent_id != "system" {
-            return Err(PyValueError::new_err(format!("Agent not found: {}", agent_id)));
+            return Err(PyValueError::new_err(format!(
+                "Agent not found: {}",
+                agent_id
+            )));
         }
 
         // Parse context JSON with proper error handling
         let context_attrs: HashMap<String, serde_json::Value> = serde_json::from_str(context_json)
             .map_err(|e| PyValueError::new_err(format!("Invalid context JSON: {}", e)))?;
-        
+
         // Build policy context
         let agent_config = self.agents.get(agent_id);
         let role = agent_config
             .and_then(|c| c.get("role"))
             .map(|r| r.to_string())
             .unwrap_or_else(|| "default".to_string());
-        
+
         let policy_context = PolicyContext {
             agent_id: agent_id.to_string(),
             role,
@@ -324,21 +335,32 @@ impl PyKernel {
             .to_string();
 
         // Evaluate using real policy engine
-        let decision = self.policy_engine.evaluate(&resource, action, &policy_context);
-        
+        let decision = self
+            .policy_engine
+            .evaluate(&resource, action, &policy_context);
+
         // Log to audit trail
         let audit_decision = if decision.allowed {
             AuditDecision::Allowed
         } else {
             AuditDecision::Denied
         };
-        self.audit_logger.log(agent_id, action, &resource, audit_decision);
+        self.audit_logger
+            .log(agent_id, action, &resource, audit_decision);
 
         let mut result = HashMap::new();
-        result.insert("effect".to_string(), if decision.allowed { "allow" } else { "deny" }.to_string());
-        result.insert("policy_id".to_string(), decision.matched_rule.unwrap_or_else(|| "default".to_string()));
+        result.insert(
+            "effect".to_string(),
+            if decision.allowed { "allow" } else { "deny" }.to_string(),
+        );
+        result.insert(
+            "policy_id".to_string(),
+            decision
+                .matched_rule
+                .unwrap_or_else(|| "default".to_string()),
+        );
         result.insert("reason".to_string(), decision.reason);
-        
+
         Ok(result)
     }
 
@@ -357,29 +379,35 @@ impl PyKernel {
         }
 
         if !self.agents.contains_key(agent_id) {
-            return Err(PyValueError::new_err(format!("Agent not found: {}", agent_id)));
+            return Err(PyValueError::new_err(format!(
+                "Agent not found: {}",
+                agent_id
+            )));
         }
 
         let request_id = uuid::Uuid::now_v7().to_string();
-        
+
         // Log tool execution to audit trail
         self.audit_logger.log(
-            agent_id, 
+            agent_id,
             format!("tool.execute:{}", tool_id),
             action,
-            AuditDecision::Allowed
+            AuditDecision::Allowed,
         );
-        
+
         let mut result = HashMap::new();
         result.insert("request_id".to_string(), request_id);
         result.insert("success".to_string(), "true".to_string());
-        result.insert("result".to_string(), format!(
-            "{{\"tool\": \"{}\", \"action\": \"{}\", \"params\": {}, \"timeout_ms\": {}}}",
-            tool_id, action, params_json, timeout_ms
-        ));
+        result.insert(
+            "result".to_string(),
+            format!(
+                "{{\"tool\": \"{}\", \"action\": \"{}\", \"params\": {}, \"timeout_ms\": {}}}",
+                tool_id, action, params_json, timeout_ms
+            ),
+        );
         result.insert("execution_time_ms".to_string(), "0.1".to_string());
         result.insert("memory_used_bytes".to_string(), "0".to_string());
-        
+
         Ok(result)
     }
 
@@ -404,14 +432,17 @@ impl PyKernel {
             return Err(PyRuntimeError::new_err("Kernel not initialized"));
         }
 
-        self.skill_registry.insert(skill_id.to_string(), SkillInfo {
-            id: skill_id.to_string(),
-            name: name.to_string(),
-            description: description.to_string(),
-            version: version.to_string(),
-            enabled: true,
-        });
-        
+        self.skill_registry.insert(
+            skill_id.to_string(),
+            SkillInfo {
+                id: skill_id.to_string(),
+                name: name.to_string(),
+                description: description.to_string(),
+                version: version.to_string(),
+                enabled: true,
+            },
+        );
+
         Ok(())
     }
 
@@ -422,9 +453,12 @@ impl PyKernel {
         }
 
         if self.skill_registry.remove(skill_id).is_none() {
-            return Err(PyValueError::new_err(format!("Skill not found: {}", skill_id)));
+            return Err(PyValueError::new_err(format!(
+                "Skill not found: {}",
+                skill_id
+            )));
         }
-        
+
         Ok(())
     }
 
@@ -439,7 +473,10 @@ impl PyKernel {
                 skill.enabled = enabled;
                 Ok(())
             }
-            None => Err(PyValueError::new_err(format!("Skill not found: {}", skill_id))),
+            None => Err(PyValueError::new_err(format!(
+                "Skill not found: {}",
+                skill_id
+            ))),
         }
     }
 
@@ -465,7 +502,7 @@ impl PyKernel {
         if !self.initialized {
             return Err(PyRuntimeError::new_err("Kernel not initialized"));
         }
-        
+
         // Parse filters - use defaults if parsing fails (non-critical)
         let filters: HashMap<String, serde_json::Value> = match serde_json::from_str(filters_json) {
             Ok(f) => f,
@@ -474,14 +511,11 @@ impl PyKernel {
                 HashMap::new()
             }
         };
-        
-        let limit = filters.get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(100) as usize;
-        
-        let agent_filter = filters.get("agent_id")
-            .and_then(|v| v.as_str());
-        
+
+        let limit = filters.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
+
+        let agent_filter = filters.get("agent_id").and_then(|v| v.as_str());
+
         // Get audit entries from logger
         let mut results = Vec::new();
         for entry in self.audit_logger.entries() {
@@ -490,7 +524,7 @@ impl PyKernel {
                     continue;
                 }
             }
-            
+
             let mut entry_map = HashMap::new();
             entry_map.insert("entry_id".to_string(), entry.id.to_string());
             entry_map.insert("timestamp".to_string(), entry.timestamp.to_string());
@@ -499,14 +533,14 @@ impl PyKernel {
             entry_map.insert("resource".to_string(), entry.resource.clone());
             entry_map.insert("decision".to_string(), entry.decision.to_string());
             entry_map.insert("hash".to_string(), entry.hash.clone());
-            
+
             results.push(entry_map);
-            
+
             if results.len() >= limit {
                 break;
             }
         }
-        
+
         Ok(results)
     }
 
@@ -515,9 +549,11 @@ impl PyKernel {
         if !self.initialized {
             return Err(PyRuntimeError::new_err("Kernel not initialized"));
         }
-        
-        let id: u64 = entry_id.parse().map_err(|_| PyValueError::new_err("Invalid entry ID"))?;
-        
+
+        let id: u64 = entry_id
+            .parse()
+            .map_err(|_| PyValueError::new_err("Invalid entry ID"))?;
+
         if let Some(entry) = self.audit_logger.get_entry(id) {
             let mut entry_map = HashMap::new();
             entry_map.insert("entry_id".to_string(), entry.id.to_string());
@@ -530,7 +566,7 @@ impl PyKernel {
             entry_map.insert("prev_hash".to_string(), entry.prev_hash.clone());
             return Ok(Some(entry_map));
         }
-        
+
         Ok(None)
     }
 
@@ -542,18 +578,23 @@ impl PyKernel {
 
         let entry_data: HashMap<String, serde_json::Value> = serde_json::from_str(entry_json)
             .map_err(|e| PyValueError::new_err(format!("Invalid JSON: {}", e)))?;
-        
-        let agent_id = entry_data.get("agent_id")
+
+        let agent_id = entry_data
+            .get("agent_id")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        let action = entry_data.get("action")
+        let action = entry_data
+            .get("action")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        let resource = entry_data.get("resource")
+        let resource = entry_data
+            .get("resource")
             .and_then(|v| v.as_str())
             .unwrap_or("*");
-        
-        let entry = self.audit_logger.log(agent_id, action, resource, AuditDecision::Allowed);
+
+        let entry = self
+            .audit_logger
+            .log(agent_id, action, resource, AuditDecision::Allowed);
         Ok(entry.id.to_string())
     }
 
@@ -562,7 +603,7 @@ impl PyKernel {
         if !self.initialized {
             return Err(PyRuntimeError::new_err("Kernel not initialized"));
         }
-        
+
         Ok(self.audit_logger.verify_chain().is_ok())
     }
 
@@ -571,7 +612,7 @@ impl PyKernel {
         if !self.initialized {
             return Err(PyRuntimeError::new_err("Kernel not initialized"));
         }
-        
+
         Ok(self.audit_logger.entries().last().map(|e| e.hash.clone()))
     }
 
@@ -580,10 +621,10 @@ impl PyKernel {
         if !self.initialized {
             return Err(PyRuntimeError::new_err("Kernel not initialized"));
         }
-        
+
         let rule: PolicyRule = serde_json::from_str(rule_json)
             .map_err(|e| PyValueError::new_err(format!("Invalid rule JSON: {}", e)))?;
-        
+
         self.policy_engine.add_rule(rule);
         Ok(())
     }
@@ -607,11 +648,11 @@ fn _vak_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPolicyDecision>()?;
     m.add_class::<PyToolResponse>()?;
     m.add_class::<PyAuditEntry>()?;
-    
+
     // Add version info
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add("__rust_version__", "1.75+")?;
-    
+
     Ok(())
 }
 
@@ -630,7 +671,7 @@ mod tests {
             "test-policy".to_string(),
             "Test reason".to_string(),
         );
-        
+
         assert!(decision.is_allowed());
         assert!(!decision.is_denied());
     }
@@ -644,10 +685,12 @@ mod tests {
     #[test]
     fn test_py_kernel_agent_registration() {
         let mut kernel = PyKernel::default().unwrap();
-        
-        kernel.register_agent("test-agent", "Test Agent", "{}").unwrap();
+
+        kernel
+            .register_agent("test-agent", "Test Agent", "{}")
+            .unwrap();
         assert!(kernel.agents.contains_key("test-agent"));
-        
+
         kernel.unregister_agent("test-agent").unwrap();
         assert!(!kernel.agents.contains_key("test-agent"));
     }

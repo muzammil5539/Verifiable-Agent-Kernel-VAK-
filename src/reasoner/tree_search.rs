@@ -210,7 +210,10 @@ impl SearchNode {
 
     /// Check if this node has unexplored children
     pub fn is_fully_expanded(&self) -> bool {
-        matches!(self.state, NodeState::Expanded | NodeState::Terminal | NodeState::DeadEnd)
+        matches!(
+            self.state,
+            NodeState::Expanded | NodeState::Terminal | NodeState::DeadEnd
+        )
     }
 
     /// Check if this node is a leaf (no children)
@@ -253,10 +256,10 @@ impl SearchTree {
     pub fn new(context: impl Into<String>) -> Self {
         let root_id = NodeId(0);
         let root_node = SearchNode::root(root_id, context);
-        
+
         let mut nodes = HashMap::new();
         nodes.insert(root_id, root_node);
-        
+
         Self {
             nodes,
             root: root_id,
@@ -285,20 +288,26 @@ impl SearchTree {
     }
 
     /// Add a child node to a parent
-    pub fn add_child(&mut self, parent_id: NodeId, step: ReasoningStep) -> TreeSearchResult<NodeId> {
-        let parent = self.nodes.get(&parent_id)
+    pub fn add_child(
+        &mut self,
+        parent_id: NodeId,
+        step: ReasoningStep,
+    ) -> TreeSearchResult<NodeId> {
+        let parent = self
+            .nodes
+            .get(&parent_id)
             .ok_or(TreeSearchError::InvalidNode(parent_id))?;
         let depth = parent.depth + 1;
-        
+
         let child_id = self.next_node_id();
         let child = SearchNode::child(child_id, parent_id, step, depth);
-        
+
         self.nodes.insert(child_id, child);
-        
+
         if let Some(parent) = self.nodes.get_mut(&parent_id) {
             parent.children.push(child_id);
         }
-        
+
         Ok(child_id)
     }
 
@@ -306,12 +315,12 @@ impl SearchTree {
     pub fn path_to(&self, node_id: NodeId) -> Vec<NodeId> {
         let mut path = Vec::new();
         let mut current = Some(node_id);
-        
+
         while let Some(id) = current {
             path.push(id);
             current = self.nodes.get(&id).and_then(|n| n.parent);
         }
-        
+
         path.reverse();
         path
     }
@@ -336,7 +345,8 @@ impl SearchTree {
 
     /// Get all leaf nodes
     pub fn leaves(&self) -> Vec<NodeId> {
-        self.nodes.values()
+        self.nodes
+            .values()
             .filter(|n| n.is_leaf())
             .map(|n| n.id)
             .collect()
@@ -344,10 +354,12 @@ impl SearchTree {
 
     /// Get the best leaf (highest average reward)
     pub fn best_leaf(&self) -> Option<NodeId> {
-        self.nodes.values()
+        self.nodes
+            .values()
             .filter(|n| n.is_leaf() && n.stats.visits > 0)
             .max_by(|a, b| {
-                a.stats.average_reward()
+                a.stats
+                    .average_reward()
                     .partial_cmp(&b.stats.average_reward())
                     .unwrap_or(std::cmp::Ordering::Equal)
             })
@@ -568,19 +580,20 @@ impl ThoughtGenerator for SimpleThoughtGenerator {
     ) -> TreeSearchResult<Vec<ReasoningStep>> {
         let next_step_number = previous_steps.len() + 1;
         let mut candidates = Vec::with_capacity(num_candidates);
-        
+
         for i in 0..num_candidates {
-            let thought = self.thought_template
+            let thought = self
+                .thought_template
                 .replace("{step_number}", &next_step_number.to_string())
                 .replace("{context}", context)
                 .replace("{variant}", &i.to_string());
-            
+
             let step = ReasoningStep::new(next_step_number, thought)
                 .with_action(format!("Candidate action {}", i));
-            
+
             candidates.push(step);
         }
-        
+
         Ok(candidates)
     }
 
@@ -685,12 +698,11 @@ impl<P: ProcessRewardModel, G: ThoughtGenerator> TreeOfThoughts<P, G> {
 
         // Extract the best path
         let tree_read = tree.read().await;
-        let best_leaf = tree_read.best_leaf()
-            .ok_or(TreeSearchError::NoValidPath)?;
-        
+        let best_leaf = tree_read.best_leaf().ok_or(TreeSearchError::NoValidPath)?;
+
         let path = tree_read.path_to(best_leaf);
         let best_path = tree_read.steps_along_path(&path);
-        
+
         // Collect scores
         let mut path_scores = Vec::new();
         let mut best_score: f64 = 0.0;
@@ -705,11 +717,13 @@ impl<P: ProcessRewardModel, G: ThoughtGenerator> TreeOfThoughts<P, G> {
 
         // Get alternative paths
         let mut alternative_paths = Vec::new();
-        let leaves: Vec<_> = tree_read.leaves().into_iter()
+        let leaves: Vec<_> = tree_read
+            .leaves()
+            .into_iter()
             .filter(|&id| id != best_leaf)
             .take(3)
             .collect();
-        
+
         for leaf_id in leaves {
             if let Some(node) = tree_read.get(leaf_id) {
                 let alt_path = tree_read.path_to(leaf_id);
@@ -737,7 +751,8 @@ impl<P: ProcessRewardModel, G: ThoughtGenerator> TreeOfThoughts<P, G> {
         let mut current = tree_read.root();
 
         loop {
-            let node = tree_read.get(current)
+            let node = tree_read
+                .get(current)
                 .ok_or(TreeSearchError::InvalidNode(current))?;
 
             // If this node is a leaf or not fully expanded, select it
@@ -747,7 +762,9 @@ impl<P: ProcessRewardModel, G: ThoughtGenerator> TreeOfThoughts<P, G> {
 
             // Otherwise, select the best child using UCT
             let parent_visits = node.stats.visits;
-            let best_child = node.children.iter()
+            let best_child = node
+                .children
+                .iter()
                 .filter_map(|&id| tree_read.get(id))
                 .max_by(|a, b| {
                     a.uct_value(parent_visits, self.config.exploration_constant)
@@ -800,7 +817,8 @@ impl<P: ProcessRewardModel, G: ThoughtGenerator> TreeOfThoughts<P, G> {
         }
 
         // Generate candidate thoughts
-        let candidates = self.generator
+        let candidates = self
+            .generator
             .generate_thoughts(context, &previous_steps, self.config.expansion_breadth)
             .await?;
 
@@ -816,13 +834,13 @@ impl<P: ProcessRewardModel, G: ThoughtGenerator> TreeOfThoughts<P, G> {
 
             // Score the new step
             let score = self.prm.score_step(&step, context).await?;
-            
+
             // Update the child with the score
             {
                 let mut tree_write = tree.write().await;
                 if let Some(child) = tree_write.get_mut(child_id) {
                     child.score = Some(score.clone());
-                    
+
                     // Check if score is below threshold
                     if score.score < self.config.score_threshold {
                         child.state = NodeState::DeadEnd;
@@ -854,7 +872,8 @@ impl<P: ProcessRewardModel, G: ThoughtGenerator> TreeOfThoughts<P, G> {
         _max_steps: usize,
     ) -> TreeSearchResult<f64> {
         let tree_read = tree.read().await;
-        let node = tree_read.get(node_id)
+        let node = tree_read
+            .get(node_id)
             .ok_or(TreeSearchError::InvalidNode(node_id))?;
 
         // If we have a score, use it as the reward
@@ -998,7 +1017,7 @@ mod tests {
     fn test_search_node_root() {
         let id = NodeId(0);
         let node = SearchNode::root(id, "Test context");
-        
+
         assert_eq!(node.id, id);
         assert!(node.parent.is_none());
         assert!(node.children.is_empty());
@@ -1012,7 +1031,7 @@ mod tests {
         let child_id = NodeId(1);
         let step = ReasoningStep::new(1, "Child thought");
         let node = SearchNode::child(child_id, parent_id, step, 1);
-        
+
         assert_eq!(node.id, child_id);
         assert_eq!(node.parent, Some(parent_id));
         assert_eq!(node.depth, 1);
@@ -1021,10 +1040,10 @@ mod tests {
     #[test]
     fn test_uct_value() {
         let mut node = SearchNode::root(NodeId(0), "Test");
-        
+
         // Unvisited node should have infinite UCT
         assert!(node.uct_value(10, 1.414).is_infinite());
-        
+
         // After visits, UCT should be finite
         node.stats.update(0.7);
         let uct = node.uct_value(10, 1.414);
@@ -1035,7 +1054,7 @@ mod tests {
     #[test]
     fn test_search_tree_creation() {
         let tree = SearchTree::new("Test problem");
-        
+
         assert_eq!(tree.root(), NodeId(0));
         assert_eq!(tree.node_count(), 1);
         assert_eq!(tree.max_depth(), 0);
@@ -1045,13 +1064,13 @@ mod tests {
     fn test_search_tree_add_child() {
         let mut tree = SearchTree::new("Test problem");
         let step = ReasoningStep::new(1, "First step");
-        
+
         let child_id = tree.add_child(NodeId(0), step).unwrap();
-        
+
         assert_eq!(child_id, NodeId(1));
         assert_eq!(tree.node_count(), 2);
         assert_eq!(tree.max_depth(), 1);
-        
+
         let root = tree.get(NodeId(0)).unwrap();
         assert!(root.children.contains(&child_id));
     }
@@ -1059,13 +1078,13 @@ mod tests {
     #[test]
     fn test_search_tree_path() {
         let mut tree = SearchTree::new("Test problem");
-        
+
         let step1 = ReasoningStep::new(1, "Step 1");
         let child1 = tree.add_child(NodeId(0), step1).unwrap();
-        
+
         let step2 = ReasoningStep::new(2, "Step 2");
         let child2 = tree.add_child(child1, step2).unwrap();
-        
+
         let path = tree.path_to(child2);
         assert_eq!(path, vec![NodeId(0), child1, child2]);
     }
@@ -1073,7 +1092,7 @@ mod tests {
     #[test]
     fn test_tree_search_config_default() {
         let config = TreeSearchConfig::default();
-        
+
         assert_eq!(config.max_iterations, 100);
         assert_eq!(config.max_depth, 10);
         assert_eq!(config.expansion_breadth, 3);
@@ -1087,7 +1106,7 @@ mod tests {
             .with_max_depth(5)
             .with_expansion_breadth(5)
             .with_timeout(5000);
-        
+
         assert_eq!(config.max_iterations, 50);
         assert_eq!(config.max_depth, 5);
         assert_eq!(config.expansion_breadth, 5);
@@ -1113,7 +1132,7 @@ mod tests {
             early_terminated: false,
             alternative_paths: Vec::new(),
         };
-        
+
         assert!((result.average_score() - 0.85).abs() < 1e-10);
         assert!(result.is_high_quality(0.8));
         assert!(!result.is_high_quality(0.95));
@@ -1123,12 +1142,12 @@ mod tests {
     #[tokio::test]
     async fn test_simple_thought_generator() {
         let generator = SimpleThoughtGenerator::default();
-        
+
         let thoughts = generator
             .generate_thoughts("Test problem", &[], 3)
             .await
             .unwrap();
-        
+
         assert_eq!(thoughts.len(), 3);
         assert_eq!(thoughts[0].step_number, 1);
     }
@@ -1136,14 +1155,14 @@ mod tests {
     #[tokio::test]
     async fn test_simple_thought_generator_terminal() {
         let generator = SimpleThoughtGenerator::default();
-        
+
         // Not terminal with few steps
         let result = generator
             .is_terminal("Test", &[ReasoningStep::new(1, "Step 1")])
             .await
             .unwrap();
         assert!(result.is_none());
-        
+
         // Terminal with 10+ steps
         let many_steps: Vec<_> = (1..=10)
             .map(|i| ReasoningStep::new(i, format!("Step {}", i)))
@@ -1157,7 +1176,7 @@ mod tests {
         let prm = Arc::new(MockPrm::default());
         let generator = Arc::new(SimpleThoughtGenerator::default());
         let config = TreeSearchConfig::default();
-        
+
         let tot = TreeOfThoughts::new(prm, generator, config.clone());
         assert_eq!(tot.config().max_iterations, config.max_iterations);
     }
@@ -1165,18 +1184,18 @@ mod tests {
     #[tokio::test]
     async fn test_tree_of_thoughts_search() {
         let prm = Arc::new(MockPrm::new(0.8, 0.9));
-        
+
         let generator = Arc::new(SimpleThoughtGenerator::default());
-        
+
         let config = TreeSearchConfig::new()
             .with_max_iterations(10)
             .with_max_depth(3)
             .with_expansion_breadth(2);
-        
+
         let tot = TreeOfThoughts::new(prm, generator, config);
-        
+
         let result = tot.search("What is 2 + 2?", 5).await.unwrap();
-        
+
         assert!(result.nodes_explored > 1);
         assert!(result.iterations <= 10);
         assert!(result.best_score > 0.0);
@@ -1186,12 +1205,12 @@ mod tests {
     async fn test_tree_of_thoughts_builder() {
         let prm = Arc::new(MockPrm::default());
         let generator = Arc::new(SimpleThoughtGenerator::default());
-        
+
         let tot = TreeOfThoughtsBuilder::new(prm)
             .with_max_iterations(50)
             .with_max_depth(5)
             .build(generator);
-        
+
         assert_eq!(tot.config().max_iterations, 50);
         assert_eq!(tot.config().max_depth, 5);
     }
@@ -1199,18 +1218,18 @@ mod tests {
     #[test]
     fn test_search_tree_leaves() {
         let mut tree = SearchTree::new("Test");
-        
+
         // Root is the only leaf initially
         let leaves = tree.leaves();
         assert_eq!(leaves.len(), 1);
-        
+
         // Add children
         let step1 = ReasoningStep::new(1, "Step 1");
         let child1 = tree.add_child(NodeId(0), step1).unwrap();
-        
+
         let step2 = ReasoningStep::new(2, "Step 2");
         let _child2 = tree.add_child(NodeId(0), step2).unwrap();
-        
+
         // Now we have 2 leaves (the children), root is not a leaf
         let leaves = tree.leaves();
         assert_eq!(leaves.len(), 2);
@@ -1223,21 +1242,21 @@ mod tests {
         let prm = Arc::new(MockPrm::default());
         let generator = Arc::new(SimpleThoughtGenerator::default());
         let config = TreeSearchConfig::default();
-        
+
         let tot = TreeOfThoughts::new(prm, generator, config);
-        
+
         // Create a simple tree
         let tree = Arc::new(RwLock::new(SearchTree::new("Test")));
-        
+
         {
             let mut tree_write = tree.write().await;
             let step = ReasoningStep::new(1, "Step 1");
             tree_write.add_child(NodeId(0), step).unwrap();
         }
-        
+
         // Backpropagate a reward
         tot.backpropagate(&tree, NodeId(1), 0.8).await.unwrap();
-        
+
         // Check that stats were updated
         let tree_read = tree.read().await;
         let root = tree_read.get(NodeId(0)).unwrap();

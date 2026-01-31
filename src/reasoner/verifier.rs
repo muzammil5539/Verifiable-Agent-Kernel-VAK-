@@ -637,11 +637,10 @@ impl ConstraintFile {
 
     /// Load from a YAML file
     pub fn from_file(path: &Path) -> Result<Self, VerificationError> {
-        let content =
-            std::fs::read_to_string(path).map_err(|e| VerificationError::IoError {
-                path: path.display().to_string(),
-                message: e.to_string(),
-            })?;
+        let content = std::fs::read_to_string(path).map_err(|e| VerificationError::IoError {
+            path: path.display().to_string(),
+            message: e.to_string(),
+        })?;
 
         Self::from_yaml(&content, path.display().to_string())
     }
@@ -764,11 +763,13 @@ impl ConstraintVerifier {
             .get(field)
             .ok_or_else(|| VerificationError::MissingField(field.to_string()))?;
 
-        let num_value = value.as_float().ok_or_else(|| VerificationError::TypeMismatch {
-            field: field.to_string(),
-            expected: "numeric".to_string(),
-            actual: value.type_name().to_string(),
-        })?;
+        let num_value = value
+            .as_float()
+            .ok_or_else(|| VerificationError::TypeMismatch {
+                field: field.to_string(),
+                expected: "numeric".to_string(),
+                actual: value.type_name().to_string(),
+            })?;
 
         let elapsed_us = start_time.elapsed().as_micros() as u64;
 
@@ -778,7 +779,11 @@ impl ConstraintVerifier {
             let mut values = HashMap::new();
             values.insert(field.to_string(), value.clone());
             let ce = Counterexample::new(values, violation_msg(num_value));
-            Ok(VerificationResult::violated(constraint_name, ce, elapsed_us))
+            Ok(VerificationResult::violated(
+                constraint_name,
+                ce,
+                elapsed_us,
+            ))
         }
     }
 
@@ -812,7 +817,11 @@ impl ConstraintVerifier {
                 format!("expected {} != {}, but it equals", field, expected)
             };
             let ce = Counterexample::new(values, explanation);
-            Ok(VerificationResult::violated(constraint_name, ce, elapsed_us))
+            Ok(VerificationResult::violated(
+                constraint_name,
+                ce,
+                elapsed_us,
+            ))
         }
     }
 
@@ -856,7 +865,11 @@ impl ConstraintVerifier {
                 )
             };
             let ce = Counterexample::new(values, explanation);
-            Ok(VerificationResult::violated(constraint_name, ce, elapsed_us))
+            Ok(VerificationResult::violated(
+                constraint_name,
+                ce,
+                elapsed_us,
+            ))
         }
     }
 
@@ -877,9 +890,15 @@ impl ConstraintVerifier {
             if self.check_forbidden(res, resources) {
                 let mut values = HashMap::new();
                 values.insert("resource".to_string(), res.into());
-                let ce =
-                    Counterexample::new(values, format!("resource '{}' matches forbidden pattern", res));
-                return Ok(VerificationResult::violated(constraint_name, ce, elapsed_us));
+                let ce = Counterexample::new(
+                    values,
+                    format!("resource '{}' matches forbidden pattern", res),
+                );
+                return Ok(VerificationResult::violated(
+                    constraint_name,
+                    ce,
+                    elapsed_us,
+                ));
             }
         }
 
@@ -899,11 +918,13 @@ impl ConstraintVerifier {
             .get(field)
             .ok_or_else(|| VerificationError::MissingField(field.to_string()))?;
 
-        let str_value = value.as_string().ok_or_else(|| VerificationError::TypeMismatch {
-            field: field.to_string(),
-            expected: "string".to_string(),
-            actual: value.type_name().to_string(),
-        })?;
+        let str_value = value
+            .as_string()
+            .ok_or_else(|| VerificationError::TypeMismatch {
+                field: field.to_string(),
+                expected: "string".to_string(),
+                actual: value.type_name().to_string(),
+            })?;
 
         let elapsed_us = start_time.elapsed().as_micros() as u64;
 
@@ -916,7 +937,11 @@ impl ConstraintVerifier {
                 values,
                 format!("'{}' does not contain '{}'", str_value, substring),
             );
-            Ok(VerificationResult::violated(constraint_name, ce, elapsed_us))
+            Ok(VerificationResult::violated(
+                constraint_name,
+                ce,
+                elapsed_us,
+            ))
         }
     }
 
@@ -934,18 +959,20 @@ impl ConstraintVerifier {
             .get(field)
             .ok_or_else(|| VerificationError::MissingField(field.to_string()))?;
 
-        let num_value = value.as_float().ok_or_else(|| VerificationError::TypeMismatch {
-            field: field.to_string(),
-            expected: "numeric".to_string(),
-            actual: value.type_name().to_string(),
-        })?;
+        let num_value = value
+            .as_float()
+            .ok_or_else(|| VerificationError::TypeMismatch {
+                field: field.to_string(),
+                expected: "numeric".to_string(),
+                actual: value.type_name().to_string(),
+            })?;
 
-        let min_val = min
-            .as_float()
-            .ok_or_else(|| VerificationError::InvalidConstraint("min must be numeric".to_string()))?;
-        let max_val = max
-            .as_float()
-            .ok_or_else(|| VerificationError::InvalidConstraint("max must be numeric".to_string()))?;
+        let min_val = min.as_float().ok_or_else(|| {
+            VerificationError::InvalidConstraint("min must be numeric".to_string())
+        })?;
+        let max_val = max.as_float().ok_or_else(|| {
+            VerificationError::InvalidConstraint("max must be numeric".to_string())
+        })?;
 
         let elapsed_us = start_time.elapsed().as_micros() as u64;
 
@@ -961,7 +988,11 @@ impl ConstraintVerifier {
                     field, num_value, min_val, max_val
                 ),
             );
-            Ok(VerificationResult::violated(constraint_name, ce, elapsed_us))
+            Ok(VerificationResult::violated(
+                constraint_name,
+                ce,
+                elapsed_us,
+            ))
         }
     }
 
@@ -978,11 +1009,13 @@ impl ConstraintVerifier {
             .get(field)
             .ok_or_else(|| VerificationError::MissingField(field.to_string()))?;
 
-        let str_value = value.as_string().ok_or_else(|| VerificationError::TypeMismatch {
-            field: field.to_string(),
-            expected: "string".to_string(),
-            actual: value.type_name().to_string(),
-        })?;
+        let str_value = value
+            .as_string()
+            .ok_or_else(|| VerificationError::TypeMismatch {
+                field: field.to_string(),
+                expected: "string".to_string(),
+                actual: value.type_name().to_string(),
+            })?;
 
         let regex = Regex::new(pattern)
             .map_err(|e| VerificationError::InvalidRegex(format!("{}: {}", pattern, e)))?;
@@ -998,7 +1031,11 @@ impl ConstraintVerifier {
                 values,
                 format!("'{}' does not match pattern '{}'", str_value, pattern),
             );
-            Ok(VerificationResult::violated(constraint_name, ce, elapsed_us))
+            Ok(VerificationResult::violated(
+                constraint_name,
+                ce,
+                elapsed_us,
+            ))
         }
     }
 }
@@ -1076,7 +1113,12 @@ impl FormalVerifier for ConstraintVerifier {
                     context,
                     &constraint.name,
                     |v| v >= bound,
-                    |v| format!("{} = {} is not greater than or equal to {}", field, v, bound),
+                    |v| {
+                        format!(
+                            "{} = {} is not greater than or equal to {}",
+                            field, v, bound
+                        )
+                    },
                     start_time,
                 )
             }
@@ -1140,14 +1182,24 @@ impl FormalVerifier for ConstraintVerifier {
                 if result.is_satisfied() {
                     let ce = Counterexample::new(
                         HashMap::new(),
-                        format!("Negation failed: inner constraint '{}' was satisfied", inner.name),
+                        format!(
+                            "Negation failed: inner constraint '{}' was satisfied",
+                            inner.name
+                        ),
                     );
-                    Ok(VerificationResult::violated(&constraint.name, ce, elapsed_us))
+                    Ok(VerificationResult::violated(
+                        &constraint.name,
+                        ce,
+                        elapsed_us,
+                    ))
                 } else {
                     Ok(VerificationResult::satisfied(&constraint.name, elapsed_us))
                 }
             }
-            ConstraintKind::Implies { condition, consequence } => {
+            ConstraintKind::Implies {
+                condition,
+                consequence,
+            } => {
                 let cond_result = self.verify(condition, context)?;
                 if cond_result.is_violated() {
                     // If condition is false, implication is satisfied
@@ -1191,9 +1243,7 @@ impl FormalVerifier for ConstraintVerifier {
             // Support glob-style patterns
             if pattern.contains('*') {
                 // Convert glob to regex
-                let regex_pattern = pattern
-                    .replace('.', "\\.")
-                    .replace('*', ".*");
+                let regex_pattern = pattern.replace('.', "\\.").replace('*', ".*");
                 if let Ok(re) = Regex::new(&format!("^{}$", regex_pattern)) {
                     if re.is_match(resource) {
                         return true;
@@ -1238,7 +1288,10 @@ impl FormalVerifier for ConstraintVerifier {
             ConstraintKind::Not { constraint } => {
                 self.validate_constraint(constraint)?;
             }
-            ConstraintKind::Implies { condition, consequence } => {
+            ConstraintKind::Implies {
+                condition,
+                consequence,
+            } => {
                 self.validate_constraint(condition)?;
                 self.validate_constraint(consequence)?;
             }
@@ -1253,7 +1306,7 @@ impl FormalVerifier for ConstraintVerifier {
 // ============================================================================
 
 /// Alias for `ConstraintVerifier` for backward compatibility
-/// 
+///
 /// Note: For Z3-based verification, enable the `z3-solver` feature.
 pub type Z3Verifier = ConstraintVerifier;
 
@@ -1290,7 +1343,10 @@ mod tests {
     #[test]
     fn test_constraint_value_display() {
         assert_eq!(format!("{}", ConstraintValue::Integer(42)), "42");
-        assert_eq!(format!("{}", ConstraintValue::String("test".into())), "\"test\"");
+        assert_eq!(
+            format!("{}", ConstraintValue::String("test".into())),
+            "\"test\""
+        );
         assert_eq!(format!("{}", ConstraintValue::Boolean(true)), "true");
     }
 
@@ -1672,7 +1728,10 @@ mod tests {
         context.insert("value".to_string(), "not a number".into());
 
         let result = verifier.verify(&constraint, &context);
-        assert!(matches!(result, Err(VerificationError::TypeMismatch { .. })));
+        assert!(matches!(
+            result,
+            Err(VerificationError::TypeMismatch { .. })
+        ));
     }
 
     #[test]
@@ -1744,7 +1803,10 @@ mod tests {
         assert!(verifier.check_forbidden("config.env", &["*.env".to_string()]));
 
         // No match
-        assert!(!verifier.check_forbidden("config.json", &["*.env".to_string(), "secrets/*".to_string()]));
+        assert!(!verifier.check_forbidden(
+            "config.json",
+            &["*.env".to_string(), "secrets/*".to_string()]
+        ));
 
         // Directory prefix match
         assert!(verifier.check_forbidden("credentials/db", &["credentials".to_string()]));
@@ -1897,18 +1959,30 @@ constraints:
             version: "1.0".to_string(),
             description: None,
             constraints: vec![
-                Constraint::new("low", ConstraintKind::Equals {
-                    field: "a".to_string(),
-                    value: 1.into(),
-                }).with_priority(10),
-                Constraint::new("high", ConstraintKind::Equals {
-                    field: "b".to_string(),
-                    value: 2.into(),
-                }).with_priority(100),
-                Constraint::new("disabled", ConstraintKind::Equals {
-                    field: "c".to_string(),
-                    value: 3.into(),
-                }).with_enabled(false),
+                Constraint::new(
+                    "low",
+                    ConstraintKind::Equals {
+                        field: "a".to_string(),
+                        value: 1.into(),
+                    },
+                )
+                .with_priority(10),
+                Constraint::new(
+                    "high",
+                    ConstraintKind::Equals {
+                        field: "b".to_string(),
+                        value: 2.into(),
+                    },
+                )
+                .with_priority(100),
+                Constraint::new(
+                    "disabled",
+                    ConstraintKind::Equals {
+                        field: "c".to_string(),
+                        value: 3.into(),
+                    },
+                )
+                .with_enabled(false),
             ],
         };
 

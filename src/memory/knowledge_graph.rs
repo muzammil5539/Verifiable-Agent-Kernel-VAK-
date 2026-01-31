@@ -73,9 +73,7 @@ pub enum KnowledgeGraphError {
         reason: String,
     },
     /// Cycle detected when cycles are not allowed
-    CycleDetected {
-        entities: Vec<EntityId>,
-    },
+    CycleDetected { entities: Vec<EntityId> },
     /// Serialization error
     SerializationError(String),
     /// Query error
@@ -334,7 +332,11 @@ impl Entity {
     }
 
     /// Add a property to the entity
-    pub fn with_property(mut self, key: impl Into<String>, value: impl Into<PropertyValue>) -> Self {
+    pub fn with_property(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<PropertyValue>,
+    ) -> Self {
         self.properties.insert(key.into(), value.into());
         self.modified_at = Utc::now();
         self.update_hash();
@@ -375,7 +377,7 @@ impl Entity {
         hasher.update(self.id.0.as_bytes());
         hasher.update(self.name.as_bytes());
         hasher.update(self.entity_type.as_bytes());
-        
+
         // Hash properties in sorted order for determinism
         let mut keys: Vec<_> = self.properties.keys().collect();
         keys.sort();
@@ -383,7 +385,7 @@ impl Entity {
             hasher.update(key.as_bytes());
             hasher.update(format!("{}", self.properties[key]).as_bytes());
         }
-        
+
         self.hash = hasher.finalize().into();
     }
 
@@ -393,14 +395,14 @@ impl Entity {
         hasher.update(self.id.0.as_bytes());
         hasher.update(self.name.as_bytes());
         hasher.update(self.entity_type.as_bytes());
-        
+
         let mut keys: Vec<_> = self.properties.keys().collect();
         keys.sort();
         for key in keys {
             hasher.update(key.as_bytes());
             hasher.update(format!("{}", self.properties[key]).as_bytes());
         }
-        
+
         let computed: [u8; 32] = hasher.finalize().into();
         computed == self.hash
     }
@@ -430,7 +432,7 @@ pub enum RelationType {
     Contains,
     /// Is contained by another entity
     ContainedBy,
-    
+
     // Dependency relationships
     /// Depends on another entity
     DependsOn,
@@ -440,7 +442,7 @@ pub enum RelationType {
     Requires,
     /// Is required by another entity
     RequiredBy,
-    
+
     // Association relationships
     /// Related to another entity
     RelatedTo,
@@ -450,7 +452,7 @@ pub enum RelationType {
     References,
     /// Is referenced by another entity
     ReferencedBy,
-    
+
     // Service/System relationships
     /// Hosts a service
     HostsService,
@@ -460,7 +462,7 @@ pub enum RelationType {
     ConnectsTo,
     /// Communicates with another entity
     CommunicatesWith,
-    
+
     // Ownership relationships
     /// Owns another entity
     Owns,
@@ -470,7 +472,7 @@ pub enum RelationType {
     CreatedBy,
     /// Created another entity
     Created,
-    
+
     // Temporal relationships
     /// Precedes another entity/event
     Precedes,
@@ -480,7 +482,7 @@ pub enum RelationType {
     CausedBy,
     /// Causes another event
     Causes,
-    
+
     // Custom relationship type
     Custom(String),
 }
@@ -557,7 +559,11 @@ impl Relationship {
     }
 
     /// Add a property to the relationship
-    pub fn with_property(mut self, key: impl Into<String>, value: impl Into<PropertyValue>) -> Self {
+    pub fn with_property(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<PropertyValue>,
+    ) -> Self {
         self.properties.insert(key.into(), value.into());
         self
     }
@@ -666,7 +672,7 @@ impl KnowledgeGraph {
 
         let entity_id = entity.id;
         let entity_name = entity.name.clone();
-        
+
         let node_index = self.graph.add_node(entity);
         self.entity_index.insert(entity_id, node_index);
         self.name_index.insert(entity_name, entity_id);
@@ -749,11 +755,7 @@ impl KnowledgeGraph {
     }
 
     /// Search entities by property value
-    pub fn search_entities_by_property(
-        &self,
-        key: &str,
-        value: &PropertyValue,
-    ) -> Vec<&Entity> {
+    pub fn search_entities_by_property(&self, key: &str, value: &PropertyValue) -> Vec<&Entity> {
         self.graph
             .node_weights()
             .filter(|e| e.properties.get(key) == Some(value))
@@ -778,25 +780,21 @@ impl KnowledgeGraph {
         &mut self,
         relationship: Relationship,
     ) -> KnowledgeGraphResult<RelationshipId> {
-        let source_idx = self
-            .entity_index
-            .get(&relationship.source)
-            .copied()
-            .ok_or(KnowledgeGraphError::InvalidRelationship {
+        let source_idx = self.entity_index.get(&relationship.source).copied().ok_or(
+            KnowledgeGraphError::InvalidRelationship {
                 source: relationship.source,
                 target: relationship.target,
                 reason: "Source entity not found".to_string(),
-            })?;
+            },
+        )?;
 
-        let target_idx = self
-            .entity_index
-            .get(&relationship.target)
-            .copied()
-            .ok_or(KnowledgeGraphError::InvalidRelationship {
+        let target_idx = self.entity_index.get(&relationship.target).copied().ok_or(
+            KnowledgeGraphError::InvalidRelationship {
                 source: relationship.source,
                 target: relationship.target,
                 reason: "Target entity not found".to_string(),
-            })?;
+            },
+        )?;
 
         // Check for cycles if not allowed
         if !self.config.allow_cycles && source_idx == target_idx {
@@ -960,7 +958,7 @@ impl KnowledgeGraph {
 
         for edge in self.graph.edges_directed(current, Direction::Outgoing) {
             let target = edge.target();
-            
+
             if let Some(target_entity) = self.graph.node_weight(target) {
                 current_path.push(target_entity.id);
 
@@ -1087,17 +1085,17 @@ impl KnowledgeGraph {
         data: KnowledgeGraphExport,
     ) -> KnowledgeGraphResult<Self> {
         let mut kg = Self::new(namespace);
-        
+
         // Import entities
         for entity in data.entities {
             kg.add_entity(entity)?;
         }
-        
+
         // Import relationships
         for relationship in data.relationships {
             kg.add_relationship(relationship)?;
         }
-        
+
         kg.version = data.version;
         Ok(kg)
     }
@@ -1105,17 +1103,17 @@ impl KnowledgeGraph {
     /// Compute a hash of the entire graph for integrity verification
     pub fn compute_hash(&self) -> [u8; 32] {
         let mut hasher = Sha256::new();
-        
+
         hasher.update(self.namespace.as_bytes());
         hasher.update(self.version.to_le_bytes());
-        
+
         // Hash all entity hashes in deterministic order
         let mut entity_hashes: Vec<_> = self.graph.node_weights().map(|e| e.hash).collect();
         entity_hashes.sort();
         for hash in entity_hashes {
             hasher.update(hash);
         }
-        
+
         // Hash relationship info in deterministic order
         let mut rel_data: Vec<_> = self
             .graph
@@ -1126,7 +1124,7 @@ impl KnowledgeGraph {
         for data in rel_data {
             hasher.update(data.as_bytes());
         }
-        
+
         hasher.finalize().into()
     }
 }
@@ -1191,7 +1189,7 @@ mod tests {
     fn test_entity_hash_changes_with_content() {
         let entity1 = Entity::new("test", "Test").with_property("key", "value1");
         let entity2 = Entity::new("test", "Test").with_property("key", "value2");
-        
+
         assert_ne!(entity1.hash, entity2.hash);
     }
 
@@ -1215,9 +1213,9 @@ mod tests {
     fn test_add_entity() {
         let mut kg = KnowledgeGraph::new("test");
         let entity = Entity::new("server1", "Server");
-        
+
         let id = kg.add_entity(entity).unwrap();
-        
+
         assert_eq!(kg.entity_count(), 1);
         assert!(kg.get_entity(id).is_some());
     }
@@ -1225,20 +1223,23 @@ mod tests {
     #[test]
     fn test_add_duplicate_entity_name() {
         let mut kg = KnowledgeGraph::new("test");
-        
+
         kg.add_entity(Entity::new("server1", "Server")).unwrap();
         let result = kg.add_entity(Entity::new("server1", "Service"));
-        
-        assert!(matches!(result, Err(KnowledgeGraphError::DuplicateEntity(_))));
+
+        assert!(matches!(
+            result,
+            Err(KnowledgeGraphError::DuplicateEntity(_))
+        ));
     }
 
     #[test]
     fn test_get_entity_by_name() {
         let mut kg = KnowledgeGraph::new("test");
         let entity = Entity::new("server1", "Server");
-        
+
         kg.add_entity(entity).unwrap();
-        
+
         let found = kg.get_entity_by_name("server1");
         assert!(found.is_some());
         assert_eq!(found.unwrap().name, "server1");
@@ -1248,10 +1249,10 @@ mod tests {
     fn test_remove_entity() {
         let mut kg = KnowledgeGraph::new("test");
         let entity = Entity::new("server1", "Server");
-        
+
         let id = kg.add_entity(entity).unwrap();
         assert_eq!(kg.entity_count(), 1);
-        
+
         kg.remove_entity(id).unwrap();
         assert_eq!(kg.entity_count(), 0);
     }
@@ -1259,13 +1260,13 @@ mod tests {
     #[test]
     fn test_add_relationship() {
         let mut kg = KnowledgeGraph::new("test");
-        
+
         let server_id = kg.add_entity(Entity::new("server1", "Server")).unwrap();
         let service_id = kg.add_entity(Entity::new("service1", "Service")).unwrap();
-        
+
         let rel = Relationship::new(server_id, service_id, RelationType::HostsService);
         let rel_id = kg.add_relationship(rel).unwrap();
-        
+
         assert_eq!(kg.relationship_count(), 1);
         assert!(kg.get_relationship(rel_id).is_some());
     }
@@ -1273,27 +1274,40 @@ mod tests {
     #[test]
     fn test_invalid_relationship() {
         let mut kg = KnowledgeGraph::new("test");
-        
+
         let server_id = kg.add_entity(Entity::new("server1", "Server")).unwrap();
         let fake_id = EntityId::new();
-        
+
         let rel = Relationship::new(server_id, fake_id, RelationType::HostsService);
         let result = kg.add_relationship(rel);
-        
-        assert!(matches!(result, Err(KnowledgeGraphError::InvalidRelationship { .. })));
+
+        assert!(matches!(
+            result,
+            Err(KnowledgeGraphError::InvalidRelationship { .. })
+        ));
     }
 
     #[test]
     fn test_get_related_entities() {
         let mut kg = KnowledgeGraph::new("test");
-        
+
         let server_id = kg.add_entity(Entity::new("server1", "Server")).unwrap();
         let service1_id = kg.add_entity(Entity::new("service1", "Service")).unwrap();
         let service2_id = kg.add_entity(Entity::new("service2", "Service")).unwrap();
-        
-        kg.add_relationship(Relationship::new(server_id, service1_id, RelationType::HostsService)).unwrap();
-        kg.add_relationship(Relationship::new(server_id, service2_id, RelationType::HostsService)).unwrap();
-        
+
+        kg.add_relationship(Relationship::new(
+            server_id,
+            service1_id,
+            RelationType::HostsService,
+        ))
+        .unwrap();
+        kg.add_relationship(Relationship::new(
+            server_id,
+            service2_id,
+            RelationType::HostsService,
+        ))
+        .unwrap();
+
         let related = kg.get_related(server_id, Some(RelationType::HostsService));
         assert_eq!(related.len(), 2);
     }
@@ -1301,12 +1315,17 @@ mod tests {
     #[test]
     fn test_get_relating_entities() {
         let mut kg = KnowledgeGraph::new("test");
-        
+
         let server_id = kg.add_entity(Entity::new("server1", "Server")).unwrap();
         let service_id = kg.add_entity(Entity::new("service1", "Service")).unwrap();
-        
-        kg.add_relationship(Relationship::new(server_id, service_id, RelationType::HostsService)).unwrap();
-        
+
+        kg.add_relationship(Relationship::new(
+            server_id,
+            service_id,
+            RelationType::HostsService,
+        ))
+        .unwrap();
+
         let relating = kg.get_relating(service_id, Some(RelationType::HostsService));
         assert_eq!(relating.len(), 1);
         assert_eq!(relating[0].0.name, "server1");
@@ -1315,11 +1334,11 @@ mod tests {
     #[test]
     fn test_get_entities_by_type() {
         let mut kg = KnowledgeGraph::new("test");
-        
+
         kg.add_entity(Entity::new("server1", "Server")).unwrap();
         kg.add_entity(Entity::new("server2", "Server")).unwrap();
         kg.add_entity(Entity::new("service1", "Service")).unwrap();
-        
+
         let servers = kg.get_entities_by_type("Server");
         assert_eq!(servers.len(), 2);
     }
@@ -1327,10 +1346,12 @@ mod tests {
     #[test]
     fn test_search_by_property() {
         let mut kg = KnowledgeGraph::new("test");
-        
-        kg.add_entity(Entity::new("server1", "Server").with_property("status", "running")).unwrap();
-        kg.add_entity(Entity::new("server2", "Server").with_property("status", "stopped")).unwrap();
-        
+
+        kg.add_entity(Entity::new("server1", "Server").with_property("status", "running"))
+            .unwrap();
+        kg.add_entity(Entity::new("server2", "Server").with_property("status", "stopped"))
+            .unwrap();
+
         let running = kg.search_entities_by_property("status", &PropertyValue::from("running"));
         assert_eq!(running.len(), 1);
         assert_eq!(running[0].name, "server1");
@@ -1339,11 +1360,11 @@ mod tests {
     #[test]
     fn test_search_by_name() {
         let mut kg = KnowledgeGraph::new("test");
-        
+
         kg.add_entity(Entity::new("web-server", "Server")).unwrap();
         kg.add_entity(Entity::new("db-server", "Server")).unwrap();
         kg.add_entity(Entity::new("worker", "Service")).unwrap();
-        
+
         let servers = kg.search_entities_by_name("server");
         assert_eq!(servers.len(), 2);
     }
@@ -1351,14 +1372,16 @@ mod tests {
     #[test]
     fn test_find_paths() {
         let mut kg = KnowledgeGraph::new("test");
-        
+
         let a_id = kg.add_entity(Entity::new("A", "Node")).unwrap();
         let b_id = kg.add_entity(Entity::new("B", "Node")).unwrap();
         let c_id = kg.add_entity(Entity::new("C", "Node")).unwrap();
-        
-        kg.add_relationship(Relationship::new(a_id, b_id, RelationType::RelatedTo)).unwrap();
-        kg.add_relationship(Relationship::new(b_id, c_id, RelationType::RelatedTo)).unwrap();
-        
+
+        kg.add_relationship(Relationship::new(a_id, b_id, RelationType::RelatedTo))
+            .unwrap();
+        kg.add_relationship(Relationship::new(b_id, c_id, RelationType::RelatedTo))
+            .unwrap();
+
         let paths = kg.find_paths(a_id, c_id, None);
         assert_eq!(paths.len(), 1);
         assert_eq!(paths[0].len(), 3);
@@ -1370,16 +1393,31 @@ mod tests {
     #[test]
     fn test_get_descendants() {
         let mut kg = KnowledgeGraph::new("test");
-        
+
         let root_id = kg.add_entity(Entity::new("root", "Node")).unwrap();
         let child1_id = kg.add_entity(Entity::new("child1", "Node")).unwrap();
         let child2_id = kg.add_entity(Entity::new("child2", "Node")).unwrap();
         let grandchild_id = kg.add_entity(Entity::new("grandchild", "Node")).unwrap();
-        
-        kg.add_relationship(Relationship::new(root_id, child1_id, RelationType::ParentOf)).unwrap();
-        kg.add_relationship(Relationship::new(root_id, child2_id, RelationType::ParentOf)).unwrap();
-        kg.add_relationship(Relationship::new(child1_id, grandchild_id, RelationType::ParentOf)).unwrap();
-        
+
+        kg.add_relationship(Relationship::new(
+            root_id,
+            child1_id,
+            RelationType::ParentOf,
+        ))
+        .unwrap();
+        kg.add_relationship(Relationship::new(
+            root_id,
+            child2_id,
+            RelationType::ParentOf,
+        ))
+        .unwrap();
+        kg.add_relationship(Relationship::new(
+            child1_id,
+            grandchild_id,
+            RelationType::ParentOf,
+        ))
+        .unwrap();
+
         let descendants = kg.get_descendants(root_id, None);
         assert_eq!(descendants.len(), 3);
     }
@@ -1387,14 +1425,20 @@ mod tests {
     #[test]
     fn test_get_ancestors() {
         let mut kg = KnowledgeGraph::new("test");
-        
+
         let root_id = kg.add_entity(Entity::new("root", "Node")).unwrap();
         let child_id = kg.add_entity(Entity::new("child", "Node")).unwrap();
         let grandchild_id = kg.add_entity(Entity::new("grandchild", "Node")).unwrap();
-        
-        kg.add_relationship(Relationship::new(root_id, child_id, RelationType::ParentOf)).unwrap();
-        kg.add_relationship(Relationship::new(child_id, grandchild_id, RelationType::ParentOf)).unwrap();
-        
+
+        kg.add_relationship(Relationship::new(root_id, child_id, RelationType::ParentOf))
+            .unwrap();
+        kg.add_relationship(Relationship::new(
+            child_id,
+            grandchild_id,
+            RelationType::ParentOf,
+        ))
+        .unwrap();
+
         let ancestors = kg.get_ancestors(grandchild_id, None);
         assert_eq!(ancestors.len(), 2);
     }
@@ -1402,14 +1446,21 @@ mod tests {
     #[test]
     fn test_export_import() {
         let mut kg = KnowledgeGraph::new("test");
-        
-        let server_id = kg.add_entity(Entity::new("server1", "Server").with_property("ip", "192.168.1.1")).unwrap();
+
+        let server_id = kg
+            .add_entity(Entity::new("server1", "Server").with_property("ip", "192.168.1.1"))
+            .unwrap();
         let service_id = kg.add_entity(Entity::new("service1", "Service")).unwrap();
-        kg.add_relationship(Relationship::new(server_id, service_id, RelationType::HostsService)).unwrap();
-        
+        kg.add_relationship(Relationship::new(
+            server_id,
+            service_id,
+            RelationType::HostsService,
+        ))
+        .unwrap();
+
         let export = kg.export().unwrap();
         let imported = KnowledgeGraph::import("imported", export).unwrap();
-        
+
         assert_eq!(imported.entity_count(), 2);
         assert_eq!(imported.relationship_count(), 1);
     }
@@ -1417,47 +1468,55 @@ mod tests {
     #[test]
     fn test_compute_hash() {
         let mut kg = KnowledgeGraph::new("test");
-        
+
         kg.add_entity(Entity::new("server1", "Server")).unwrap();
-        
+
         let hash1 = kg.compute_hash();
-        
+
         kg.add_entity(Entity::new("server2", "Server")).unwrap();
-        
+
         let hash2 = kg.compute_hash();
-        
+
         assert_ne!(hash1, hash2);
     }
 
     #[test]
     fn test_relationship_with_properties() {
         let mut kg = KnowledgeGraph::new("test");
-        
+
         let server_id = kg.add_entity(Entity::new("server1", "Server")).unwrap();
         let service_id = kg.add_entity(Entity::new("service1", "Service")).unwrap();
-        
+
         let rel = Relationship::new(server_id, service_id, RelationType::HostsService)
             .with_weight(0.9)
             .with_property("latency", 5i64);
-        
+
         kg.add_relationship(rel).unwrap();
-        
+
         let relationships = kg.get_outgoing_relationships(server_id);
         assert_eq!(relationships.len(), 1);
         assert_eq!(relationships[0].weight, Some(0.9));
-        assert_eq!(relationships[0].properties.get("latency"), Some(&PropertyValue::Integer(5)));
+        assert_eq!(
+            relationships[0].properties.get("latency"),
+            Some(&PropertyValue::Integer(5))
+        );
     }
 
     #[test]
     fn test_remove_entity_removes_relationships() {
         let mut kg = KnowledgeGraph::new("test");
-        
+
         let server_id = kg.add_entity(Entity::new("server1", "Server")).unwrap();
         let service_id = kg.add_entity(Entity::new("service1", "Service")).unwrap();
-        
-        kg.add_relationship(Relationship::new(server_id, service_id, RelationType::HostsService)).unwrap();
+
+        kg.add_relationship(Relationship::new(
+            server_id,
+            service_id,
+            RelationType::HostsService,
+        ))
+        .unwrap();
         assert_eq!(kg.relationship_count(), 1);
-        
+
         kg.remove_entity(server_id).unwrap();
         assert_eq!(kg.relationship_count(), 0);
     }
@@ -1466,7 +1525,10 @@ mod tests {
     fn test_relation_type_display() {
         assert_eq!(format!("{}", RelationType::HostsService), "HOSTS_SERVICE");
         assert_eq!(format!("{}", RelationType::DependsOn), "DEPENDS_ON");
-        assert_eq!(format!("{}", RelationType::Custom("MY_REL".to_string())), "MY_REL");
+        assert_eq!(
+            format!("{}", RelationType::Custom("MY_REL".to_string())),
+            "MY_REL"
+        );
     }
 
     #[test]
@@ -1480,7 +1542,7 @@ mod tests {
     fn test_knowledge_graph_error_display() {
         let err = KnowledgeGraphError::EntityNotFound(EntityId::new());
         assert!(format!("{}", err).contains("Entity not found"));
-        
+
         let err = KnowledgeGraphError::DuplicateEntity("test".to_string());
         assert!(format!("{}", err).contains("Duplicate entity"));
     }
@@ -1489,9 +1551,9 @@ mod tests {
     fn test_entity_modify_property() {
         let mut entity = Entity::new("test", "Test");
         let initial_hash = entity.hash;
-        
+
         entity.set_property("key", "value");
-        
+
         assert_ne!(entity.hash, initial_hash);
         assert!(entity.verify_hash());
     }
@@ -1499,11 +1561,11 @@ mod tests {
     #[test]
     fn test_get_all_entities() {
         let mut kg = KnowledgeGraph::new("test");
-        
+
         kg.add_entity(Entity::new("e1", "Type")).unwrap();
         kg.add_entity(Entity::new("e2", "Type")).unwrap();
         kg.add_entity(Entity::new("e3", "Type")).unwrap();
-        
+
         let all = kg.get_all_entities();
         assert_eq!(all.len(), 3);
     }
@@ -1512,16 +1574,17 @@ mod tests {
     fn test_version_increments() {
         let mut kg = KnowledgeGraph::new("test");
         assert_eq!(kg.version(), 0);
-        
+
         let id = kg.add_entity(Entity::new("e1", "Type")).unwrap();
         assert_eq!(kg.version(), 1);
-        
+
         let id2 = kg.add_entity(Entity::new("e2", "Type")).unwrap();
         assert_eq!(kg.version(), 2);
-        
-        kg.add_relationship(Relationship::new(id, id2, RelationType::RelatedTo)).unwrap();
+
+        kg.add_relationship(Relationship::new(id, id2, RelationType::RelatedTo))
+            .unwrap();
         assert_eq!(kg.version(), 3);
-        
+
         kg.remove_entity(id).unwrap();
         assert_eq!(kg.version(), 4);
     }

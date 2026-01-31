@@ -129,40 +129,48 @@ impl LiteLlmClient {
     }
 
     /// Create a client for a local LiteLLM proxy
-    pub fn litellm_proxy(base_url: impl Into<String>, api_key: impl Into<String>) -> Result<Self, LlmError> {
+    pub fn litellm_proxy(
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+    ) -> Result<Self, LlmError> {
         let config = LlmConfig::new(base_url, api_key);
         Self::new(config)
     }
 
     /// Create a client for local Ollama
     pub fn ollama(model: impl Into<String>) -> Result<Self, LlmError> {
-        let config = LlmConfig::without_auth("http://localhost:11434/v1")
-            .with_default_model(model);
+        let config = LlmConfig::without_auth("http://localhost:11434/v1").with_default_model(model);
         Self::new(config)
     }
 
     /// Get the completion endpoint URL
     fn completion_url(&self) -> String {
-        format!("{}/chat/completions", self.config.api_base_url.trim_end_matches('/'))
+        format!(
+            "{}/chat/completions",
+            self.config.api_base_url.trim_end_matches('/')
+        )
     }
 
     /// Get the embeddings endpoint URL
     fn embeddings_url(&self) -> String {
-        format!("{}/embeddings", self.config.api_base_url.trim_end_matches('/'))
+        format!(
+            "{}/embeddings",
+            self.config.api_base_url.trim_end_matches('/')
+        )
     }
 
     /// Build the authorization headers
     fn auth_headers(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         let mut builder = builder;
-        
+
         if let Some(ref api_key) = self.config.api_key {
             builder = builder.header("Authorization", format!("Bearer {}", api_key));
         }
-        
+
         if let Some(ref org) = self.config.organization {
             builder = builder.header("OpenAI-Organization", org);
         }
-        
+
         builder
     }
 
@@ -171,14 +179,14 @@ impl LiteLlmClient {
         // Try to parse as OpenAI error format
         if let Ok(error) = serde_json::from_str::<OpenAiError>(body) {
             let message = error.error.message;
-            
+
             // Check for specific error types
             if let Some(ref error_type) = error.error.error_type {
                 if error_type == "insufficient_quota" || error_type == "rate_limit_exceeded" {
                     return LlmError::RateLimited { retry_after: None };
                 }
             }
-            
+
             if let Some(ref code) = error.error.code {
                 if code == "model_not_found" {
                     return LlmError::ModelNotFound(message);
@@ -190,7 +198,7 @@ impl LiteLlmClient {
                     };
                 }
             }
-            
+
             return match status {
                 StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
                     LlmError::AuthenticationError(message)
@@ -202,7 +210,7 @@ impl LiteLlmClient {
                 },
             };
         }
-        
+
         // Fallback to generic error
         LlmError::ApiError {
             status: status.as_u16(),
@@ -224,7 +232,7 @@ impl LiteLlmClient {
                 Ok(result) => return Ok(result),
                 Err(e) => {
                     last_error = e.clone();
-                    
+
                     // Don't retry on certain errors
                     match &e {
                         LlmError::AuthenticationError(_)
@@ -258,13 +266,13 @@ impl LlmProvider for LiteLlmClient {
     async fn complete(&self, request: CompletionRequest) -> Result<CompletionResponse, LlmError> {
         self.execute_with_retry(|| async {
             let url = self.completion_url();
-            
+
             // Build the request
             let mut req = CompletionRequest {
                 stream: Some(false),
                 ..request.clone()
             };
-            
+
             // Use default model if not specified
             if req.model.is_empty() {
                 if let Some(ref default_model) = self.config.default_model {
@@ -276,23 +284,21 @@ impl LlmProvider for LiteLlmClient {
                 }
             }
 
-            let request_builder = self.client
+            let request_builder = self
+                .client
                 .post(&url)
                 .header("Content-Type", "application/json")
                 .json(&req);
-            
+
             let request_builder = self.auth_headers(request_builder);
 
-            let response = request_builder
-                .send()
-                .await
-                .map_err(|e| {
-                    if e.is_timeout() {
-                        LlmError::Timeout
-                    } else {
-                        LlmError::RequestError(e.to_string())
-                    }
-                })?;
+            let response = request_builder.send().await.map_err(|e| {
+                if e.is_timeout() {
+                    LlmError::Timeout
+                } else {
+                    LlmError::RequestError(e.to_string())
+                }
+            })?;
 
             let status = response.status();
             let body = response
@@ -361,23 +367,21 @@ impl LlmProvider for LiteLlmClient {
             }
         }
 
-        let request_builder = self.client
+        let request_builder = self
+            .client
             .post(&url)
             .header("Content-Type", "application/json")
             .json(&req);
 
         let request_builder = self.auth_headers(request_builder);
 
-        let response = request_builder
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    LlmError::Timeout
-                } else {
-                    LlmError::RequestError(e.to_string())
-                }
-            })?;
+        let response = request_builder.send().await.map_err(|e| {
+            if e.is_timeout() {
+                LlmError::Timeout
+            } else {
+                LlmError::RequestError(e.to_string())
+            }
+        })?;
 
         let status = response.status();
         if !status.is_success() {
@@ -485,23 +489,21 @@ impl LlmProvider for LiteLlmClient {
                 model,
             };
 
-            let request_builder = self.client
+            let request_builder = self
+                .client
                 .post(&url)
                 .header("Content-Type", "application/json")
                 .json(&request);
 
             let request_builder = self.auth_headers(request_builder);
 
-            let response = request_builder
-                .send()
-                .await
-                .map_err(|e| {
-                    if e.is_timeout() {
-                        LlmError::Timeout
-                    } else {
-                        LlmError::RequestError(e.to_string())
-                    }
-                })?;
+            let response = request_builder.send().await.map_err(|e| {
+                if e.is_timeout() {
+                    LlmError::Timeout
+                } else {
+                    LlmError::RequestError(e.to_string())
+                }
+            })?;
 
             let status = response.status();
             let body = response
@@ -532,27 +534,27 @@ impl LlmProvider for LiteLlmClient {
     async fn health_check(&self) -> Result<(), LlmError> {
         // Try to list models as a lightweight health check
         let url = format!("{}/models", self.config.api_base_url.trim_end_matches('/'));
-        
+
         let request_builder = self.client.get(&url);
         let request_builder = self.auth_headers(request_builder);
-        
-        let response = request_builder
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    LlmError::Timeout
-                } else {
-                    LlmError::RequestError(e.to_string())
-                }
-            })?;
+
+        let response = request_builder.send().await.map_err(|e| {
+            if e.is_timeout() {
+                LlmError::Timeout
+            } else {
+                LlmError::RequestError(e.to_string())
+            }
+        })?;
 
         if response.status().is_success() {
             Ok(())
         } else {
             // Fall back to default health check
             let request = CompletionRequest::new(
-                self.config.default_model.clone().unwrap_or_else(|| "gpt-3.5-turbo".to_string()),
+                self.config
+                    .default_model
+                    .clone()
+                    .unwrap_or_else(|| "gpt-3.5-turbo".to_string()),
             )
             .with_message(Message::user("ping"))
             .with_max_tokens(1);
@@ -622,10 +624,11 @@ mod tests {
     fn test_parse_error_rate_limit() {
         let config = LlmConfig::new("https://api.openai.com/v1", "sk-test");
         let client = LiteLlmClient::new(config).unwrap();
-        
-        let error_body = r#"{"error": {"message": "Rate limit exceeded", "type": "rate_limit_exceeded"}}"#;
+
+        let error_body =
+            r#"{"error": {"message": "Rate limit exceeded", "type": "rate_limit_exceeded"}}"#;
         let error = client.parse_error(StatusCode::TOO_MANY_REQUESTS, error_body);
-        
+
         assert!(matches!(error, LlmError::RateLimited { .. }));
     }
 
@@ -633,10 +636,10 @@ mod tests {
     fn test_parse_error_auth() {
         let config = LlmConfig::new("https://api.openai.com/v1", "sk-test");
         let client = LiteLlmClient::new(config).unwrap();
-        
+
         let error_body = r#"{"error": {"message": "Invalid API key"}}"#;
         let error = client.parse_error(StatusCode::UNAUTHORIZED, error_body);
-        
+
         assert!(matches!(error, LlmError::AuthenticationError(_)));
     }
 
@@ -644,10 +647,10 @@ mod tests {
     fn test_parse_error_model_not_found() {
         let config = LlmConfig::new("https://api.openai.com/v1", "sk-test");
         let client = LiteLlmClient::new(config).unwrap();
-        
+
         let error_body = r#"{"error": {"message": "Model not found", "code": "model_not_found"}}"#;
         let error = client.parse_error(StatusCode::NOT_FOUND, error_body);
-        
+
         assert!(matches!(error, LlmError::ModelNotFound(_)));
     }
 
@@ -655,7 +658,7 @@ mod tests {
     async fn test_embed_empty() {
         let config = LlmConfig::new("https://api.openai.com/v1", "sk-test");
         let client = LiteLlmClient::new(config).unwrap();
-        
+
         let result = client.embed(vec![]).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_empty());

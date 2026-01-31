@@ -45,10 +45,7 @@ pub enum VectorStoreError {
     /// Duplicate entry ID
     DuplicateEntry(String),
     /// Invalid embedding dimension
-    DimensionMismatch {
-        expected: usize,
-        actual: usize,
-    },
+    DimensionMismatch { expected: usize, actual: usize },
     /// Collection not found
     CollectionNotFound(String),
     /// Backend connection error
@@ -240,7 +237,11 @@ impl VectorEntry {
     }
 
     /// Add metadata to the entry
-    pub fn with_metadata(mut self, key: impl Into<String>, value: impl Into<MetadataValue>) -> Self {
+    pub fn with_metadata(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<MetadataValue>,
+    ) -> Self {
         self.metadata.insert(key.into(), value.into());
         self
     }
@@ -628,7 +629,10 @@ impl VectorStore for InMemoryVectorStore {
                     .unwrap_or(true)
             })
             .map(|entry| {
-                let score = self.config.distance_metric.compute(&normalized_query, &entry.embedding);
+                let score = self
+                    .config
+                    .distance_metric
+                    .compute(&normalized_query, &entry.embedding);
                 SearchResult {
                     entry: entry.clone(),
                     score,
@@ -638,7 +642,11 @@ impl VectorStore for InMemoryVectorStore {
             .collect();
 
         // Sort by score descending
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Take top_k
         results.truncate(top_k);
@@ -879,20 +887,31 @@ mod tests {
     #[test]
     fn test_vector_store_dimension_mismatch() {
         let mut store = InMemoryVectorStore::default_store();
-        store.insert(create_test_entry("doc1", vec![0.1, 0.2, 0.3])).unwrap();
+        store
+            .insert(create_test_entry("doc1", vec![0.1, 0.2, 0.3]))
+            .unwrap();
 
         let result = store.insert(create_test_entry("doc2", vec![0.1, 0.2]));
 
-        assert!(matches!(result, Err(VectorStoreError::DimensionMismatch { .. })));
+        assert!(matches!(
+            result,
+            Err(VectorStoreError::DimensionMismatch { .. })
+        ));
     }
 
     #[test]
     fn test_vector_store_search() {
         let mut store = InMemoryVectorStore::default_store();
 
-        store.insert(create_test_entry("doc1", vec![1.0, 0.0, 0.0])).unwrap();
-        store.insert(create_test_entry("doc2", vec![0.0, 1.0, 0.0])).unwrap();
-        store.insert(create_test_entry("doc3", vec![0.9, 0.1, 0.0])).unwrap();
+        store
+            .insert(create_test_entry("doc1", vec![1.0, 0.0, 0.0]))
+            .unwrap();
+        store
+            .insert(create_test_entry("doc2", vec![0.0, 1.0, 0.0]))
+            .unwrap();
+        store
+            .insert(create_test_entry("doc3", vec![0.9, 0.1, 0.0]))
+            .unwrap();
 
         let results = store.search(&[1.0, 0.0, 0.0], 2, None).unwrap();
 
@@ -905,21 +924,27 @@ mod tests {
     fn test_vector_store_search_with_filter() {
         let mut store = InMemoryVectorStore::default_store();
 
-        store.insert(
-            create_test_entry("doc1", vec![1.0, 0.0, 0.0])
-                .with_metadata("category", "tech"),
-        ).unwrap();
-        store.insert(
-            create_test_entry("doc2", vec![0.9, 0.1, 0.0])
-                .with_metadata("category", "science"),
-        ).unwrap();
-        store.insert(
-            create_test_entry("doc3", vec![0.8, 0.2, 0.0])
-                .with_metadata("category", "tech"),
-        ).unwrap();
+        store
+            .insert(
+                create_test_entry("doc1", vec![1.0, 0.0, 0.0]).with_metadata("category", "tech"),
+            )
+            .unwrap();
+        store
+            .insert(
+                create_test_entry("doc2", vec![0.9, 0.1, 0.0]).with_metadata("category", "science"),
+            )
+            .unwrap();
+        store
+            .insert(
+                create_test_entry("doc3", vec![0.8, 0.2, 0.0]).with_metadata("category", "tech"),
+            )
+            .unwrap();
 
-        let filter = SearchFilter::new()
-            .with_metadata("category", FilterOp::Eq, MetadataValue::from("tech"));
+        let filter = SearchFilter::new().with_metadata(
+            "category",
+            FilterOp::Eq,
+            MetadataValue::from("tech"),
+        );
 
         let results = store.search(&[1.0, 0.0, 0.0], 10, Some(filter)).unwrap();
 
@@ -932,7 +957,9 @@ mod tests {
     #[test]
     fn test_vector_store_delete() {
         let mut store = InMemoryVectorStore::default_store();
-        store.insert(create_test_entry("doc1", vec![0.1, 0.2, 0.3])).unwrap();
+        store
+            .insert(create_test_entry("doc1", vec![0.1, 0.2, 0.3]))
+            .unwrap();
 
         assert!(store.delete("doc1").unwrap());
         assert!(!store.delete("doc1").unwrap());
@@ -957,8 +984,12 @@ mod tests {
     #[test]
     fn test_vector_store_clear() {
         let mut store = InMemoryVectorStore::default_store();
-        store.insert(create_test_entry("doc1", vec![0.1, 0.2, 0.3])).unwrap();
-        store.insert(create_test_entry("doc2", vec![0.4, 0.5, 0.6])).unwrap();
+        store
+            .insert(create_test_entry("doc1", vec![0.1, 0.2, 0.3]))
+            .unwrap();
+        store
+            .insert(create_test_entry("doc2", vec![0.4, 0.5, 0.6]))
+            .unwrap();
 
         assert_eq!(store.count(), 2);
         store.clear().unwrap();
@@ -987,8 +1018,12 @@ mod tests {
     #[test]
     fn test_search_filter_exclude() {
         let mut store = InMemoryVectorStore::default_store();
-        store.insert(create_test_entry("doc1", vec![1.0, 0.0, 0.0])).unwrap();
-        store.insert(create_test_entry("doc2", vec![0.9, 0.1, 0.0])).unwrap();
+        store
+            .insert(create_test_entry("doc1", vec![1.0, 0.0, 0.0]))
+            .unwrap();
+        store
+            .insert(create_test_entry("doc2", vec![0.9, 0.1, 0.0]))
+            .unwrap();
 
         let filter = SearchFilter::new().exclude(vec!["doc1".to_string()]);
 
@@ -1009,7 +1044,8 @@ mod tests {
         assert!(manager.list_collections().contains(&"docs"));
 
         let docs = manager.get_collection_mut("docs").unwrap();
-        docs.insert(create_test_entry("doc1", vec![0.1, 0.2, 0.3])).unwrap();
+        docs.insert(create_test_entry("doc1", vec![0.1, 0.2, 0.3]))
+            .unwrap();
 
         assert_eq!(manager.get_collection("docs").unwrap().count(), 1);
 
@@ -1073,9 +1109,15 @@ mod tests {
         let config = VectorStoreConfig::default().with_min_similarity(0.9);
         let mut store = InMemoryVectorStore::new(config);
 
-        store.insert(create_test_entry("doc1", vec![1.0, 0.0, 0.0])).unwrap();
-        store.insert(create_test_entry("doc2", vec![0.5, 0.5, 0.0])).unwrap();
-        store.insert(create_test_entry("doc3", vec![0.0, 0.0, 1.0])).unwrap();
+        store
+            .insert(create_test_entry("doc1", vec![1.0, 0.0, 0.0]))
+            .unwrap();
+        store
+            .insert(create_test_entry("doc2", vec![0.5, 0.5, 0.0]))
+            .unwrap();
+        store
+            .insert(create_test_entry("doc3", vec![0.0, 0.0, 1.0]))
+            .unwrap();
 
         let results = store.search(&[1.0, 0.0, 0.0], 10, None).unwrap();
 

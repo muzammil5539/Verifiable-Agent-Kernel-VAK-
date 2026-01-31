@@ -329,7 +329,7 @@ pub struct IpfsConfig {
 impl Default for IpfsConfig {
     fn default() -> Self {
         Self {
-            max_block_size: 1024 * 1024, // 1MB
+            max_block_size: 1024 * 1024,    // 1MB
             max_storage: 100 * 1024 * 1024, // 100MB
             gc_enabled: true,
             gc_threshold: 0.9,
@@ -424,7 +424,9 @@ impl IpfsLiteStore {
         let block = Block::new(data.to_vec(), codec);
         let cid = block.cid.clone();
 
-        let mut blocks = self.blocks.write()
+        let mut blocks = self
+            .blocks
+            .write()
             .map_err(|e| IpfsError::LockError(e.to_string()))?;
 
         // Check storage limits
@@ -433,7 +435,9 @@ impl IpfsLiteStore {
             if self.config.gc_enabled {
                 drop(blocks);
                 self.gc()?;
-                blocks = self.blocks.write()
+                blocks = self
+                    .blocks
+                    .write()
                     .map_err(|e| IpfsError::LockError(e.to_string()))?;
             } else {
                 return Err(IpfsError::StorageFull(
@@ -449,7 +453,9 @@ impl IpfsLiteStore {
 
     /// Get content by CID
     pub fn get(&self, cid: &ContentId) -> IpfsResult<Vec<u8>> {
-        let blocks = self.blocks.read()
+        let blocks = self
+            .blocks
+            .read()
             .map_err(|e| IpfsError::LockError(e.to_string()))?;
 
         blocks
@@ -460,7 +466,9 @@ impl IpfsLiteStore {
 
     /// Get a block by CID
     pub fn get_block(&self, cid: &ContentId) -> IpfsResult<Block> {
-        let blocks = self.blocks.read()
+        let blocks = self
+            .blocks
+            .read()
             .map_err(|e| IpfsError::LockError(e.to_string()))?;
 
         blocks
@@ -471,7 +479,9 @@ impl IpfsLiteStore {
 
     /// Check if content exists
     pub fn has(&self, cid: &ContentId) -> IpfsResult<bool> {
-        let blocks = self.blocks.read()
+        let blocks = self
+            .blocks
+            .read()
             .map_err(|e| IpfsError::LockError(e.to_string()))?;
 
         Ok(blocks.contains_key(cid))
@@ -479,7 +489,9 @@ impl IpfsLiteStore {
 
     /// Delete content (fails if pinned)
     pub fn delete(&self, cid: &ContentId) -> IpfsResult<()> {
-        let pins = self.pins.read()
+        let pins = self
+            .pins
+            .read()
             .map_err(|e| IpfsError::LockError(e.to_string()))?;
 
         if pins.contains(cid) {
@@ -491,7 +503,9 @@ impl IpfsLiteStore {
 
         drop(pins);
 
-        let mut blocks = self.blocks.write()
+        let mut blocks = self
+            .blocks
+            .write()
             .map_err(|e| IpfsError::LockError(e.to_string()))?;
 
         blocks.remove(cid);
@@ -505,7 +519,9 @@ impl IpfsLiteStore {
             return Err(IpfsError::NotFound(cid.to_hex()));
         }
 
-        let mut pins = self.pins.write()
+        let mut pins = self
+            .pins
+            .write()
             .map_err(|e| IpfsError::LockError(e.to_string()))?;
 
         pins.insert(cid.clone());
@@ -514,7 +530,9 @@ impl IpfsLiteStore {
 
     /// Unpin content
     pub fn unpin(&self, cid: &ContentId) -> IpfsResult<()> {
-        let mut pins = self.pins.write()
+        let mut pins = self
+            .pins
+            .write()
             .map_err(|e| IpfsError::LockError(e.to_string()))?;
 
         pins.remove(cid);
@@ -523,7 +541,9 @@ impl IpfsLiteStore {
 
     /// Check if content is pinned
     pub fn is_pinned(&self, cid: &ContentId) -> IpfsResult<bool> {
-        let pins = self.pins.read()
+        let pins = self
+            .pins
+            .read()
             .map_err(|e| IpfsError::LockError(e.to_string()))?;
 
         Ok(pins.contains(cid))
@@ -531,13 +551,15 @@ impl IpfsLiteStore {
 
     /// Put a DAG node
     pub fn put_dag(&self, node: &DagNode) -> IpfsResult<ContentId> {
-        let serialized = serde_json::to_vec(node)
-            .map_err(|e| IpfsError::SerializationError(e.to_string()))?;
+        let serialized =
+            serde_json::to_vec(node).map_err(|e| IpfsError::SerializationError(e.to_string()))?;
 
         let cid = self.put_with_codec(&serialized, Codec::DagCbor)?;
 
         // Mark as DAG root if it has no parents
-        let mut roots = self.roots.write()
+        let mut roots = self
+            .roots
+            .write()
             .map_err(|e| IpfsError::LockError(e.to_string()))?;
         roots.insert(cid.clone());
 
@@ -552,8 +574,7 @@ impl IpfsLiteStore {
     /// Get a DAG node
     pub fn get_dag(&self, cid: &ContentId) -> IpfsResult<DagNode> {
         let data = self.get(cid)?;
-        serde_json::from_slice(&data)
-            .map_err(|e| IpfsError::SerializationError(e.to_string()))
+        serde_json::from_slice(&data).map_err(|e| IpfsError::SerializationError(e.to_string()))
     }
 
     /// Verify a block's integrity
@@ -580,7 +601,9 @@ impl IpfsLiteStore {
 
     /// Get all CIDs in the store
     pub fn list_cids(&self) -> IpfsResult<Vec<ContentId>> {
-        let blocks = self.blocks.read()
+        let blocks = self
+            .blocks
+            .read()
             .map_err(|e| IpfsError::LockError(e.to_string()))?;
 
         Ok(blocks.keys().cloned().collect())
@@ -588,11 +611,17 @@ impl IpfsLiteStore {
 
     /// Get store statistics
     pub fn stats(&self) -> IpfsResult<StoreStats> {
-        let blocks = self.blocks.read()
+        let blocks = self
+            .blocks
+            .read()
             .map_err(|e| IpfsError::LockError(e.to_string()))?;
-        let pins = self.pins.read()
+        let pins = self
+            .pins
+            .read()
             .map_err(|e| IpfsError::LockError(e.to_string()))?;
-        let roots = self.roots.read()
+        let roots = self
+            .roots
+            .read()
             .map_err(|e| IpfsError::LockError(e.to_string()))?;
 
         Ok(StoreStats {
@@ -605,9 +634,13 @@ impl IpfsLiteStore {
 
     /// Run garbage collection
     pub fn gc(&self) -> IpfsResult<usize> {
-        let pins = self.pins.read()
+        let pins = self
+            .pins
+            .read()
             .map_err(|e| IpfsError::LockError(e.to_string()))?;
-        let roots = self.roots.read()
+        let roots = self
+            .roots
+            .read()
             .map_err(|e| IpfsError::LockError(e.to_string()))?;
 
         // Collect all reachable CIDs
@@ -616,7 +649,9 @@ impl IpfsLiteStore {
         reachable.extend(roots.iter().cloned());
 
         // Traverse DAGs to find all reachable blocks
-        let blocks_read = self.blocks.read()
+        let blocks_read = self
+            .blocks
+            .read()
             .map_err(|e| IpfsError::LockError(e.to_string()))?;
 
         let mut to_visit: Vec<ContentId> = reachable.iter().cloned().collect();
@@ -635,7 +670,9 @@ impl IpfsLiteStore {
         drop(roots);
 
         // Remove unreachable blocks
-        let mut blocks = self.blocks.write()
+        let mut blocks = self
+            .blocks
+            .write()
             .map_err(|e| IpfsError::LockError(e.to_string()))?;
 
         let to_remove: Vec<ContentId> = blocks
@@ -814,8 +851,8 @@ mod tests {
 
     #[test]
     fn test_dag_node_creation() {
-        let node = DagNode::new(b"Node data".to_vec())
-            .with_metadata("type", serde_json::json!("test"));
+        let node =
+            DagNode::new(b"Node data".to_vec()).with_metadata("type", serde_json::json!("test"));
 
         assert!(!node.data.is_empty());
         assert!(node.metadata.contains_key("type"));
@@ -824,8 +861,7 @@ mod tests {
     #[test]
     fn test_dag_node_with_children() {
         let child_cid = ContentId::from_content(b"child", Codec::Raw);
-        let node = DagNode::new(b"Parent".to_vec())
-            .with_child("child1", child_cid.clone());
+        let node = DagNode::new(b"Parent".to_vec()).with_child("child1", child_cid.clone());
 
         assert_eq!(node.children.len(), 1);
         assert_eq!(node.children[0].target, child_cid);
@@ -834,9 +870,9 @@ mod tests {
     #[test]
     fn test_store_dag_put_get() {
         let store = IpfsLiteStore::new(IpfsConfig::default());
-        
-        let node = DagNode::new(b"DAG node".to_vec())
-            .with_metadata("version", serde_json::json!(1));
+
+        let node =
+            DagNode::new(b"DAG node".to_vec()).with_metadata("version", serde_json::json!(1));
 
         let cid = store.put_dag(&node).unwrap();
         let retrieved = store.get_dag(&cid).unwrap();
@@ -899,7 +935,7 @@ mod tests {
     fn test_content_id_short() {
         let cid = ContentId::from_content(b"test", Codec::Raw);
         let short = cid.short();
-        
+
         // Short form should be 8 hex chars (4 bytes)
         assert_eq!(short.len(), 8);
     }

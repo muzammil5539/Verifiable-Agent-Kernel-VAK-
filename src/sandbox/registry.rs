@@ -28,6 +28,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use tracing::{info, warn};
 use uuid::Uuid;
 
 /// Unique identifier for a loaded skill
@@ -376,9 +377,9 @@ pub struct SignatureConfig {
 impl Default for SignatureConfig {
     fn default() -> Self {
         Self {
-            require_signatures: false,
+            require_signatures: true,
             trusted_keys: Vec::new(),
-            allow_unsigned_in_dev: true,
+            allow_unsigned_in_dev: false,
         }
     }
 }
@@ -393,9 +394,25 @@ impl SignatureConfig {
         }
     }
 
+    /// Create a permissive configuration intended for development
+    /// where unsigned skills are explicitly allowed.
+    pub fn permissive_dev() -> Self {
+        Self {
+            require_signatures: false,
+            trusted_keys: Vec::new(),
+            allow_unsigned_in_dev: true,
+        }
+    }
+
     /// Add a trusted key
     pub fn with_trusted_key(mut self, key: impl Into<String>) -> Self {
         self.trusted_keys.push(key.into());
+        self
+    }
+
+    /// Toggle allowance for unsigned skills in development scenarios.
+    pub fn with_allow_unsigned_in_dev(mut self, allow: bool) -> Self {
+        self.allow_unsigned_in_dev = allow;
         self
     }
 }
@@ -432,7 +449,11 @@ impl SignatureVerificationResult {
     }
 
     /// Create a failed verification result
-    pub fn failure(computed: impl Into<String>, expected: impl Into<String>, details: impl Into<String>) -> Self {
+    pub fn failure(
+        computed: impl Into<String>,
+        expected: impl Into<String>,
+        details: impl Into<String>,
+    ) -> Self {
         Self {
             valid: false,
             computed_signature: computed.into(),
@@ -472,7 +493,7 @@ impl SkillSignatureVerifier {
 
     /// Create a verifier with default (permissive) configuration
     pub fn permissive() -> Self {
-        Self::new(SignatureConfig::default())
+        Self::new(SignatureConfig::permissive_dev())
     }
 
     /// Create a verifier with strict configuration
@@ -481,7 +502,10 @@ impl SkillSignatureVerifier {
     }
 
     /// Verify a skill manifest and its WASM binary
-    pub fn verify_skill(&self, manifest: &SkillManifest) -> Result<SignatureVerificationResult, SignatureError> {
+    pub fn verify_skill(
+        &self,
+        manifest: &SkillManifest,
+    ) -> Result<SignatureVerificationResult, SignatureError> {
         // If no signature and signatures are not required, allow
         if manifest.signature.is_none() {
             if self.config.require_signatures && !self.config.allow_unsigned_in_dev {
@@ -493,7 +517,7 @@ impl SkillSignatureVerifier {
         }
 
         let signature = manifest.signature.as_ref().unwrap();
-        
+
         // Compute the expected signature
         let computed = self.compute_signature(manifest)?;
 
@@ -525,20 +549,22 @@ impl SkillSignatureVerifier {
         hasher.update(b"|");
 
         // Include permissions as JSON
-        let permissions_json = serde_json::to_string(&manifest.permissions)
-            .map_err(|e| SignatureError::InvalidFormat {
+        let permissions_json = serde_json::to_string(&manifest.permissions).map_err(|e| {
+            SignatureError::InvalidFormat {
                 message: format!("Failed to serialize permissions: {}", e),
-            })?;
+            }
+        })?;
         hasher.update(permissions_json.as_bytes());
         hasher.update(b"|");
 
         // Include WASM binary hash if the file exists
         if manifest.wasm_path.exists() {
-            let wasm_bytes = std::fs::read(&manifest.wasm_path).map_err(|e| SignatureError::WasmNotFound {
-                path: manifest.wasm_path.clone(),
-                message: e.to_string(),
-            })?;
-            
+            let wasm_bytes =
+                std::fs::read(&manifest.wasm_path).map_err(|e| SignatureError::WasmNotFound {
+                    path: manifest.wasm_path.clone(),
+                    message: e.to_string(),
+                })?;
+
             let wasm_hash = Sha256::digest(&wasm_bytes);
             hasher.update(&wasm_hash);
         } else {
@@ -568,7 +594,7 @@ impl SkillSignatureVerifier {
 
 impl Default for SkillSignatureVerifier {
     fn default() -> Self {
-        Self::permissive()
+        Self::strict()
     }
 }
 
@@ -605,16 +631,32 @@ impl SkillRegistry {
     /// let registry = SkillRegistry::new(PathBuf::from("./skills"));
     /// ```
     pub fn new(skills_directory: PathBuf) -> Self {
+        Self::new_with_signature_config(skills_directory, SignatureConfig::default())
+    }
+
+    /// Create a new registry with an explicit signature configuration
+    pub fn new_with_signature_config(
+        skills_directory: PathBuf,
+        signature_config: SignatureConfig,
+    ) -> Self {
         Self {
             skills_directory,
             skills: HashMap::new(),
             name_index: HashMap::new(),
-            signature_verifier: None,
+            signature_verifier: Some(SkillSignatureVerifier::new(signature_config)),
         }
     }
 
+    /// Create a registry that explicitly allows unsigned skills (development only)
+    pub fn new_permissive_dev(skills_directory: PathBuf) -> Self {
+        Self::new_with_signature_config(skills_directory, SignatureConfig::permissive_dev())
+    }
+
     /// Create a new registry with signature verification enabled
-    pub fn with_signature_verification(skills_directory: PathBuf, verifier: SkillSignatureVerifier) -> Self {
+    pub fn with_signature_verification(
+        skills_directory: PathBuf,
+        verifier: SkillSignatureVerifier,
+    ) -> Self {
         Self {
             skills_directory,
             skills: HashMap::new(),
@@ -639,7 +681,10 @@ impl SkillRegistry {
     }
 
     /// Verify a skill's signature (returns error if verification is required and fails)
-    pub fn verify_skill_signature(&self, manifest: &SkillManifest) -> Result<Option<SignatureVerificationResult>, SignatureError> {
+    pub fn verify_skill_signature(
+        &self,
+        manifest: &SkillManifest,
+    ) -> Result<Option<SignatureVerificationResult>, SignatureError> {
         match &self.signature_verifier {
             Some(verifier) => Ok(Some(verifier.verify_skill(manifest)?)),
             None => Ok(None),
@@ -665,16 +710,32 @@ impl SkillRegistry {
 
         // Verify signature if enabled
         if let Some(verifier) = &self.signature_verifier {
-            let result = verifier.verify_skill(&manifest).map_err(|e| RegistryError::ValidationError {
-                field: "signature".to_string(),
-                message: e.to_string(),
-            })?;
-            
+            let result =
+                verifier
+                    .verify_skill(&manifest)
+                    .map_err(|e| RegistryError::ValidationError {
+                        field: "signature".to_string(),
+                        message: e.to_string(),
+                    })?;
+
             if !result.valid {
                 return Err(RegistryError::ValidationError {
                     field: "signature".to_string(),
                     message: result.details,
                 });
+            }
+
+            if result.expected_signature.is_none() {
+                warn!(
+                    skill = %manifest.name,
+                    "Loaded unsigned skill (explicitly allowed by configuration)"
+                );
+            } else {
+                info!(
+                    skill = %manifest.name,
+                    computed = %result.computed_signature,
+                    "Skill signature verified"
+                );
             }
         }
 
@@ -714,11 +775,7 @@ impl SkillRegistry {
 
         // Search for .yaml and .yml files
         for extension in &["yaml", "yml"] {
-            let pattern = format!(
-                "{}/**/*.{}",
-                self.skills_directory.display(),
-                extension
-            );
+            let pattern = format!("{}/**/*.{}", self.skills_directory.display(), extension);
 
             if let Ok(entries) = glob::glob(&pattern) {
                 for entry in entries.flatten() {
@@ -765,9 +822,7 @@ impl SkillRegistry {
     /// # Returns
     /// * A reference to the manifest, or None if not found
     pub fn get_skill_by_name(&self, name: &str) -> Option<&SkillManifest> {
-        self.name_index
-            .get(name)
-            .and_then(|id| self.skills.get(id))
+        self.name_index.get(name).and_then(|id| self.skills.get(id))
     }
 
     /// Get the SkillId for a skill by name
@@ -940,6 +995,10 @@ mod tests {
         let mut file = std::fs::File::create(&path).unwrap();
         file.write_all(content.as_bytes()).unwrap();
         path
+    }
+
+    fn permissive_registry(dir: &Path) -> SkillRegistry {
+        SkillRegistry::new_permissive_dev(dir.to_path_buf())
     }
 
     fn sample_manifest_yaml() -> &'static str {
@@ -1130,7 +1189,7 @@ wasm_path: "./test.wasm"
         let temp_dir = TempDir::new().unwrap();
         let path = create_test_manifest(temp_dir.path(), "calculator", sample_manifest_yaml());
 
-        let mut registry = SkillRegistry::new(temp_dir.path().to_path_buf());
+        let mut registry = permissive_registry(temp_dir.path());
         let id = registry.load_skill(&path).unwrap();
 
         assert_eq!(registry.skill_count(), 1);
@@ -1140,11 +1199,25 @@ wasm_path: "./test.wasm"
     }
 
     #[test]
-    fn test_registry_get_skill_by_name() {
+    fn test_registry_rejects_unsigned_when_strict() {
         let temp_dir = TempDir::new().unwrap();
         let path = create_test_manifest(temp_dir.path(), "calculator", sample_manifest_yaml());
 
         let mut registry = SkillRegistry::new(temp_dir.path().to_path_buf());
+        let result = registry.load_skill(&path);
+
+        assert!(matches!(
+            result,
+            Err(RegistryError::ValidationError { field, .. }) if field == "signature"
+        ));
+    }
+
+    #[test]
+    fn test_registry_get_skill_by_name() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = create_test_manifest(temp_dir.path(), "calculator", sample_manifest_yaml());
+
+        let mut registry = permissive_registry(temp_dir.path());
         registry.load_skill(&path).unwrap();
 
         let skill = registry.get_skill_by_name("calculator").unwrap();
@@ -1158,7 +1231,7 @@ wasm_path: "./test.wasm"
         let temp_dir = TempDir::new().unwrap();
         let path = create_test_manifest(temp_dir.path(), "calculator", sample_manifest_yaml());
 
-        let mut registry = SkillRegistry::new(temp_dir.path().to_path_buf());
+        let mut registry = permissive_registry(temp_dir.path());
         let first_id = registry.load_skill(&path).unwrap();
 
         // Create another manifest with the same name
@@ -1188,7 +1261,7 @@ wasm_path: "./test.wasm"
         let yml_path = temp_dir.path().join("skill3.yml");
         std::fs::write(&yml_path, yml_content).unwrap();
 
-        let mut registry = SkillRegistry::new(temp_dir.path().to_path_buf());
+        let mut registry = permissive_registry(temp_dir.path());
         let ids = registry.load_all_skills().unwrap();
 
         // Should load calculator, skill2, and skill3
@@ -1208,7 +1281,7 @@ wasm_path: "./test.wasm"
         let temp_dir = TempDir::new().unwrap();
         let path = create_test_manifest(temp_dir.path(), "calculator", sample_manifest_yaml());
 
-        let mut registry = SkillRegistry::new(temp_dir.path().to_path_buf());
+        let mut registry = permissive_registry(temp_dir.path());
         let id = registry.load_skill(&path).unwrap();
 
         assert_eq!(registry.skill_count(), 1);
@@ -1231,7 +1304,7 @@ wasm_path: "./test.wasm"
             &sample_manifest_yaml().replace("calculator", "skill2"),
         );
 
-        let mut registry = SkillRegistry::new(temp_dir.path().to_path_buf());
+        let mut registry = permissive_registry(temp_dir.path());
         registry.load_all_skills().unwrap();
 
         assert_eq!(registry.skill_count(), 2);
@@ -1244,7 +1317,7 @@ wasm_path: "./test.wasm"
         let temp_dir = TempDir::new().unwrap();
         let path = create_test_manifest(temp_dir.path(), "calculator", sample_manifest_yaml());
 
-        let mut registry = SkillRegistry::new(temp_dir.path().to_path_buf());
+        let mut registry = permissive_registry(temp_dir.path());
         let id = registry.load_skill(&path).unwrap();
 
         let requested = SkillPermissions {
@@ -1268,7 +1341,7 @@ wasm_path: "./test.wasm"
             sample_manifest_with_permissions(),
         );
 
-        let mut registry = SkillRegistry::new(temp_dir.path().to_path_buf());
+        let mut registry = permissive_registry(temp_dir.path());
         let id = registry.load_skill(&path).unwrap();
 
         let requested = SkillPermissions {
@@ -1284,7 +1357,7 @@ wasm_path: "./test.wasm"
         let temp_dir = TempDir::new().unwrap();
         let path = create_test_manifest(temp_dir.path(), "calculator", sample_manifest_yaml());
 
-        let mut registry = SkillRegistry::new(temp_dir.path().to_path_buf());
+        let mut registry = permissive_registry(temp_dir.path());
         let id = registry.load_skill(&path).unwrap();
 
         let requested = SkillPermissions {
@@ -1304,7 +1377,7 @@ wasm_path: "./test.wasm"
         let temp_dir = TempDir::new().unwrap();
         let path = create_test_manifest(temp_dir.path(), "calculator", sample_manifest_yaml());
 
-        let mut registry = SkillRegistry::new(temp_dir.path().to_path_buf());
+        let mut registry = permissive_registry(temp_dir.path());
         let id = registry.load_skill(&path).unwrap();
 
         let requested = SkillPermissions {
@@ -1328,7 +1401,7 @@ wasm_path: "./test.wasm"
             sample_manifest_with_permissions(),
         );
 
-        let mut registry = SkillRegistry::new(temp_dir.path().to_path_buf());
+        let mut registry = permissive_registry(temp_dir.path());
         let id = registry.load_skill(&path).unwrap();
 
         let requested = SkillPermissions {
@@ -1349,7 +1422,7 @@ wasm_path: "./test.wasm"
             sample_manifest_with_permissions(),
         );
 
-        let mut registry = SkillRegistry::new(temp_dir.path().to_path_buf());
+        let mut registry = permissive_registry(temp_dir.path());
         let id = registry.load_skill(&path).unwrap();
 
         let requested = SkillPermissions {
@@ -1373,7 +1446,7 @@ wasm_path: "./test.wasm"
             sample_manifest_with_permissions(),
         );
 
-        let mut registry = SkillRegistry::new(temp_dir.path().to_path_buf());
+        let mut registry = permissive_registry(temp_dir.path());
         let id = registry.load_skill(&path).unwrap();
 
         let requested = SkillPermissions {
@@ -1394,7 +1467,7 @@ wasm_path: "./test.wasm"
             sample_manifest_with_permissions(),
         );
 
-        let mut registry = SkillRegistry::new(temp_dir.path().to_path_buf());
+        let mut registry = permissive_registry(temp_dir.path());
         let id = registry.load_skill(&path).unwrap();
 
         let requested = SkillPermissions {
@@ -1430,13 +1503,16 @@ wasm_path: "./test.wasm"
             sample_manifest_with_permissions(),
         );
 
-        let mut registry = SkillRegistry::new(temp_dir.path().to_path_buf());
+        let mut registry = permissive_registry(temp_dir.path());
         let id = registry.load_skill(&path).unwrap();
 
         // Request permissions within the allowed limits
         let requested = SkillPermissions {
             network: true,
-            filesystem: vec!["/tmp/file.txt".to_string(), "/data/subdir/file.csv".to_string()],
+            filesystem: vec![
+                "/tmp/file.txt".to_string(),
+                "/data/subdir/file.csv".to_string(),
+            ],
             env_vars: vec!["HOME".to_string(), "API_TOKEN".to_string()],
             max_memory_mb: 128,
             max_execution_ms: 10000,
@@ -1455,7 +1531,7 @@ wasm_path: "./test.wasm"
             &sample_manifest_yaml().replace("calculator", "skill2"),
         );
 
-        let mut registry = SkillRegistry::new(temp_dir.path().to_path_buf());
+        let mut registry = permissive_registry(temp_dir.path());
         registry.load_all_skills().unwrap();
 
         let skills = registry.list_skills();
@@ -1471,7 +1547,7 @@ wasm_path: "./test.wasm"
         let temp_dir = TempDir::new().unwrap();
         let path = create_test_manifest(temp_dir.path(), "calculator", sample_manifest_yaml());
 
-        let mut registry = SkillRegistry::new(temp_dir.path().to_path_buf());
+        let mut registry = permissive_registry(temp_dir.path());
         let id = registry.load_skill(&path).unwrap();
 
         assert_eq!(registry.get_skill_id_by_name("calculator"), Some(id));
@@ -1518,9 +1594,9 @@ wasm_path: "./test.wasm"
     #[test]
     fn test_signature_config_default() {
         let config = SignatureConfig::default();
-        assert!(!config.require_signatures);
+        assert!(config.require_signatures);
         assert!(config.trusted_keys.is_empty());
-        assert!(config.allow_unsigned_in_dev);
+        assert!(!config.allow_unsigned_in_dev);
     }
 
     #[test]
@@ -1538,12 +1614,21 @@ wasm_path: "./test.wasm"
             .with_trusted_key("key2");
         assert!(config.trusted_keys.contains(&"key1".to_string()));
         assert!(config.trusted_keys.contains(&"key2".to_string()));
+        assert_eq!(config.trusted_keys.len(), 2);
+    }
+
+    #[test]
+    fn test_signature_config_permissive_dev() {
+        let config = SignatureConfig::permissive_dev();
+        assert!(!config.require_signatures);
+        assert!(config.trusted_keys.is_empty());
+        assert!(config.allow_unsigned_in_dev);
     }
 
     #[test]
     fn test_signature_verifier_permissive_unsigned() {
         let verifier = SkillSignatureVerifier::permissive();
-        
+
         let manifest = SkillManifest {
             name: "test".to_string(),
             version: "1.0.0".to_string(),
@@ -1564,7 +1649,7 @@ wasm_path: "./test.wasm"
     #[test]
     fn test_signature_verifier_strict_requires_signature() {
         let verifier = SkillSignatureVerifier::strict();
-        
+
         let manifest = SkillManifest {
             name: "test".to_string(),
             version: "1.0.0".to_string(),
@@ -1578,13 +1663,16 @@ wasm_path: "./test.wasm"
         };
 
         let result = verifier.verify_skill(&manifest);
-        assert!(matches!(result, Err(SignatureError::SignatureRequired { .. })));
+        assert!(matches!(
+            result,
+            Err(SignatureError::SignatureRequired { .. })
+        ));
     }
 
     #[test]
     fn test_signature_computation_deterministic() {
         let verifier = SkillSignatureVerifier::permissive();
-        
+
         let manifest = SkillManifest {
             name: "test".to_string(),
             version: "1.0.0".to_string(),
@@ -1599,7 +1687,7 @@ wasm_path: "./test.wasm"
 
         let sig1 = verifier.compute_signature(&manifest).unwrap();
         let sig2 = verifier.compute_signature(&manifest).unwrap();
-        
+
         assert_eq!(sig1, sig2);
         assert!(!sig1.is_empty());
     }
@@ -1607,7 +1695,7 @@ wasm_path: "./test.wasm"
     #[test]
     fn test_signature_changes_with_content() {
         let verifier = SkillSignatureVerifier::permissive();
-        
+
         let manifest1 = SkillManifest {
             name: "test1".to_string(),
             version: "1.0.0".to_string(),
@@ -1634,14 +1722,14 @@ wasm_path: "./test.wasm"
 
         let sig1 = verifier.compute_signature(&manifest1).unwrap();
         let sig2 = verifier.compute_signature(&manifest2).unwrap();
-        
+
         assert_ne!(sig1, sig2);
     }
 
     #[test]
     fn test_signature_verification_valid() {
         let verifier = SkillSignatureVerifier::permissive();
-        
+
         let mut manifest = SkillManifest {
             name: "test".to_string(),
             version: "1.0.0".to_string(),
@@ -1667,7 +1755,7 @@ wasm_path: "./test.wasm"
     #[test]
     fn test_signature_verification_tampered() {
         let verifier = SkillSignatureVerifier::permissive();
-        
+
         let mut manifest = SkillManifest {
             name: "test".to_string(),
             version: "1.0.0".to_string(),
@@ -1709,10 +1797,14 @@ wasm_path: "./test.wasm"
 
     #[test]
     fn test_signature_error_display() {
-        let err = SignatureError::SignatureRequired { skill_name: "test".to_string() };
+        let err = SignatureError::SignatureRequired {
+            skill_name: "test".to_string(),
+        };
         assert!(err.to_string().contains("Signature required"));
 
-        let err = SignatureError::InvalidFormat { message: "bad format".to_string() };
+        let err = SignatureError::InvalidFormat {
+            message: "bad format".to_string(),
+        };
         assert!(err.to_string().contains("Invalid signature format"));
 
         let err = SignatureError::VerificationFailed {
@@ -1727,14 +1819,12 @@ wasm_path: "./test.wasm"
     fn test_registry_with_signature_verification() {
         let temp_dir = TempDir::new().unwrap();
         let verifier = SkillSignatureVerifier::permissive();
-        
-        let mut registry = SkillRegistry::with_signature_verification(
-            temp_dir.path().to_path_buf(),
-            verifier,
-        );
+
+        let mut registry =
+            SkillRegistry::with_signature_verification(temp_dir.path().to_path_buf(), verifier);
 
         assert!(registry.signature_verification_enabled());
-        
+
         registry.disable_signature_verification();
         assert!(!registry.signature_verification_enabled());
     }
@@ -1743,11 +1833,9 @@ wasm_path: "./test.wasm"
     fn test_registry_verify_skill_signature() {
         let temp_dir = TempDir::new().unwrap();
         let verifier = SkillSignatureVerifier::permissive();
-        
-        let registry = SkillRegistry::with_signature_verification(
-            temp_dir.path().to_path_buf(),
-            verifier,
-        );
+
+        let registry =
+            SkillRegistry::with_signature_verification(temp_dir.path().to_path_buf(), verifier);
 
         let manifest = SkillManifest {
             name: "test".to_string(),
@@ -1775,4 +1863,3 @@ wasm_path: "./test.wasm"
         assert!(!verifier.is_key_trusted("untrusted_key"));
     }
 }
-

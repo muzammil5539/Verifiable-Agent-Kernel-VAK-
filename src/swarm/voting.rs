@@ -28,8 +28,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
 
-use super::SwarmAgentId;
 use super::messages::Proposal;
+use super::SwarmAgentId;
 
 // ============================================================================
 // Error Types
@@ -389,7 +389,11 @@ impl VotingSession {
     }
 
     /// Record a vote from an agent
-    pub fn record_vote(&mut self, agent_id: SwarmAgentId, vote: Vote) -> Result<VoteResult, VotingError> {
+    pub fn record_vote(
+        &mut self,
+        agent_id: SwarmAgentId,
+        vote: Vote,
+    ) -> Result<VoteResult, VotingError> {
         if !self.is_open() {
             return Err(VotingError::SessionClosed);
         }
@@ -399,7 +403,10 @@ impl VotingSession {
         }
 
         if vote.strength > self.config.max_strength {
-            return Err(VotingError::StrengthExceedsMax(vote.strength, self.config.max_strength));
+            return Err(VotingError::StrengthExceedsMax(
+                vote.strength,
+                self.config.max_strength,
+            ));
         }
 
         // Calculate cost
@@ -410,7 +417,8 @@ impl VotingSession {
         };
 
         // Get or create agent credits
-        let credits = self.agent_credits
+        let credits = self
+            .agent_credits
             .entry(agent_id.clone())
             .or_insert_with(|| AgentCredits::new(self.config.credits_per_agent));
 
@@ -559,7 +567,7 @@ impl QuadraticVoting {
     /// Calculate how many votes of each strength are affordable
     pub fn affordable_distribution(&self, credits: u64) -> HashMap<u64, u64> {
         let mut distribution = HashMap::new();
-        
+
         for strength in 1..=self.max_affordable_strength(credits) {
             let cost = self.calculate_cost(strength);
             let affordable = credits / cost;
@@ -567,16 +575,17 @@ impl QuadraticVoting {
                 distribution.insert(strength, affordable);
             }
         }
-        
+
         distribution
     }
 
     /// Validate a set of votes against available credits
     pub fn validate_votes(&self, votes: &[(u64, u64)], available_credits: u64) -> bool {
-        let total_cost: u64 = votes.iter()
+        let total_cost: u64 = votes
+            .iter()
             .map(|(strength, count)| self.calculate_cost(*strength) * count)
             .sum();
-        
+
         total_cost <= available_credits
     }
 }
@@ -592,7 +601,7 @@ mod tests {
     #[test]
     fn test_vote_creation() {
         let vote = Vote::for_proposal(5).with_reasoning("Strong support");
-        
+
         assert_eq!(vote.direction, VoteDirection::For);
         assert_eq!(vote.strength, 5);
         assert!(vote.reasoning.is_some());
@@ -613,7 +622,7 @@ mod tests {
     #[test]
     fn test_agent_credits() {
         let mut credits = AgentCredits::new(100);
-        
+
         assert_eq!(credits.total, 100);
         assert_eq!(credits.remaining, 100);
         assert_eq!(credits.spent, 0);
@@ -623,7 +632,10 @@ mod tests {
         assert_eq!(credits.spent, 25);
 
         let result = credits.spend(100);
-        assert!(matches!(result, Err(VotingError::InsufficientCredits(75, 100))));
+        assert!(matches!(
+            result,
+            Err(VotingError::InsufficientCredits(75, 100))
+        ));
 
         credits.refund(10);
         assert_eq!(credits.remaining, 85);
@@ -699,9 +711,9 @@ mod tests {
 
         let agent_id = SwarmAgentId::new();
         let vote = Vote::for_proposal(5);
-        
+
         let result = session.record_vote(agent_id.clone(), vote).unwrap();
-        
+
         assert_eq!(result.credits_consumed, 25); // 5² = 25
         assert_eq!(result.credits_remaining, 75); // 100 - 25
 
@@ -718,9 +730,12 @@ mod tests {
 
         let agent_id = SwarmAgentId::new();
         let vote = Vote::for_proposal(10); // Exceeds max of 5
-        
+
         let result = session.record_vote(agent_id, vote);
-        assert!(matches!(result, Err(VotingError::StrengthExceedsMax(10, 5))));
+        assert!(matches!(
+            result,
+            Err(VotingError::StrengthExceedsMax(10, 5))
+        ));
     }
 
     #[test]
@@ -736,7 +751,9 @@ mod tests {
 
         session.record_vote(agent1, Vote::for_proposal(5)).unwrap();
         session.record_vote(agent2, Vote::for_proposal(3)).unwrap();
-        session.record_vote(agent3, Vote::against_proposal(4)).unwrap();
+        session
+            .record_vote(agent3, Vote::against_proposal(4))
+            .unwrap();
 
         let outcome = session.finalize().unwrap();
 
@@ -750,16 +767,21 @@ mod tests {
     fn test_voting_session_minimum_participation() {
         let proposal = Proposal::new("Test Proposal");
         let config = VotingConfig::default().with_min_participation(0.5);
-        let mut session = VotingSession::new("session1".to_string(), proposal, config)
-            .with_eligible_voters(10);
+        let mut session =
+            VotingSession::new("session1".to_string(), proposal, config).with_eligible_voters(10);
 
         // Only 4 out of 10 vote (40% < 50%)
         for i in 0..4 {
-            session.record_vote(SwarmAgentId::new(), Vote::for_proposal(1)).unwrap();
+            session
+                .record_vote(SwarmAgentId::new(), Vote::for_proposal(1))
+                .unwrap();
         }
 
         let result = session.finalize();
-        assert!(matches!(result, Err(VotingError::InsufficientParticipation(_, _))));
+        assert!(matches!(
+            result,
+            Err(VotingError::InsufficientParticipation(_, _))
+        ));
     }
 
     #[test]
@@ -768,8 +790,12 @@ mod tests {
         let config = VotingConfig::default();
         let mut session = VotingSession::new("session1".to_string(), proposal, config);
 
-        session.record_vote(SwarmAgentId::new(), Vote::for_proposal(5)).unwrap();
-        session.record_vote(SwarmAgentId::new(), Vote::against_proposal(3)).unwrap();
+        session
+            .record_vote(SwarmAgentId::new(), Vote::for_proposal(5))
+            .unwrap();
+        session
+            .record_vote(SwarmAgentId::new(), Vote::against_proposal(3))
+            .unwrap();
 
         let (votes_for, votes_against) = session.current_tally();
         assert_eq!(votes_for, 5);
@@ -802,9 +828,9 @@ mod tests {
 
         let agent_id = SwarmAgentId::new();
         let vote = Vote::for_proposal(5);
-        
+
         let result = session.record_vote(agent_id, vote).unwrap();
-        
+
         // Linear cost: strength = cost
         assert_eq!(result.credits_consumed, 5);
         assert_eq!(result.credits_remaining, 95);

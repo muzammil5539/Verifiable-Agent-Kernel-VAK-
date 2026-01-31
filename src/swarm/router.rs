@@ -295,7 +295,7 @@ pub struct RouterConfig {
 impl Default for RouterConfig {
     fn default() -> Self {
         let mut topology_keywords = HashMap::new();
-        
+
         topology_keywords.insert(
             Topology::Debate,
             vec![
@@ -306,7 +306,7 @@ impl Default for RouterConfig {
                 "opinion".to_string(),
             ],
         );
-        
+
         topology_keywords.insert(
             Topology::Voting,
             vec![
@@ -317,7 +317,7 @@ impl Default for RouterConfig {
                 "prefer".to_string(),
             ],
         );
-        
+
         topology_keywords.insert(
             Topology::Hierarchical,
             vec![
@@ -328,7 +328,7 @@ impl Default for RouterConfig {
                 "assign".to_string(),
             ],
         );
-        
+
         topology_keywords.insert(
             Topology::Pipeline,
             vec![
@@ -339,7 +339,7 @@ impl Default for RouterConfig {
                 "stage".to_string(),
             ],
         );
-        
+
         topology_keywords.insert(
             Topology::Expert,
             vec![
@@ -350,7 +350,7 @@ impl Default for RouterConfig {
                 "knowledge".to_string(),
             ],
         );
-        
+
         topology_keywords.insert(
             Topology::Adversarial,
             vec![
@@ -415,13 +415,18 @@ impl ProtocolRouter {
     }
 
     /// Route a task to the best topology
-    pub fn route(&self, task: &str, complexity: TaskComplexity, available_agents: usize) -> RoutingDecision {
+    pub fn route(
+        &self,
+        task: &str,
+        complexity: TaskComplexity,
+        available_agents: usize,
+    ) -> RoutingDecision {
         let task_lower = task.to_lowercase();
         let characteristics = self.analyze_task(&task_lower);
-        
+
         // Score each topology
         let mut scores: Vec<(Topology, f64)> = Vec::new();
-        
+
         for topology in [
             Topology::Solo,
             Topology::Hierarchical,
@@ -458,7 +463,8 @@ impl ProtocolRouter {
         );
 
         // Calculate suggested agents
-        let suggested_agents = self.calculate_suggested_agents(best_topology, complexity, available_agents);
+        let suggested_agents =
+            self.calculate_suggested_agents(best_topology, complexity, available_agents);
 
         RoutingDecision {
             topology: best_topology,
@@ -480,7 +486,7 @@ impl ProtocolRouter {
         let sequential_keywords = ["then", "after", "next", "step", "first"];
 
         let mut detected_keywords = Vec::new();
-        
+
         for keyword in &decision_keywords {
             if task.contains(keyword) {
                 detected_keywords.push(keyword.to_string());
@@ -640,7 +646,7 @@ impl ProtocolRouter {
 
         // Use the maximum of minimum requirements
         let suggested = min.max(complexity_min);
-        
+
         // Cap at optimal or available, whichever is lower
         suggested.min(optimal).min(available_agents)
     }
@@ -691,7 +697,7 @@ mod tests {
     fn test_route_simple_task() {
         let router = ProtocolRouter::new(RouterConfig::default());
         let decision = router.route("Calculate 2 + 2", TaskComplexity::Low, 1);
-        
+
         // Should select Solo for simple task with 1 agent
         assert_eq!(decision.topology, Topology::Solo);
     }
@@ -704,7 +710,7 @@ mod tests {
             TaskComplexity::Medium,
             5,
         );
-        
+
         // Should lean towards debate topology
         assert!(decision.confidence > 0.0);
     }
@@ -717,7 +723,7 @@ mod tests {
             TaskComplexity::High,
             6,
         );
-        
+
         // Should select adversarial for security task
         assert_eq!(decision.topology, Topology::Adversarial);
     }
@@ -730,7 +736,7 @@ mod tests {
             TaskComplexity::Medium,
             5,
         );
-        
+
         // Should select voting topology
         assert_eq!(decision.topology, Topology::Voting);
     }
@@ -743,7 +749,7 @@ mod tests {
             TaskComplexity::Medium,
             4,
         );
-        
+
         // Should lean towards pipeline topology
         assert!(decision.task_characteristics.sequential);
     }
@@ -756,7 +762,7 @@ mod tests {
             TaskComplexity::High,
             1, // Only 1 agent available
         );
-        
+
         // Should fall back to Solo since not enough agents for other topologies
         assert_eq!(decision.topology, Topology::Solo);
     }
@@ -766,7 +772,7 @@ mod tests {
         let selection = TopologySelection::new(Topology::Debate, 0.8)
             .with_reason("Task involves decision-making")
             .with_alternative(Topology::Voting, 0.6);
-        
+
         assert_eq!(selection.topology, Topology::Debate);
         assert_eq!(selection.reasons.len(), 1);
         assert_eq!(selection.alternatives.len(), 1);
@@ -775,25 +781,29 @@ mod tests {
     #[test]
     fn test_task_characteristics_detection() {
         let router = ProtocolRouter::new(RouterConfig::default());
-        
+
         // Test decision detection
         let decision = router.route("Choose the best option", TaskComplexity::Medium, 3);
         assert!(decision.task_characteristics.requires_decision);
-        
+
         // Test risk detection
-        let decision = router.route("Check for security vulnerabilities", TaskComplexity::Medium, 3);
+        let decision = router.route(
+            "Check for security vulnerabilities",
+            TaskComplexity::Medium,
+            3,
+        );
         assert!(decision.task_characteristics.involves_risk);
     }
 
     #[test]
     fn test_suggested_agents_calculation() {
         let router = ProtocolRouter::new(RouterConfig::default());
-        
+
         // With plenty of agents
         let decision = router.route("Complex task", TaskComplexity::High, 10);
         assert!(decision.suggested_agents >= TaskComplexity::High.min_agents());
         assert!(decision.suggested_agents <= 10);
-        
+
         // With limited agents
         let decision = router.route("Complex task", TaskComplexity::High, 2);
         assert!(decision.suggested_agents <= 2);

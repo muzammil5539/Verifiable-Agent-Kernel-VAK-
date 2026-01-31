@@ -25,30 +25,29 @@
 //! let voting = QuadraticVoting::new(100); // 100 credits per agent
 //! ```
 
-pub mod voting;
-pub mod router;
-pub mod messages;
 pub mod consensus;
+pub mod messages;
+pub mod router;
+pub mod voting;
 
 pub use voting::{
-    QuadraticVoting, Vote, VoteResult, VotingSession, VotingError,
-    VotingConfig, VotingOutcome, AgentCredits,
+    AgentCredits, QuadraticVoting, Vote, VoteResult, VotingConfig, VotingError, VotingOutcome,
+    VotingSession,
 };
 
 pub use router::{
-    ProtocolRouter, RouterConfig, Topology, TopologySelection,
-    RoutingError, RoutingDecision, TaskComplexity,
+    ProtocolRouter, RouterConfig, RoutingDecision, RoutingError, TaskComplexity, Topology,
+    TopologySelection,
 };
 
 pub use messages::{
-    SwarmMessage, MessageType, MessagePriority, MessageId,
-    Proposal, Critique, Agreement, Disagreement, Evidence,
+    Agreement, Critique, Disagreement, Evidence, MessageId, MessagePriority, MessageType, Proposal,
+    SwarmMessage,
 };
 
 pub use consensus::{
-    ConsensusProtocol, ConsensusMechanism, ConsensusResult,
-    ConsensusError, ConsensusConfig, MajorityConsensus,
-    WeightedConsensus, BftConsensus,
+    BftConsensus, ConsensusConfig, ConsensusError, ConsensusMechanism, ConsensusProtocol,
+    ConsensusResult, MajorityConsensus, WeightedConsensus,
 };
 
 use serde::{Deserialize, Serialize};
@@ -350,7 +349,7 @@ impl SwarmCoordinator {
     /// Create a new swarm coordinator
     pub fn new(config: SwarmConfig) -> Self {
         let (broadcast, _) = broadcast::channel(config.message_buffer_size);
-        
+
         Self {
             router: ProtocolRouter::new(RouterConfig::default()),
             config,
@@ -363,7 +362,7 @@ impl SwarmCoordinator {
     /// Register a new agent in the swarm
     pub async fn register_agent(&self, mut agent: SwarmAgent) -> SwarmResult<SwarmAgentId> {
         let mut agents = self.agents.write().await;
-        
+
         if agents.len() >= self.config.max_agents {
             return Err(SwarmError::InvalidConfig(
                 "Maximum agent limit reached".to_string(),
@@ -446,10 +445,10 @@ impl SwarmCoordinator {
     ) -> SwarmResult<String> {
         let session_id = Uuid::now_v7().to_string();
         let session = VotingSession::new(session_id.clone(), proposal, voting_config);
-        
+
         let mut sessions = self.voting_sessions.write().await;
         sessions.insert(session_id.clone(), session);
-        
+
         Ok(session_id)
     }
 
@@ -477,9 +476,9 @@ impl SwarmCoordinator {
 
         // Record the vote
         let mut sessions = self.voting_sessions.write().await;
-        let session = sessions
-            .get_mut(session_id)
-            .ok_or_else(|| SwarmError::InvalidConfig(format!("Session not found: {}", session_id)))?;
+        let session = sessions.get_mut(session_id).ok_or_else(|| {
+            SwarmError::InvalidConfig(format!("Session not found: {}", session_id))
+        })?;
 
         session.record_vote(agent_id.clone(), vote)?;
 
@@ -489,9 +488,9 @@ impl SwarmCoordinator {
     /// Finalize a voting session and get the result
     pub async fn finalize_voting(&self, session_id: &str) -> SwarmResult<VotingOutcome> {
         let mut sessions = self.voting_sessions.write().await;
-        let session = sessions
-            .get_mut(session_id)
-            .ok_or_else(|| SwarmError::InvalidConfig(format!("Session not found: {}", session_id)))?;
+        let session = sessions.get_mut(session_id).ok_or_else(|| {
+            SwarmError::InvalidConfig(format!("Session not found: {}", session_id))
+        })?;
 
         let outcome = session.finalize()?;
         Ok(outcome)
@@ -499,7 +498,8 @@ impl SwarmCoordinator {
 
     /// Select the best topology for a task
     pub async fn select_topology(&self, task: &str, complexity: TaskComplexity) -> RoutingDecision {
-        self.router.route(task, complexity, self.active_agent_count().await)
+        self.router
+            .route(task, complexity, self.active_agent_count().await)
     }
 
     /// Get the current configuration
@@ -542,8 +542,7 @@ mod tests {
 
     #[test]
     fn test_agent_credits() {
-        let mut agent = SwarmAgent::new("TestAgent", AgentRole::Worker)
-            .with_credits(100);
+        let mut agent = SwarmAgent::new("TestAgent", AgentRole::Worker).with_credits(100);
 
         assert!(agent.deduct_credits(50));
         assert_eq!(agent.credits, 50);
@@ -553,8 +552,7 @@ mod tests {
 
     #[test]
     fn test_agent_reputation() {
-        let mut agent = SwarmAgent::new("TestAgent", AgentRole::Worker)
-            .with_reputation(0.5);
+        let mut agent = SwarmAgent::new("TestAgent", AgentRole::Worker).with_reputation(0.5);
 
         agent.update_reputation(0.3);
         assert!((agent.reputation - 0.8).abs() < 0.001);
@@ -590,19 +588,19 @@ mod tests {
     async fn test_swarm_coordinator_creation() {
         let config = SwarmConfig::default();
         let coordinator = SwarmCoordinator::new(config);
-        
+
         assert_eq!(coordinator.active_agent_count().await, 0);
     }
 
     #[tokio::test]
     async fn test_register_agent() {
         let coordinator = SwarmCoordinator::new(SwarmConfig::default());
-        
+
         let agent = SwarmAgent::new("Agent1", AgentRole::Worker);
         let id = coordinator.register_agent(agent).await.unwrap();
-        
+
         assert_eq!(coordinator.active_agent_count().await, 1);
-        
+
         let retrieved = coordinator.get_agent(&id).await.unwrap();
         assert_eq!(retrieved.name, "Agent1");
     }
@@ -610,10 +608,10 @@ mod tests {
     #[tokio::test]
     async fn test_unregister_agent() {
         let coordinator = SwarmCoordinator::new(SwarmConfig::default());
-        
+
         let agent = SwarmAgent::new("Agent1", AgentRole::Worker);
         let id = coordinator.register_agent(agent).await.unwrap();
-        
+
         let removed = coordinator.unregister_agent(&id).await.unwrap();
         assert_eq!(removed.name, "Agent1");
         assert_eq!(coordinator.active_agent_count().await, 0);
@@ -622,7 +620,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_agents_by_role() {
         let coordinator = SwarmCoordinator::new(SwarmConfig::default());
-        
+
         coordinator
             .register_agent(SwarmAgent::new("Worker1", AgentRole::Worker))
             .await
@@ -635,10 +633,10 @@ mod tests {
             .register_agent(SwarmAgent::new("Leader1", AgentRole::Leader))
             .await
             .unwrap();
-        
+
         let workers = coordinator.list_agents_by_role(&AgentRole::Worker).await;
         assert_eq!(workers.len(), 2);
-        
+
         let leaders = coordinator.list_agents_by_role(&AgentRole::Leader).await;
         assert_eq!(leaders.len(), 1);
     }
@@ -647,7 +645,7 @@ mod tests {
     async fn test_max_agents_limit() {
         let config = SwarmConfig::new().with_max_agents(2);
         let coordinator = SwarmCoordinator::new(config);
-        
+
         coordinator
             .register_agent(SwarmAgent::new("Agent1", AgentRole::Worker))
             .await
@@ -656,12 +654,12 @@ mod tests {
             .register_agent(SwarmAgent::new("Agent2", AgentRole::Worker))
             .await
             .unwrap();
-        
+
         // Third agent should fail
         let result = coordinator
             .register_agent(SwarmAgent::new("Agent3", AgentRole::Worker))
             .await;
-        
+
         assert!(matches!(result, Err(SwarmError::InvalidConfig(_))));
     }
 

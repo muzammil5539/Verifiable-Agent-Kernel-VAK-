@@ -1,8 +1,8 @@
 //! Cryptographic Audit Logging Module
-//! 
+//!
 //! Provides tamper-evident, hash-chained audit logging for agent actions.
 
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Represents a single audit log entry with cryptographic chaining
@@ -74,13 +74,14 @@ impl AuditLogger {
         let agent_id = agent_id.into();
         let action = action.into();
         let resource = resource.into();
-        
+
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
-        let prev_hash = self.entries
+        let prev_hash = self
+            .entries
             .last()
             .map(|e| e.hash.clone())
             .unwrap_or_else(|| "0".repeat(64)); // Genesis hash
@@ -119,7 +120,7 @@ impl AuditLogger {
         }
 
         let genesis_hash = "0".repeat(64);
-        
+
         for (i, entry) in self.entries.iter().enumerate() {
             // Verify prev_hash linkage
             let expected_prev = if i == 0 {
@@ -162,18 +163,24 @@ impl AuditLogger {
     /// Exports audit log for compliance reporting
     pub fn export(&self) -> AuditReport {
         let total_entries = self.entries.len();
-        let allowed_count = self.entries.iter()
+        let allowed_count = self
+            .entries
+            .iter()
             .filter(|e| e.decision == AuditDecision::Allowed)
             .count();
-        let denied_count = self.entries.iter()
+        let denied_count = self
+            .entries
+            .iter()
             .filter(|e| e.decision == AuditDecision::Denied)
             .count();
-        let error_count = self.entries.iter()
+        let error_count = self
+            .entries
+            .iter()
             .filter(|e| matches!(e.decision, AuditDecision::Error(_)))
             .count();
 
         let chain_valid = self.verify_chain().is_ok();
-        
+
         let first_timestamp = self.entries.first().map(|e| e.timestamp);
         let last_timestamp = self.entries.last().map(|e| e.timestamp);
 
@@ -218,7 +225,7 @@ impl AuditLogger {
         hasher.update(resource.as_bytes());
         hasher.update(decision.to_string().as_bytes());
         hasher.update(prev_hash.as_bytes());
-        
+
         let result = hasher.finalize();
         hex::encode(result)
     }
@@ -256,13 +263,27 @@ pub enum AuditVerificationError {
 impl std::fmt::Display for AuditVerificationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::BrokenChain { entry_id, expected, found } => {
-                write!(f, "Broken chain at entry {}: expected prev_hash {}, found {}", 
-                    entry_id, expected, found)
+            Self::BrokenChain {
+                entry_id,
+                expected,
+                found,
+            } => {
+                write!(
+                    f,
+                    "Broken chain at entry {}: expected prev_hash {}, found {}",
+                    entry_id, expected, found
+                )
             }
-            Self::InvalidHash { entry_id, expected, found } => {
-                write!(f, "Invalid hash at entry {}: expected {}, found {}", 
-                    entry_id, expected, found)
+            Self::InvalidHash {
+                entry_id,
+                expected,
+                found,
+            } => {
+                write!(
+                    f,
+                    "Invalid hash at entry {}: expected {}, found {}",
+                    entry_id, expected, found
+                )
             }
         }
     }
@@ -299,7 +320,7 @@ mod tests {
     fn test_log_creates_entry() {
         let mut logger = AuditLogger::new();
         logger.log("agent-1", "read", "/data/file.txt", AuditDecision::Allowed);
-        
+
         assert_eq!(logger.entries().len(), 1);
         assert_eq!(logger.entries()[0].agent_id, "agent-1");
     }
@@ -312,7 +333,7 @@ mod tests {
         logger.log("agent-1", "delete", "/data/c.txt", AuditDecision::Allowed);
 
         assert!(logger.verify_chain().is_ok());
-        
+
         // Verify chain linkage
         assert_eq!(logger.entries()[1].prev_hash, logger.entries()[0].hash);
         assert_eq!(logger.entries()[2].prev_hash, logger.entries()[1].hash);
@@ -325,7 +346,7 @@ mod tests {
         logger.log("agent-2", "write", "/data/b.txt", AuditDecision::Denied);
 
         let report = logger.export();
-        
+
         assert_eq!(report.total_entries, 2);
         assert_eq!(report.allowed_count, 1);
         assert_eq!(report.denied_count, 1);

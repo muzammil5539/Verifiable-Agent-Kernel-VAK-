@@ -3,9 +3,9 @@
 //! This module defines the fundamental abstractions for policy evaluation,
 //! audit logging, state management, and tool execution within the kernel.
 
-use async_trait::async_trait;
 use crate::kernel::error::KernelError;
 use crate::kernel::types::{AgentId, ToolRequest, ToolResponse};
+use async_trait::async_trait;
 
 /// Context information for policy evaluation decisions.
 #[derive(Debug, Clone)]
@@ -265,7 +265,10 @@ mod tests {
             TraitPolicyDecision::Deny("reason".to_string()),
             TraitPolicyDecision::Deny("reason".to_string())
         );
-        assert_ne!(TraitPolicyDecision::Allow, TraitPolicyDecision::Deny("denied".to_string()));
+        assert_ne!(
+            TraitPolicyDecision::Allow,
+            TraitPolicyDecision::Deny("denied".to_string())
+        );
     }
 
     #[test]

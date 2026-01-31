@@ -120,7 +120,11 @@ impl fmt::Display for ImportError {
             ImportError::VerificationFailed(e) => write!(f, "Import verification failed: {}", e),
             ImportError::EmptyChain => write!(f, "Cannot import empty chain"),
             ImportError::OutOfOrder { index } => {
-                write!(f, "Episode at index {} is out of chronological order", index)
+                write!(
+                    f,
+                    "Episode at index {} is out of chronological order",
+                    index
+                )
             }
         }
     }
@@ -253,7 +257,15 @@ impl Episode {
         let timestamp = Utc::now();
         let metadata = HashMap::new();
 
-        let hash = Self::compute_hash(&id, &timestamp, &action, &observation, &thought, &metadata, &prev_hash);
+        let hash = Self::compute_hash(
+            &id,
+            &timestamp,
+            &action,
+            &observation,
+            &thought,
+            &metadata,
+            &prev_hash,
+        );
 
         Self {
             id,
@@ -278,7 +290,15 @@ impl Episode {
         let id = EpisodeId::new();
         let timestamp = Utc::now();
 
-        let hash = Self::compute_hash(&id, &timestamp, &action, &observation, &thought, &metadata, &prev_hash);
+        let hash = Self::compute_hash(
+            &id,
+            &timestamp,
+            &action,
+            &observation,
+            &thought,
+            &metadata,
+            &prev_hash,
+        );
 
         Self {
             id,
@@ -752,12 +772,7 @@ mod tests {
 
     #[test]
     fn test_episode_hash_verification() {
-        let episode = Episode::new(
-            "action".to_string(),
-            "observation".to_string(),
-            None,
-            None,
-        );
+        let episode = Episode::new("action".to_string(), "observation".to_string(), None, None);
 
         assert!(episode.verify_hash());
 
@@ -811,7 +826,10 @@ mod tests {
         assert_eq!(chain.len(), 2);
 
         // Second episode should link to first
-        assert_eq!(chain.episodes()[1].prev_hash, Some(chain.episodes()[0].hash));
+        assert_eq!(
+            chain.episodes()[1].prev_hash,
+            Some(chain.episodes()[0].hash)
+        );
     }
 
     #[test]
@@ -819,12 +837,7 @@ mod tests {
         let mut chain = EpisodeChain::new();
 
         for i in 0..5 {
-            let episode = Episode::new(
-                format!("action{}", i),
-                format!("obs{}", i),
-                None,
-                None,
-            );
+            let episode = Episode::new(format!("action{}", i), format!("obs{}", i), None, None);
             chain.append(episode);
         }
 
@@ -843,7 +856,10 @@ mod tests {
         chain.episodes[0].hash[0] ^= 0xFF;
 
         let result = chain.verify_chain();
-        assert!(matches!(result, Err(ChainVerificationError::HashMismatch { .. })));
+        assert!(matches!(
+            result,
+            Err(ChainVerificationError::HashMismatch { .. })
+        ));
     }
 
     #[test]
@@ -851,12 +867,7 @@ mod tests {
         let mut chain = EpisodeChain::new();
 
         for i in 0..3 {
-            let episode = Episode::new(
-                format!("action{}", i),
-                format!("obs{}", i),
-                None,
-                None,
-            );
+            let episode = Episode::new(format!("action{}", i), format!("obs{}", i), None, None);
             chain.append(episode);
         }
 
@@ -864,7 +875,10 @@ mod tests {
         chain.episodes[2].prev_hash = Some([0u8; 32]);
 
         let result = chain.verify_chain();
-        assert!(matches!(result, Err(ChainVerificationError::HashMismatch { .. })));
+        assert!(matches!(
+            result,
+            Err(ChainVerificationError::HashMismatch { .. })
+        ));
     }
 
     #[test]
@@ -948,11 +962,7 @@ mod tests {
         let mut memory = EpisodicMemory::new();
 
         for i in 0..10 {
-            memory.record_episode(
-                format!("action{}", i),
-                format!("obs{}", i),
-                None,
-            );
+            memory.record_episode(format!("action{}", i), format!("obs{}", i), None);
         }
 
         let recent = memory.get_recent(3);
@@ -1001,11 +1011,7 @@ mod tests {
             "result is 42".to_string(),
             Some("math operation".to_string()),
         );
-        memory.record_episode(
-            "check weather".to_string(),
-            "rainy today".to_string(),
-            None,
-        );
+        memory.record_episode("check weather".to_string(), "rainy today".to_string(), None);
 
         let weather_results = memory.search_by_content("weather");
         assert_eq!(weather_results.len(), 2);
@@ -1039,11 +1045,7 @@ mod tests {
         let mut memory = EpisodicMemory::new();
 
         for i in 0..5 {
-            memory.record_episode(
-                format!("action{}", i),
-                format!("obs{}", i),
-                None,
-            );
+            memory.record_episode(format!("action{}", i), format!("obs{}", i), None);
         }
 
         assert!(memory.verify_chain().is_ok());
@@ -1081,15 +1083,11 @@ mod tests {
         let mut memory = EpisodicMemory::new();
 
         for i in 0..3 {
-            memory.record_episode(
-                format!("action{}", i),
-                format!("obs{}", i),
-                None,
-            );
+            memory.record_episode(format!("action{}", i), format!("obs{}", i), None);
         }
 
         let mut exported = memory.export_chain();
-        
+
         // Tamper with an episode
         exported[1].action = "tampered".to_string();
 
@@ -1153,12 +1151,7 @@ mod tests {
         let mut chain = EpisodeChain::new();
 
         for i in 0..3 {
-            let episode = Episode::new(
-                format!("action{}", i),
-                format!("obs{}", i),
-                None,
-                None,
-            );
+            let episode = Episode::new(format!("action{}", i), format!("obs{}", i), None, None);
             chain.append(episode);
         }
 
@@ -1186,10 +1179,22 @@ mod tests {
         let prev_hash = None;
 
         let hash1 = Episode::compute_hash(
-            &id, &timestamp, action, observation, &thought, &metadata, &prev_hash
+            &id,
+            &timestamp,
+            action,
+            observation,
+            &thought,
+            &metadata,
+            &prev_hash,
         );
         let hash2 = Episode::compute_hash(
-            &id, &timestamp, action, observation, &thought, &metadata, &prev_hash
+            &id,
+            &timestamp,
+            action,
+            observation,
+            &thought,
+            &metadata,
+            &prev_hash,
         );
 
         assert_eq!(hash1, hash2);
@@ -1215,10 +1220,22 @@ mod tests {
         metadata2.insert("z".to_string(), serde_json::json!(1));
 
         let hash1 = Episode::compute_hash(
-            &id, &timestamp, action, observation, &thought, &metadata1, &prev_hash
+            &id,
+            &timestamp,
+            action,
+            observation,
+            &thought,
+            &metadata1,
+            &prev_hash,
         );
         let hash2 = Episode::compute_hash(
-            &id, &timestamp, action, observation, &thought, &metadata2, &prev_hash
+            &id,
+            &timestamp,
+            action,
+            observation,
+            &thought,
+            &metadata2,
+            &prev_hash,
         );
 
         assert_eq!(hash1, hash2);
@@ -1229,7 +1246,7 @@ mod tests {
         let mut memory = EpisodicMemory::new();
 
         memory.record_episode("action".to_string(), "obs".to_string(), None);
-        
+
         let hash = memory.get_chain_root_hash().unwrap();
         let episode = memory.get_by_hash(&hash);
         assert!(episode.is_some());

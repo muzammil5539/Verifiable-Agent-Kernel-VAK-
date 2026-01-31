@@ -16,16 +16,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use vak::audit::{AuditDecision, AuditLogger};
-use vak::memory::{
-    EpisodicMemory, Episode,
-    TimeTravelManager,
-    KnowledgeGraph,
-};
+use vak::memory::{Episode, EpisodicMemory, KnowledgeGraph, TimeTravelManager};
 use vak::policy::PolicyEngine;
 use vak::reasoner::{
-    ConstraintVerifier, Constraint, ConstraintKind, ConstraintValue,
-    FormalVerifier,
-    MockPrm, ProcessRewardModel, ReasoningStep,
+    Constraint, ConstraintKind, ConstraintValue, ConstraintVerifier, FormalVerifier, MockPrm,
+    ProcessRewardModel, ReasoningStep,
 };
 use vak::sandbox::registry::SkillRegistry;
 
@@ -203,12 +198,17 @@ impl CodeAuditor {
                 value: ConstraintValue::Integer(self.config.max_steps as i64),
             },
         );
-        
-        let result = self.constraint_verifier.verify(&step_constraint, context)
+
+        let result = self
+            .constraint_verifier
+            .verify(&step_constraint, context)
             .map_err(|e| format!("Verification error: {:?}", e))?;
-        
+
         if !result.is_satisfied() {
-            return Err(format!("Constraint violated: max_steps exceeded ({})", self.step_count));
+            return Err(format!(
+                "Constraint violated: max_steps exceeded ({})",
+                self.step_count
+            ));
         }
 
         // Check max files constraint
@@ -219,12 +219,17 @@ impl CodeAuditor {
                 value: ConstraintValue::Integer(self.config.max_files as i64),
             },
         );
-        
-        let result = self.constraint_verifier.verify(&files_constraint, context)
+
+        let result = self
+            .constraint_verifier
+            .verify(&files_constraint, context)
             .map_err(|e| format!("Verification error: {:?}", e))?;
-        
+
         if !result.is_satisfied() {
-            return Err(format!("Constraint violated: max_files exceeded ({})", self.files_analyzed.len()));
+            return Err(format!(
+                "Constraint violated: max_files exceeded ({})",
+                self.files_analyzed.len()
+            ));
         }
 
         Ok(())
@@ -241,11 +246,8 @@ impl CodeAuditor {
 
     /// Record a thought in episodic memory
     fn record_thought(&mut self, thought: &str) {
-        self.episodic_memory.record_episode(
-            "thought".to_string(),
-            thought.to_string(),
-            None,
-        );
+        self.episodic_memory
+            .record_episode("thought".to_string(), thought.to_string(), None);
     }
 
     /// Record an action in episodic memory
@@ -260,12 +262,18 @@ impl CodeAuditor {
     /// Analyze a file for security vulnerabilities and issues
     async fn analyze_file(&mut self, file_path: &str, content: &str) -> Result<(), String> {
         self.step_count += 1;
-        
+
         // Build context for constraint verification
         let mut context = HashMap::new();
-        context.insert("step_count".to_string(), ConstraintValue::Integer(self.step_count as i64));
-        context.insert("files_analyzed".to_string(), ConstraintValue::Integer(self.files_analyzed.len() as i64));
-        
+        context.insert(
+            "step_count".to_string(),
+            ConstraintValue::Integer(self.step_count as i64),
+        );
+        context.insert(
+            "files_analyzed".to_string(),
+            ConstraintValue::Integer(self.files_analyzed.len() as i64),
+        );
+
         // Verify constraints
         self.verify_constraints(&context)?;
 
@@ -278,7 +286,10 @@ impl CodeAuditor {
                 file_path,
                 AuditDecision::Denied,
             );
-            return Err(format!("Access denied: '{}' is a forbidden file", file_path));
+            return Err(format!(
+                "Access denied: '{}' is a forbidden file",
+                file_path
+            ));
         }
 
         // Log the allowed access
@@ -294,35 +305,50 @@ impl CodeAuditor {
         self.files_analyzed.push(file_path.to_string());
 
         // Create a checkpoint before analysis for potential rollback
-        let _checkpoint_id = self.time_travel.create_checkpoint(format!("pre-analysis:{}", file_path));
+        let _checkpoint_id = self
+            .time_travel
+            .create_checkpoint(format!("pre-analysis:{}", file_path));
 
         // Analyze the content for various issues
         self.analyze_for_sql_injection(file_path, content).await?;
-        self.analyze_for_hardcoded_secrets(file_path, content).await?;
-        self.analyze_for_input_validation(file_path, content).await?;
+        self.analyze_for_hardcoded_secrets(file_path, content)
+            .await?;
+        self.analyze_for_input_validation(file_path, content)
+            .await?;
         self.analyze_for_error_handling(file_path, content).await?;
 
         Ok(())
     }
 
     /// Check for SQL injection vulnerabilities
-    async fn analyze_for_sql_injection(&mut self, file_path: &str, content: &str) -> Result<(), String> {
+    async fn analyze_for_sql_injection(
+        &mut self,
+        file_path: &str,
+        content: &str,
+    ) -> Result<(), String> {
         self.step_count += 1;
-        
+
         // Record the thought process
         self.record_thought("Checking for potential SQL injection vulnerabilities");
 
         // Create reasoning step for PRM scoring
-        let reasoning_step = ReasoningStep::new(self.step_count, "Analyzing for SQL injection patterns")
-            .with_action("Pattern matching for string concatenation in SQL queries")
-            .with_observation("Scanning for vulnerable patterns like query concatenation");
+        let reasoning_step =
+            ReasoningStep::new(self.step_count, "Analyzing for SQL injection patterns")
+                .with_action("Pattern matching for string concatenation in SQL queries")
+                .with_observation("Scanning for vulnerable patterns like query concatenation");
 
         // Score the reasoning step
-        let score = self.prm.score_step(&reasoning_step, "SQL injection analysis").await
+        let score = self
+            .prm
+            .score_step(&reasoning_step, "SQL injection analysis")
+            .await
             .map_err(|e| format!("PRM scoring failed: {:?}", e))?;
 
         if score.score < self.config.prm_threshold {
-            self.record_thought(&format!("Low confidence reasoning (score: {}), reconsidering approach", score.score));
+            self.record_thought(&format!(
+                "Low confidence reasoning (score: {}), reconsidering approach",
+                score.score
+            ));
             return Ok(()); // Skip this analysis if confidence is too low
         }
 
@@ -361,10 +387,13 @@ impl CodeAuditor {
                         ),
                         confidence: score.score,
                     };
-                    
+
                     self.findings.push(finding.clone());
-                    self.record_action(&format!("Found SQL injection vulnerability at line {}", line_num + 1));
-                    
+                    self.record_action(&format!(
+                        "Found SQL injection vulnerability at line {}",
+                        line_num + 1
+                    ));
+
                     // Log the finding
                     self.audit_logger.log(
                         "code-auditor",
@@ -380,16 +409,23 @@ impl CodeAuditor {
     }
 
     /// Check for hardcoded secrets
-    async fn analyze_for_hardcoded_secrets(&mut self, file_path: &str, content: &str) -> Result<(), String> {
+    async fn analyze_for_hardcoded_secrets(
+        &mut self,
+        file_path: &str,
+        content: &str,
+    ) -> Result<(), String> {
         self.step_count += 1;
-        
+
         self.record_thought("Checking for hardcoded secrets and credentials");
 
         let reasoning_step = ReasoningStep::new(self.step_count, "Analyzing for hardcoded secrets")
             .with_action("Pattern matching for API keys, passwords, and tokens")
             .with_observation("Scanning for secret patterns in string literals");
 
-        let score = self.prm.score_step(&reasoning_step, "Hardcoded secret analysis").await
+        let score = self
+            .prm
+            .score_step(&reasoning_step, "Hardcoded secret analysis")
+            .await
             .map_err(|e| format!("PRM scoring failed: {:?}", e))?;
 
         // Patterns indicating hardcoded secrets
@@ -411,7 +447,7 @@ impl CodeAuditor {
 
         for (line_num, line) in content.lines().enumerate() {
             let line_lower = line.to_lowercase();
-            
+
             for (pattern, desc) in &secret_patterns {
                 if line_lower.contains(pattern) && (line.contains("=") || line.contains(":")) {
                     // Check if it's an actual assignment, not just a variable name
@@ -432,9 +468,12 @@ impl CodeAuditor {
                             ),
                             confidence: score.score,
                         };
-                        
+
                         self.findings.push(finding);
-                        self.record_action(&format!("Found potential hardcoded secret at line {}", line_num + 1));
+                        self.record_action(&format!(
+                            "Found potential hardcoded secret at line {}",
+                            line_num + 1
+                        ));
                     }
                 }
             }
@@ -444,23 +483,39 @@ impl CodeAuditor {
     }
 
     /// Check for input validation issues
-    async fn analyze_for_input_validation(&mut self, file_path: &str, content: &str) -> Result<(), String> {
+    async fn analyze_for_input_validation(
+        &mut self,
+        file_path: &str,
+        content: &str,
+    ) -> Result<(), String> {
         self.step_count += 1;
-        
+
         self.record_thought("Checking for missing input validation");
 
         let reasoning_step = ReasoningStep::new(self.step_count, "Analyzing for input validation")
             .with_action("Checking user input handling patterns")
             .with_observation("Looking for direct use of user input without validation");
 
-        let score = self.prm.score_step(&reasoning_step, "Input validation analysis").await
+        let score = self
+            .prm
+            .score_step(&reasoning_step, "Input validation analysis")
+            .await
             .map_err(|e| format!("PRM scoring failed: {:?}", e))?;
 
         // Patterns indicating potential input validation issues
         let risky_patterns = [
-            ("unwrap()", "Unchecked unwrap on potentially fallible operation"),
-            (".expect(", "Consider using proper error handling instead of expect"),
-            ("unsafe {", "Unsafe code block detected - requires careful review"),
+            (
+                "unwrap()",
+                "Unchecked unwrap on potentially fallible operation",
+            ),
+            (
+                ".expect(",
+                "Consider using proper error handling instead of expect",
+            ),
+            (
+                "unsafe {",
+                "Unsafe code block detected - requires careful review",
+            ),
             ("eval(", "Use of eval() is dangerous"),
             ("exec(", "Use of exec() requires careful input validation"),
         ];
@@ -477,13 +532,17 @@ impl CodeAuditor {
                         description: format!("{}: {}", desc, pattern),
                         suggested_fix: Some(
                             "Use proper error handling with match or if-let. \
-                             Consider using the ? operator for propagating errors.".to_string()
+                             Consider using the ? operator for propagating errors."
+                                .to_string(),
                         ),
                         confidence: score.score,
                     };
-                    
+
                     self.findings.push(finding);
-                    self.record_action(&format!("Found input validation issue at line {}", line_num + 1));
+                    self.record_action(&format!(
+                        "Found input validation issue at line {}",
+                        line_num + 1
+                    ));
                 }
             }
         }
@@ -492,25 +551,41 @@ impl CodeAuditor {
     }
 
     /// Check for error handling issues
-    async fn analyze_for_error_handling(&mut self, file_path: &str, content: &str) -> Result<(), String> {
+    async fn analyze_for_error_handling(
+        &mut self,
+        file_path: &str,
+        content: &str,
+    ) -> Result<(), String> {
         self.step_count += 1;
-        
+
         self.record_thought("Checking for error handling issues");
 
         let reasoning_step = ReasoningStep::new(self.step_count, "Analyzing error handling")
             .with_action("Checking for proper error propagation and handling")
             .with_observation("Looking for swallowed errors or missing error handling");
 
-        let score = self.prm.score_step(&reasoning_step, "Error handling analysis").await
+        let score = self
+            .prm
+            .score_step(&reasoning_step, "Error handling analysis")
+            .await
             .map_err(|e| format!("PRM scoring failed: {:?}", e))?;
 
         // Patterns indicating error handling issues
         let error_patterns = [
             ("let _ =", "Silently discarding a Result or value"),
             ("Ok(())", "Empty Ok return - ensure this is intentional"),
-            ("panic!(", "Explicit panic - consider returning a Result instead"),
-            ("todo!()", "Unimplemented code - should be completed before production"),
-            ("unimplemented!()", "Unimplemented code - should be completed before production"),
+            (
+                "panic!(",
+                "Explicit panic - consider returning a Result instead",
+            ),
+            (
+                "todo!()",
+                "Unimplemented code - should be completed before production",
+            ),
+            (
+                "unimplemented!()",
+                "Unimplemented code - should be completed before production",
+            ),
         ];
 
         for (line_num, line) in content.lines().enumerate() {
@@ -521,7 +596,7 @@ impl CodeAuditor {
                     } else {
                         FindingSeverity::Low
                     };
-                    
+
                     let finding = CodeFinding {
                         id: format!("ERR-{}-{}", file_path.replace('/', "_"), line_num + 1),
                         severity,
@@ -531,11 +606,12 @@ impl CodeAuditor {
                         description: format!("{}: {}", desc, pattern),
                         suggested_fix: Some(
                             "Properly handle errors using match, if-let, or the ? operator. \
-                             Log errors appropriately before discarding.".to_string()
+                             Log errors appropriately before discarding."
+                                .to_string(),
                         ),
                         confidence: score.score,
                     };
-                    
+
                     self.findings.push(finding);
                 }
             }
@@ -583,10 +659,11 @@ impl CodeAuditor {
     fn get_episodic_chain(&self) -> Vec<&Episode> {
         self.episodic_memory.get_recent(100) // Get up to 100 recent episodes
     }
-    
+
     /// Get the root hash of the episodic memory chain
     fn get_episodic_root_hash(&self) -> String {
-        self.episodic_memory.get_chain_root_hash()
+        self.episodic_memory
+            .get_chain_root_hash()
             .map(|h| hex::encode(h))
             .unwrap_or_else(|| "0".repeat(64))
     }
@@ -607,25 +684,40 @@ struct AuditReceipt {
 
 impl std::fmt::Display for AuditReceipt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "═══════════════════════════════════════════════════════════════")?;
+        writeln!(
+            f,
+            "═══════════════════════════════════════════════════════════════"
+        )?;
         writeln!(f, "                    AUDIT RECEIPT")?;
-        writeln!(f, "═══════════════════════════════════════════════════════════════")?;
+        writeln!(
+            f,
+            "═══════════════════════════════════════════════════════════════"
+        )?;
         writeln!(f, "Session ID:    {}", self.session_id)?;
         writeln!(f, "Timestamp:     {}", self.timestamp)?;
         writeln!(f, "Total Steps:   {}", self.total_steps)?;
         writeln!(f, "Files:         {}", self.files_analyzed.len())?;
         writeln!(f, "Findings:      {}", self.findings_count)?;
-        writeln!(f, "───────────────────────────────────────────────────────────────")?;
+        writeln!(
+            f,
+            "───────────────────────────────────────────────────────────────"
+        )?;
         writeln!(f, "Findings by Severity:")?;
         for (severity, count) in &self.findings_by_severity {
             writeln!(f, "  {:12} {}", severity, count)?;
         }
-        writeln!(f, "───────────────────────────────────────────────────────────────")?;
+        writeln!(
+            f,
+            "───────────────────────────────────────────────────────────────"
+        )?;
         writeln!(f, "Audit Chain Hash:")?;
         writeln!(f, "  {}", self.audit_chain_hash)?;
         writeln!(f, "Episodic Memory Hash:")?;
         writeln!(f, "  {}", self.episodic_memory_hash)?;
-        writeln!(f, "═══════════════════════════════════════════════════════════════")?;
+        writeln!(
+            f,
+            "═══════════════════════════════════════════════════════════════"
+        )?;
         Ok(())
     }
 }
@@ -701,9 +793,7 @@ fn handle_error() -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter("vak=info")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("vak=info").init();
 
     println!("\n╔════════════════════════════════════════════════════════════════╗");
     println!("║     VAK AUTONOMOUS CODE AUDITOR - MVP DEMO                    ║");
@@ -725,7 +815,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ==========================================================================
     println!("═══════════════════════════════════════════════════════════════");
     println!("DEMO 1: Testing access control (forbidden file access)\n");
-    
+
     match auditor.analyze_file(".env", "SECRET=value").await {
         Ok(_) => println!("   ❌ Unexpected: Access should have been denied!"),
         Err(e) => println!("   ✅ Access correctly denied: {}", e),
@@ -737,15 +827,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ==========================================================================
     println!("═══════════════════════════════════════════════════════════════");
     println!("DEMO 2: Analyzing vulnerable code\n");
-    
-    auditor.analyze_file("src/vulnerable.rs", SAMPLE_VULNERABLE_CODE).await?;
-    
+
+    auditor
+        .analyze_file("src/vulnerable.rs", SAMPLE_VULNERABLE_CODE)
+        .await?;
+
     // Display findings
     println!("   📋 FINDINGS:\n");
     for finding in auditor.get_findings() {
         println!("   ┌──────────────────────────────────────────────────────────");
         println!("   │ {} [{}]", finding.severity, finding.category);
-        println!("   │ File: {}:{}-{}", finding.file_path, finding.line_range.0, finding.line_range.1);
+        println!(
+            "   │ File: {}:{}-{}",
+            finding.file_path, finding.line_range.0, finding.line_range.1
+        );
         println!("   │ ID: {}", finding.id);
         println!("   │ Description: {}", finding.description);
         if let Some(fix) = &finding.suggested_fix {
@@ -760,11 +855,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ==========================================================================
     println!("═══════════════════════════════════════════════════════════════");
     println!("DEMO 3: Analyzing safe code\n");
-    
+
     let initial_findings = auditor.get_findings().len();
-    auditor.analyze_file("src/safe_code.rs", SAMPLE_SAFE_CODE).await?;
+    auditor
+        .analyze_file("src/safe_code.rs", SAMPLE_SAFE_CODE)
+        .await?;
     let new_findings = auditor.get_findings().len() - initial_findings;
-    
+
     println!("   ✅ Safe code analysis complete");
     println!("   New findings: {} (expected: minimal)\n", new_findings);
 
@@ -773,10 +870,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ==========================================================================
     println!("═══════════════════════════════════════════════════════════════");
     println!("DEMO 4: Episodic Memory Chain (Reasoning Trace)\n");
-    
+
     let episodes = auditor.get_episodic_chain();
     println!("   Total episodes recorded: {}\n", episodes.len());
-    
+
     // Show last 10 episodes
     let start = episodes.len().saturating_sub(10);
     for (i, episode) in episodes.iter().enumerate().skip(start) {
@@ -795,7 +892,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ==========================================================================
     println!("═══════════════════════════════════════════════════════════════");
     println!("DEMO 5: Cryptographic Audit Receipt\n");
-    
+
     let receipt = auditor.generate_audit_receipt();
     println!("{}", receipt);
 
@@ -803,7 +900,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Demo 6: Verify audit chain integrity
     // ==========================================================================
     println!("DEMO 6: Audit Chain Verification\n");
-    
+
     match auditor.audit_logger.verify_chain() {
         Ok(_) => println!("   ✅ Audit chain integrity verified - no tampering detected\n"),
         Err(e) => println!("   ❌ Audit chain verification failed: {:?}\n", e),
@@ -846,7 +943,7 @@ mod tests {
     async fn test_forbidden_file_access() {
         let config = CodeAuditorConfig::default();
         let mut auditor = CodeAuditor::new(config);
-        
+
         let result = auditor.analyze_file(".env", "SECRET=value").await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("forbidden"));
@@ -856,30 +953,38 @@ mod tests {
     async fn test_sql_injection_detection() {
         let config = CodeAuditorConfig::default();
         let mut auditor = CodeAuditor::new(config);
-        
+
         let vulnerable_code = r#"
             let query = format!("SELECT * FROM users WHERE id = '{}'", user_id);
         "#;
-        
-        auditor.analyze_file("test.rs", vulnerable_code).await.unwrap();
-        
+
+        auditor
+            .analyze_file("test.rs", vulnerable_code)
+            .await
+            .unwrap();
+
         let findings = auditor.get_findings();
         assert!(!findings.is_empty());
-        assert!(findings.iter().any(|f| matches!(f.category, FindingCategory::SecurityVulnerability)));
+        assert!(findings
+            .iter()
+            .any(|f| matches!(f.category, FindingCategory::SecurityVulnerability)));
     }
 
     #[tokio::test]
     async fn test_hardcoded_secret_detection() {
         let config = CodeAuditorConfig::default();
         let mut auditor = CodeAuditor::new(config);
-        
+
         let vulnerable_code = r#"
             let api_key = "sk-1234567890abcdef";
             let password = "super_secret";
         "#;
-        
-        auditor.analyze_file("test.rs", vulnerable_code).await.unwrap();
-        
+
+        auditor
+            .analyze_file("test.rs", vulnerable_code)
+            .await
+            .unwrap();
+
         let findings = auditor.get_findings();
         assert!(!findings.is_empty());
     }
@@ -888,9 +993,12 @@ mod tests {
     async fn test_audit_chain_integrity() {
         let config = CodeAuditorConfig::default();
         let mut auditor = CodeAuditor::new(config);
-        
-        auditor.analyze_file("test.rs", "fn main() {}").await.unwrap();
-        
+
+        auditor
+            .analyze_file("test.rs", "fn main() {}")
+            .await
+            .unwrap();
+
         assert!(auditor.audit_logger.verify_chain().is_ok());
     }
 
@@ -898,9 +1006,12 @@ mod tests {
     async fn test_episodic_memory_recording() {
         let config = CodeAuditorConfig::default();
         let mut auditor = CodeAuditor::new(config);
-        
-        auditor.analyze_file("test.rs", "fn main() {}").await.unwrap();
-        
+
+        auditor
+            .analyze_file("test.rs", "fn main() {}")
+            .await
+            .unwrap();
+
         let episodes = auditor.get_episodic_chain();
         assert!(!episodes.is_empty());
     }
@@ -909,21 +1020,26 @@ mod tests {
     async fn test_max_steps_constraint() {
         let mut config = CodeAuditorConfig::default();
         config.max_steps = 5; // Very low limit
-        
+
         let mut auditor = CodeAuditor::new(config);
-        
+
         // First few analyses should succeed
-        auditor.analyze_file("test1.rs", "fn main() {}").await.unwrap();
-        
+        auditor
+            .analyze_file("test1.rs", "fn main() {}")
+            .await
+            .unwrap();
+
         // Eventually should hit the limit
         for i in 0..10 {
-            let result = auditor.analyze_file(&format!("test{}.rs", i), "fn main() {}").await;
+            let result = auditor
+                .analyze_file(&format!("test{}.rs", i), "fn main() {}")
+                .await;
             if result.is_err() {
                 assert!(result.unwrap_err().contains("max_steps"));
                 return;
             }
         }
-        
+
         // If we get here, the constraint wasn't enforced
         panic!("Max steps constraint should have been triggered");
     }

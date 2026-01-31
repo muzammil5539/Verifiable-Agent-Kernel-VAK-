@@ -25,7 +25,7 @@
 
 | Priority | Count | Status |
 |----------|-------|--------|
-| 🔴 Critical | 9 | 4 resolved, 5 remaining |
+| 🔴 Critical | 9 | 5 resolved, 4 remaining |
 | 🟠 High | 15 | Important for production |
 | 🟡 Medium | 17 | Should be addressed |
 | 🟢 Low | 10 | Nice to have |
@@ -287,46 +287,22 @@ Agent -> Kernel.execute_tool() -> Policy Check -> SkillRegistry.get(tool_name)
 
 ---
 
-### 🔴 Issue #7: Signature verification not enforced on skill loading
+### ✅ Issue #7: Signature verification not enforced on skill loading **[RESOLVED]**
 
 **Type**: Security  
 **Priority**: Critical  
 **Estimated Effort**: 2 days  
+**Status**: ✅ **RESOLVED** (Default strict verification, dev-only opt-out)
 
-**Description**:
-While skill signature verification code exists in `src/sandbox/registry.rs`, it's not enforced by default. Unsigned skills can be loaded and executed, creating a security vulnerability.
+**Resolution**:
+1. Signature verification is now **enabled by default** in `SkillRegistry::new` via a strict `SignatureConfig`.
+2. A dedicated `SignatureConfig::permissive_dev()` plus `SkillRegistry::new_permissive_dev(...)` provides an explicit, development-only path to allow unsigned skills.
+3. Registry emits `tracing::warn!` when an unsigned skill is loaded under dev mode and `tracing::info!` on successful verification, providing an audit-friendly trail.
+4. Documentation updated (`skills/README.md`) to call out mandatory signing and the dev-only escape hatch.
 
-**Affected Files**:
-- `src/sandbox/registry.rs` - `SkillRegistry::load_skill()` (lines 150-200)
-- `src/sandbox/mod.rs` - WasmSandbox initialization
-
-**Current Behavior**:
-- Signature verification is opt-in via `SignatureConfig::strict()`
-- Default mode is permissive (allows unsigned skills)
-- No warning when loading unsigned skills
-
-**Security Risk**:
-- Malicious skills can be injected
-- No chain of trust for skill provenance
-- Tampering with WASM modules goes undetected
-
-**Recommended Fix**:
-1. Make signature verification **mandatory by default**
-2. Add explicit flag to allow unsigned skills (dev mode only)
-3. Implement signing tool for skill developers:
-   ```bash
-   cargo run --bin vak-skill-sign -- skills/my_skill/
-   ```
-4. Add verification to CI/CD pipeline
-5. Log signature verification results to audit log
-
-**Configuration**:
-```rust
-// Should be default
-let registry = SkillRegistry::new()
-    .with_signature_verification(SignatureConfig::strict())
-    .build();
-```
+**Follow-ups**:
+- Provide the `vak-skill-sign` helper and wire verification into CI/CD once the signing tool lands.  
+- Route audit logs to the persistent backend (Issue #3) for full provenance capture.
 
 **Related Issues**: #19, #21
 

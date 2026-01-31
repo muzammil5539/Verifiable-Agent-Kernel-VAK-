@@ -173,11 +173,7 @@ pub struct SwarmMessage {
 
 impl SwarmMessage {
     /// Create a new message
-    pub fn new(
-        sender: SwarmAgentId,
-        message_type: MessageType,
-        content: MessageContent,
-    ) -> Self {
+    pub fn new(sender: SwarmAgentId, message_type: MessageType, content: MessageContent) -> Self {
         Self {
             id: MessageId::new(),
             sender,
@@ -826,8 +822,7 @@ mod tests {
         assert!(text_evidence.source.is_some());
         assert!((text_evidence.confidence - 0.95).abs() < 0.001);
 
-        let numeric_evidence = Evidence::numeric("Metric", 42.0)
-            .with_type(EvidenceType::Statistic);
+        let numeric_evidence = Evidence::numeric("Metric", 42.0).with_type(EvidenceType::Statistic);
 
         assert!(matches!(numeric_evidence.data, EvidenceData::Numeric(42.0)));
 
@@ -839,7 +834,7 @@ mod tests {
     fn test_swarm_message_creation() {
         let sender = SwarmAgentId::new();
         let proposal = Proposal::new("Test");
-        
+
         let message = SwarmMessage::new(
             sender.clone(),
             MessageType::Proposal,
@@ -856,7 +851,7 @@ mod tests {
     fn test_swarm_message_with_recipient() {
         let sender = SwarmAgentId::new();
         let recipient = SwarmAgentId::new();
-        
+
         let message = SwarmMessage::new(
             sender,
             MessageType::Query,
@@ -876,7 +871,7 @@ mod tests {
     fn test_swarm_message_reply() {
         let sender = SwarmAgentId::new();
         let original_id = MessageId::new();
-        
+
         let reply = SwarmMessage::new(
             sender,
             MessageType::Response,
