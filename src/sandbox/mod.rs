@@ -7,13 +7,22 @@
 //! - Resource-limited WASM execution (memory, CPU, time)
 //! - Skill registry with manifest-based permissions
 //! - Cryptographic signature verification (SBX-002)
+//! - Marketplace integration for skill discovery and installation
 
+pub mod marketplace;
 pub mod registry;
 
 // Re-export registry types for convenient access
 pub use registry::{
     PermissionError, RegistryError, SignatureConfig, SignatureError, SignatureVerificationResult,
     SkillId, SkillManifest, SkillPermissions, SkillRegistry, SkillSignatureVerifier,
+};
+
+// Re-export marketplace types
+pub use marketplace::{
+    MarketplaceClient, MarketplaceConfig, MarketplaceError, MarketplaceSkill,
+    SkillCategory, SkillLicense, SkillQuery, SkillReview, SearchResults,
+    InstallResult, UninstallResult, Publisher, SortOrder,
 };
 
 use std::time::{Duration, Instant};

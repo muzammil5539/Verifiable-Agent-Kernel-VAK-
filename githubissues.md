@@ -28,9 +28,102 @@
 |----------|-------|--------|
 | 🔴 Critical | 9 | **9 resolved, 0 remaining** |
 | 🟠 High | 15 | **15 resolved (Feb 2026), 0 remaining** ✅ |
-| 🟡 Medium | 17 | **5 resolved (Feb 2026), 12 remaining** |
+| 🟡 Medium | 17 | **8 resolved (Feb 2026), 9 remaining** |
 | 🟢 Low | 10 | Nice to have |
-| **Total** | **51** | 29 resolved |
+| **Total** | **51** | 32 resolved |
+
+---
+
+## Recently Resolved (February 1, 2026)
+
+### ✅ Multi-region S3 Replication [RESOLVED]
+
+**Type**: Feature / Disaster Recovery  
+**Priority**: Medium  
+**Status**: ✅ **RESOLVED** (February 2026)
+
+**Resolution**:
+Created `src/audit/multi_region.rs` with comprehensive multi-region S3 support:
+- `MultiRegionConfig` - Configuration for primary and replica regions
+- `MultiRegionS3Backend` - Full `AuditBackend` implementation
+- `ReplicationMode` - ActiveActive, ActivePassive, PrimaryOnly modes
+- `FailoverStrategy` - Automatic, Manual, FailClosed strategies
+- `RegionHealth` - Health monitoring with status tracking
+- Automatic failover when primary region becomes unhealthy
+- Manual failover and failback support
+- Cross-region consistency verification
+- 10 comprehensive unit tests
+
+**Key Features**:
+- Primary region configuration with replica support
+- Health checks with configurable intervals
+- Automatic failover to healthy replicas
+- Replication lag monitoring
+- Region-specific encryption settings (KMS support)
+
+---
+
+### ✅ WASM Skill Marketplace Integration [RESOLVED]
+
+**Type**: Feature / Ecosystem  
+**Priority**: Medium  
+**Status**: ✅ **RESOLVED** (February 2026)
+
+**Resolution**:
+Created `src/sandbox/marketplace.rs` with full marketplace client:
+- `MarketplaceClient` - Async client for skill marketplace API
+- `MarketplaceConfig` - Registry URL, caching, signature verification
+- `SkillQuery` - Search with filters (category, tags, publisher, rating)
+- `MarketplaceSkill` - Complete skill metadata structure
+- `SkillCategory`, `SkillLicense`, `Publisher` - Supporting types
+- `SecurityAudit`, `SecurityIssue` - Audit information
+- `InstallResult`, `UninstallResult` - Installation tracking
+- Dependency resolution with recursive installation
+- Hash verification for downloaded WASM binaries
+- Local caching with configurable TTL
+- Reviews and ratings support
+- 10 comprehensive unit tests
+
+**Key Features**:
+- Search skills with multiple filter criteria
+- Install/uninstall with dependency management
+- Publisher verification and trust levels
+- Security audit tracking
+- Version management with semver
+- External system integration (webhooks)
+
+---
+
+### ✅ Real-time Audit Log Streaming [RESOLVED]
+
+**Type**: Feature / Observability  
+**Priority**: Medium  
+**Status**: ✅ **RESOLVED** (February 2026)
+
+**Resolution**:
+Created `src/audit/streaming.rs` with pub/sub streaming system:
+- `AuditStreamManager` - Central manager for subscribers and events
+- `StreamConfig` - Presets for default, high_throughput, low_latency
+- `StreamEvent` - Event types: AuditEntry, AuditBatch, Alert, Heartbeat
+- `StreamFilter` - Filter by agent, action, decision, severity
+- `SubscriberId`, `SubscriberInfo` - Subscriber management
+- `StreamAlert` - Alerting with severity levels
+- `StreamPayload` - Flexible payload types
+- `StreamStats` - Throughput and delivery metrics
+- `WebhookSink` - External integration interface
+- Heartbeat support with configurable intervals
+- Event replay from recent events buffer
+- Broadcast channel for multiple subscribers
+- 15 comprehensive unit tests
+
+**Key Features**:
+- Subscribe to real-time audit events
+- Filter events by multiple criteria
+- Configurable event batching
+- Heartbeat for connection health
+- Event replay for catch-up
+- External webhook integration
+- Metrics for monitoring
 
 ---
 

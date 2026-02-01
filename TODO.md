@@ -115,12 +115,45 @@
     - Command execution interception
     - High-risk goal detection
     - Blocked command enforcement
+- [x] **Multi-region S3 replication for audit logs** (February 2026)
+  - Created `src/audit/multi_region.rs` with full multi-region support
+  - `MultiRegionConfig` with primary and replica region configuration
+  - `MultiRegionS3Backend` implementing `AuditBackend` trait
+  - `ReplicationMode`: ActiveActive, ActivePassive, PrimaryOnly
+  - `FailoverStrategy`: Automatic, Manual, FailClosed
+  - `RegionHealth` and `RegionHealthStatus` for monitoring
+  - Automatic failover with health checks
+  - Manual failover and failback support
+  - Cross-region consistency verification
+  - 10 comprehensive unit tests
+- [x] **Enhanced WASM skill marketplace integration** (February 2026)
+  - Created `src/sandbox/marketplace.rs` with full marketplace client
+  - `MarketplaceClient` for skill discovery, installation, and management
+  - `MarketplaceConfig` with registry URL, caching, signature verification
+  - `SkillQuery` with filtering by category, tags, publisher, rating
+  - `MarketplaceSkill` with full metadata (versions, dependencies, reviews, audits)
+  - `SkillCategory`, `SkillLicense`, `Publisher`, `SecurityAudit` types
+  - `InstallResult` and `UninstallResult` for skill management
+  - Dependency resolution and hash verification
+  - Reviews and ratings support
+  - Local caching with configurable TTL
+  - 10 comprehensive unit tests
+- [x] **Real-time audit log streaming** (February 2026)
+  - Created `src/audit/streaming.rs` with pub/sub streaming
+  - `AuditStreamManager` for managing subscribers and events
+  - `StreamConfig` with presets: default, high_throughput, low_latency
+  - `StreamEvent` with types: AuditEntry, AuditBatch, Alert, Heartbeat, etc.
+  - `StreamFilter` for filtering events by agent, action, decision, severity
+  - `SubscriberId` and `SubscriberInfo` for subscriber management
+  - `StreamAlert` with severity levels for alerting
+  - `WebhookSink` for external system integration (Kafka, Redis ready)
+  - `StreamStats` for monitoring throughput and delivery
+  - Heartbeat support with configurable interval
+  - Event replay from recent events buffer
+  - 15 comprehensive unit tests
 
 ## In Progress
 
-- [ ] Multi-region S3 replication for audit logs
-- [ ] Enhanced WASM skill marketplace integration
-- [ ] Real-time audit log streaming
 - [ ] GraphQL API for audit queries
 - [ ] Enhanced PRM model fine-tuning tools
 - [ ] Kubernetes operator for VAK deployment
@@ -177,9 +210,6 @@
 
 ## Future Work
 
-- [ ] Multi-region S3 replication for audit logs
-- [ ] Enhanced WASM skill marketplace integration
-- [ ] Real-time audit log streaming
 - [ ] GraphQL API for audit queries
 - [ ] Enhanced PRM model fine-tuning tools
 - [ ] Kubernetes operator for VAK deployment

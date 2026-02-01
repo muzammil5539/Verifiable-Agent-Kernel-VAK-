@@ -10,6 +10,8 @@
 //! - Chain verification and integrity checks
 //! - SQLite backend for queryable storage (Issue #4)
 //! - S3 backend for cloud archival
+//! - Multi-region S3 replication for disaster recovery
+//! - Real-time streaming for live monitoring
 //! - Flight recorder for shadow mode (#43)
 //!
 //! # Example
@@ -25,7 +27,9 @@
 //! ```
 
 pub mod flight_recorder;
+pub mod multi_region;
 pub mod s3_backend;
+pub mod streaming;
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
