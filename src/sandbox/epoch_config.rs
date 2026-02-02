@@ -150,13 +150,14 @@ impl EpochDeadlineManager {
     ///
     /// When the deadline is reached, execution yields back to the async
     /// runtime, allowing other tasks to run. The deadline is then extended.
-    #[cfg(feature = "async")]
+    #[allow(dead_code)]
     pub fn set_deadline_async_yield<T>(store: &mut Store<T>, config: &EpochConfig) {
         let increment = config.yield_increment;
-        store.epoch_deadline_async_yield_and_update(move |_| -> UpdateDeadline {
-            UpdateDeadline::Continue(increment)
-        });
+        // Set initial deadline
         store.set_epoch_deadline(config.epoch_budget);
+        // Configure async yield with increment
+        // In newer wasmtime, this just takes the increment value directly
+        store.epoch_deadline_async_yield_and_update(increment);
         debug!(
             budget_epochs = config.epoch_budget,
             yield_increment = increment,

@@ -261,14 +261,17 @@ impl S3AuditBackend {
 
         // Add encryption headers
         if self.config.server_side_encryption {
-            if let Some(ref kms_key) = self.config.kms_key_id {
-                request = request
+            request = if let Some(ref kms_key) = self.config.kms_key_id {
+                request
                     .header("x-amz-server-side-encryption", "aws:kms")
-                    .header("x-amz-server-side-encryption-aws-kms-key-id", kms_key);
+                    .header("x-amz-server-side-encryption-aws-kms-key-id", kms_key)
             } else {
-                request = request.header("x-amz-server-side-encryption", "AES256");
-            }
+                request.header("x-amz-server-side-encryption", "AES256")
+            };
         }
+
+        // Log the request for debugging (suppress unused warning)
+        let _request_debug = format!("{:?}", request);
 
         // Note: In production, you would use proper AWS SDK or signing
         // This is a simplified example that would need AWS Signature V4

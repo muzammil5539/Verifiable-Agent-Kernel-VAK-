@@ -8,6 +8,7 @@
 //! - **LangChain**: Tool and chain execution hooks
 //! - **AutoGPT**: Task planning and execution interception
 //! - **LlamaIndex**: Query engine integration
+//! - **MCP**: Model Context Protocol server (INT-001, INT-002)
 //!
 //! # Architecture
 //!
@@ -25,10 +26,16 @@
 //!                        └──────────────────┘
 //! ```
 
-pub mod langchain;
 pub mod autogpt;
 pub mod common;
+pub mod langchain;
+pub mod mcp;
 
-pub use langchain::{LangChainAdapter, LangChainConfig, ToolCall, ChainExecution};
-pub use autogpt::{AutoGPTAdapter, AutoGPTConfig, TaskPlan, ExecutionResult};
-pub use common::{AdapterError, AdapterResult, InterceptionHook, HookDecision};
+pub use autogpt::{AutoGPTAdapter, AutoGPTConfig, ExecutionResult, TaskPlan};
+pub use common::{AdapterError, AdapterResult, HookDecision, InterceptionHook};
+pub use langchain::{ChainExecution, LangChainAdapter, LangChainConfig, ToolCall};
+pub use mcp::{
+    ContentItem, JsonRpcError, JsonRpcRequest, JsonRpcResponse, McpConfig, McpError,
+    McpResource, McpResult, McpServer, McpTool, ServerCapabilities, ServerInfo,
+    ToolCallResult, ToolHandler, create_vak_mcp_server,
+};

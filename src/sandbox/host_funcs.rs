@@ -486,6 +486,11 @@ impl HostFuncLinker {
         &mut self.linker
     }
 
+    /// Get the permission cache
+    pub fn permissions(&self) -> &Arc<PermissionCache> {
+        &self.permissions
+    }
+
     /// Register file system host functions
     fn register_fs_functions(
         linker: &mut Linker<HostFuncState>,

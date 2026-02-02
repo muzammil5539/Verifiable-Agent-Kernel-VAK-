@@ -569,6 +569,125 @@ impl SafetyEngine {
                 None
             },
         ));
+
+        // Rule NSR-004: Risk-based network access control
+        // Deny network access if agent risk score is high
+        self.rules.push(SafetyRule::new(
+            "RULE_007_HIGH_RISK_NETWORK",
+            "High-risk agents cannot make network requests",
+            vec![
+                "http_request".to_string(),
+                "network_call".to_string(),
+                "fetch".to_string(),
+                "socket_connect".to_string(),
+            ],
+            |engine, action, target, agent| {
+                // Check agent risk score
+                let risk_score = engine.get_agent_risk_internal(agent);
+                if risk_score > engine.config.block_threshold {
+                    return Some(
+                        Violation::new(
+                            "RULE_007_HIGH_RISK_NETWORK",
+                            format!(
+                                "Agent {} (risk: {:.2}) blocked from network access to: {}",
+                                agent, risk_score, target
+                            ),
+                            action,
+                            target,
+                        )
+                        .with_severity(risk_score)
+                        .with_fact(format!("AgentRiskScore(\"{}\", {:.0})", agent, risk_score * 10000.0)),
+                    );
+                }
+                None
+            },
+        ));
+
+        // Rule NSR-004: Risk-based external API access
+        // Higher threshold for external APIs
+        self.rules.push(SafetyRule::new(
+            "RULE_008_RISK_EXTERNAL_API",
+            "Risk-based external API access control",
+            vec![
+                "http_request".to_string(),
+                "api_call".to_string(),
+            ],
+            |engine, action, target, agent| {
+                // Only applies to external endpoints
+                if !engine.facts.contains(&Fact::ExternalEndpoint(target.to_string())) {
+                    return None;
+                }
+                
+                let risk_score = engine.get_agent_risk_internal(agent);
+                // Lower threshold (0.5) for external APIs
+                if risk_score > 0.5 {
+                    return Some(
+                        Violation::new(
+                            "RULE_008_RISK_EXTERNAL_API",
+                            format!(
+                                "Agent {} (risk: {:.2}) has elevated risk for external API: {}",
+                                agent, risk_score, target
+                            ),
+                            action,
+                            target,
+                        )
+                        .with_severity((risk_score * 1.2).min(1.0))
+                        .with_fact(format!("ExternalEndpoint(\"{}\"), AgentRiskScore(\"{}\", {:.0})", 
+                            target, agent, risk_score * 10000.0)),
+                    );
+                }
+                None
+            },
+        ));
+
+        // Rule NSR-004: Capability-based network access
+        // Agents need network capability for any network operation
+        self.rules.push(SafetyRule::new(
+            "RULE_009_NETWORK_CAPABILITY",
+            "Network operations require network capability",
+            vec![
+                "http_request".to_string(),
+                "network_call".to_string(),
+                "fetch".to_string(),
+                "socket_connect".to_string(),
+                "dns_lookup".to_string(),
+            ],
+            |engine, action, target, agent| {
+                let has_capability = engine.facts.contains(&Fact::AgentCapability {
+                    agent_id: agent.to_string(),
+                    capability: "network".to_string(),
+                });
+                
+                if !has_capability {
+                    return Some(
+                        Violation::new(
+                            "RULE_009_NETWORK_CAPABILITY",
+                            format!(
+                                "Agent {} lacks 'network' capability for: {} {}",
+                                agent, action, target
+                            ),
+                            action,
+                            target,
+                        )
+                        .with_severity(0.7)
+                        .with_fact(format!("!AgentCapability(\"{}\", \"network\")", agent)),
+                    );
+                }
+                None
+            },
+        ));
+    }
+
+    /// Internal method to get agent risk score
+    fn get_agent_risk_internal(&self, agent_id: &str) -> f64 {
+        for fact in &self.facts {
+            if let Fact::AgentRiskScore { agent_id: id, score_bp } = fact {
+                if id == agent_id {
+                    return (*score_bp as f64) / 10000.0;
+                }
+            }
+        }
+        0.0 // Default: no risk
     }
 
     /// Add default critical file facts

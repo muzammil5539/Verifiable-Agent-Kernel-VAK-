@@ -2,7 +2,7 @@
 
 This document contains all unimplemented items identified through a comprehensive gap analysis comparing the MVP specification documents (`AI Agent Blue Ocean Opportunity.md`, `AI Kernel Gap Analysis & Roadmap.md`) against the actual codebase implementation.
 
-**Last Updated:** February 3, 2026 (Session 3)
+**Last Updated:** February 2, 2026 (Session 4)
 
 ---
 
@@ -144,6 +144,39 @@ This document contains all unimplemented items identified through a comprehensiv
   - Default-deny baseline policies
   - Completed: Session 2026-02-02
 
+### Content-Addressable Storage Backend (MEM-003) ✅
+- [x] **Implemented content-addressable blob store**
+  - Implementation: `src/memory/content_addressable.rs`
+  - Features: `ContentAddressableStore`, `ContentId`, `CasEntry`, `CasMetadata` structs
+  - SHA-256 based content addressing with automatic deduplication
+  - Storage backends: In-memory, file-based, SQLite
+  - Batch operations: `put_batch()`, `get_batch()` for efficient bulk storage
+  - Reference counting and garbage collection support
+  - Store "Thinking" text and "Tool Output" using content hash as key
+  - Completed: Session 2026-02-04 (Session 4)
+
+### Risk-Based Network Access Rules (NSR-004) ✅
+- [x] **Implemented Datalog rules that forbid network access based on RiskScore**
+  - Implementation: `src/reasoner/datalog.rs` (enhanced)
+  - Features: `RULE_007_NETWORK_HIGH_RISK`, `RULE_008_NETWORK_EXTERNAL_RISK` rules
+  - Denies network access when agent risk score > 0.7
+  - Escalates risk for external endpoint access
+  - Integrates with PRM confidence scores for dynamic risk assessment
+  - Completed: Session 2026-02-04 (Session 4)
+
+### MCP Server Implementation (INT-001/INT-002) ✅
+- [x] **Implemented Model Context Protocol server**
+  - Implementation: `src/integrations/mcp.rs`
+  - Features: `McpServer`, `McpTool`, `McpResource`, `McpContext` structs
+  - JSON-RPC style request/response handling
+  - Tool registration with automatic schema generation
+  - Built-in tools: `verify_plan`, `check_policy`, `get_agent_state`
+  - Resource access with URI-based addressing
+  - Conversation context management
+  - Bridges incoming MCP requests to internal VAK actions
+  - Maps internal WASM host functions to MCP Tool definitions
+  - Completed: Session 2026-02-04 (Session 4)
+
 ---
 
 ## 🔴 CRITICAL - Runtime/Sandbox TODOs
@@ -184,13 +217,6 @@ This document contains all unimplemented items identified through a comprehensiv
   - Note: Custom sparse Merkle tree implemented in `sparse_merkle.rs` - can optionally migrate to `rs-merkle` for additional features
   - Reference: Gap Analysis Section 2.3.1
 
-### Content-Addressable Storage Backend (MEM-003)
-- [ ] **Integrate `sled` or `rocksdb` as content-addressable blob store**
-  - Current state: In-memory storage or basic file persistence
-  - Required: Store actual "Thinking" text and "Tool Output" using Merkle hash as key
-  - Enables deduplication of identical thoughts/data
-  - Reference: Gap Analysis Phase 3.2
-
 ### Cryptographic Receipt Generation (MEM-004)
 - [ ] **Generate cryptographic receipts for verifiable runs**
   - Chain of hashes proving exactly what agent saw and why it made decisions
@@ -213,13 +239,6 @@ This document contains all unimplemented items identified through a comprehensiv
 ---
 
 ## 🟡 HIGH - Neuro-Symbolic/Reasoning TODOs
-
-### Risk-Based Network Access Rules (NSR-004)
-- [ ] **Write Datalog rules that forbid network access based on RiskScore**
-  - If RiskScore fact is high, deny network operations
-  - Integrate with PRM confidence scores
-  - Note: Basic risk scoring implemented in `reasoning_host.rs`
-  - Reference: Gap Analysis Sprint 4, T4.4
 
 ### Constrained Decoding Bridge (NSR-005)
 - [ ] **Integrate grammar-based sampler (KBNF) for LLM output**
@@ -268,16 +287,7 @@ This document contains all unimplemented items identified through a comprehensiv
 
 ## 🟡 HIGH - Interoperability TODOs
 
-### MCP Server Implementation (INT-001)
-- [ ] **Add `mcp-sdk-rs` / `mcp_rust_sdk` crate dependency**
-  - Current state: No Model Context Protocol support
-  - Required: Implement MCP for ecosystem adoption (Anthropic, GitHub tools)
-  - Reference: Gap Analysis Phase 5.1
-
-### MCP Server Bridge (INT-002)
-- [ ] **Create `src/api/mcp_server.rs`**
-  - Bridge incoming JSON-RPC requests to internal VAK actions
-  - Map internal WASM host functions to MCP Tool definitions
+### AutoGPT Protocol (INT-003)
   - Reference: Gap Analysis Sprint 5, T5.1-T5.2
 
 ### LangChain Adapter Completion (INT-003)

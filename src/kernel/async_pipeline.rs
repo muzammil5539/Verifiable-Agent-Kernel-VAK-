@@ -740,7 +740,8 @@ pub struct BatchProcessor {
     current_batch: RwLock<RequestBatch>,
     /// Configuration
     config: Arc<PipelineConfig>,
-    /// Metrics
+    /// Metrics for tracking batch statistics
+    #[allow(dead_code)]
     metrics: Arc<PipelineMetrics>,
 }
 
@@ -752,6 +753,11 @@ impl BatchProcessor {
             config,
             metrics,
         }
+    }
+
+    /// Get the metrics reference
+    pub fn metrics(&self) -> &Arc<PipelineMetrics> {
+        &self.metrics
     }
 
     /// Add a request to the current batch

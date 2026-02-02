@@ -349,23 +349,50 @@ pub struct AutoGPTAdapter {
 /// Statistics for AutoGPT adapter
 #[derive(Debug, Default)]
 pub struct AutoGPTStats {
+    /// Number of plans evaluated
     pub plans_evaluated: AtomicU64,
+    /// Number of plans approved
     pub plans_approved: AtomicU64,
+    /// Number of plans rejected
     pub plans_rejected: AtomicU64,
+    /// Number of commands intercepted
     pub commands_intercepted: AtomicU64,
+    /// Number of commands blocked
     pub commands_blocked: AtomicU64,
+    /// Number of steps completed
     pub steps_completed: AtomicU64,
+    /// Number of high risk alerts
     pub high_risk_alerts: AtomicU64,
 }
 
 /// State for an executing plan
 #[derive(Debug)]
+#[allow(dead_code)]
 struct PlanExecutionState {
+    /// Unique plan identifier
     plan_id: String,
+    /// When the plan started
     started_at: Instant,
+    /// Current step index
     current_step: usize,
+    /// Number of completed steps
     completed_steps: usize,
+    /// Steps that were blocked
     blocked_steps: Vec<usize>,
+}
+
+impl PlanExecutionState {
+    /// Create a new plan execution state
+    #[allow(dead_code)]
+    pub fn new(plan_id: String) -> Self {
+        Self {
+            plan_id,
+            started_at: Instant::now(),
+            current_step: 0,
+            completed_steps: 0,
+            blocked_steps: Vec::new(),
+        }
+    }
 }
 
 impl AutoGPTAdapter {

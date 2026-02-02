@@ -439,10 +439,26 @@ pub struct MultiRegionS3Backend {
 
 /// Task for async replication
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct ReplicationTask {
+    /// Entries to replicate
     entries: Vec<AuditEntry>,
+    /// Target region for replication
     target_region: String,
+    /// Source region of the entries
     source_region: String,
+}
+
+impl ReplicationTask {
+    /// Create a new replication task
+    #[allow(dead_code)]
+    pub fn new(entries: Vec<AuditEntry>, source_region: String, target_region: String) -> Self {
+        Self {
+            entries,
+            target_region,
+            source_region,
+        }
+    }
 }
 
 impl MultiRegionS3Backend {

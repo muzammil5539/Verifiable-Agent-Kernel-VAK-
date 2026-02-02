@@ -974,8 +974,11 @@ pub struct WebhookSinkConfig {
 
 /// Simple webhook sink implementation
 pub struct WebhookSink {
+    /// Configuration for the webhook
     config: WebhookSinkConfig,
+    /// HTTP client for sending requests
     client: reqwest::Client,
+    /// Buffer for batching events
     buffer: RwLock<Vec<StreamEvent>>,
 }
 
@@ -994,8 +997,13 @@ impl WebhookSink {
         }
     }
 
+    /// Get the HTTP client
+    pub fn client(&self) -> &reqwest::Client {
+        &self.client
+    }
+
     /// Send events to webhook
-    async fn send_to_webhook(&self, events: &[StreamEvent]) -> Result<(), AuditError> {
+    pub async fn send_to_webhook(&self, events: &[StreamEvent]) -> Result<(), AuditError> {
         let body = serde_json::to_string(events)
             .map_err(|e| AuditError::SerializationError(e.to_string()))?;
 

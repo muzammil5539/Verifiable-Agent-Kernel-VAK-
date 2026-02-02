@@ -15,7 +15,9 @@
 //! - Secret Scrubber: Automatic redaction of sensitive data (MEM-006)
 //! - Cryptographic Receipts: Verifiable execution proofs (MEM-004)
 //! - Sparse Merkle Trees: Efficient inclusion proofs (MEM-002)
+//! - Content-Addressable Storage: Hash-based blob storage (MEM-003)
 
+pub mod content_addressable;
 pub mod episodic;
 pub mod ipfs;
 pub mod knowledge_graph;
@@ -29,6 +31,11 @@ pub mod storage;
 pub mod time_travel;
 pub mod vector_store;
 pub mod working;
+
+pub use content_addressable::{
+    CASBackendType, CASConfig, CASError, CASResult, CASStats, ContentAddressableStore,
+    ContentId as CASContentId, ContentMetadata, HashAlgorithm,
+};
 
 pub use episodic::{
     ChainVerificationError, Episode, EpisodeChain, EpisodeId, EpisodicMemory, ImportError,
