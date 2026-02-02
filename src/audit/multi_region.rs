@@ -25,7 +25,7 @@
 //! let backend = MultiRegionS3Backend::new(config).await.unwrap();
 //! ```
 
-use crate::audit::{AuditBackend, AuditDecision, AuditEntry, AuditError};
+use crate::audit::{AuditBackend, AuditEntry, AuditError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -734,9 +734,9 @@ impl MultiRegionS3Backend {
         }
 
         let object_key = self.generate_object_key(region);
-        let body = self.serialize_entries(entries)?;
+        let _body = self.serialize_entries(entries)?;
 
-        let url = if let Some(ref endpoint) = region.endpoint_url {
+        let _url = if let Some(ref endpoint) = region.endpoint_url {
             format!("{}/{}/{}", endpoint, region.bucket, object_key)
         } else {
             format!(

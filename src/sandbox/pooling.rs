@@ -33,7 +33,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use wasmtime::{Config, Engine, InstanceAllocationStrategy, PoolingAllocationConfig};
 
 /// Errors that can occur with pooling allocation

@@ -175,7 +175,7 @@ impl EpochDeadlineManager {
     /// Check remaining epochs before deadline
     ///
     /// Returns None if epochs are not enabled on the engine.
-    pub fn remaining_epochs<T>(store: &Store<T>) -> Option<u64> {
+    pub fn remaining_epochs<T>(_store: &Store<T>) -> Option<u64> {
         // Note: Wasmtime doesn't expose a direct way to check remaining epochs
         // This would require tracking state ourselves
         None

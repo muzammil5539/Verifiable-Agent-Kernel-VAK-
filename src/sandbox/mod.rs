@@ -14,7 +14,9 @@
 //! - Host functions with panic safety (RT-005)
 //! - Policy enforcement at WASM boundary (POL-004)
 //! - Neuro-symbolic reasoning host functions (NSR-003)
+//! - Async host functions for non-blocking I/O (RT-004)
 
+pub mod async_host;
 pub mod epoch_config;
 pub mod epoch_ticker;
 pub mod host_funcs;
@@ -65,6 +67,12 @@ pub use reasoning_host::{
     ReasoningConfig, ReasoningHost, ReasoningHostError, ReasoningHostState,
     PlanVerification, VerificationResult, ViolationInfo,
     register_reasoning_functions,
+};
+
+// Re-export async host types (RT-004)
+pub use async_host::{
+    AsyncHostConfig, AsyncHostContext, AsyncHostError, AsyncHostResult,
+    AsyncOperation, AsyncOperationExecutor, OperationResult,
 };
 
 use std::time::{Duration, Instant};

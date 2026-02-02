@@ -31,7 +31,7 @@
 //! }
 //! ```
 
-use crate::reasoner::prm::{PrmError, PrmScorer, ReasoningStep, ThoughtScore, TrajectoryScore};
+use crate::reasoner::prm::{PrmError, PrmScorer, ReasoningStep, ThoughtScore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -513,8 +513,8 @@ impl<S: PrmScorer + Send + Sync> PrmGate<S> {
         &self,
         original_thought: &str,
         original_action: &str,
-        score: &ThoughtScore,
-        context: &GateContext,
+        _score: &ThoughtScore,
+        _context: &GateContext,
     ) -> Option<AlternativeAction> {
         // Generate alternative based on the score feedback
         // In a real implementation, this would use the LLM to propose alternatives
@@ -550,7 +550,7 @@ impl<S: PrmScorer + Send + Sync> PrmGate<S> {
     fn log_decision(
         &self,
         decision: &GateDecision,
-        thought: &str,
+        _thought: &str,
         action: &str,
         context: &GateContext,
     ) {

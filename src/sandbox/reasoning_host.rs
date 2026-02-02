@@ -38,7 +38,7 @@
 //! - Gap Analysis Sprint 4, T4.3: Reasoning host function
 //! - NSR-003: verify_plan host function exposed to WASM
 
-use anyhow::{anyhow, Result as AnyhowResult};
+use anyhow::Result as AnyhowResult;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use thiserror::Error;

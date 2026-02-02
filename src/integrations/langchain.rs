@@ -36,14 +36,14 @@
 //! ```
 
 use crate::integrations::common::{
-    ActionContext, ActionType, AdapterError, AdapterResult, AlertLevel, BaseAdapterConfig,
+    ActionContext, ActionType, AdapterError, AdapterResult, BaseAdapterConfig,
     HookDecision, InterceptionHook, InterceptionResult, VakConnection,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
 // ============================================================================

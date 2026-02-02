@@ -9,8 +9,10 @@
 //! - Dynamic context injection (POL-005)
 //! - Policy hot-reloading (POL-006)
 //! - Rate-limited evaluation
+//! - Context-integrated policy decisions (POL-005)
 
 pub mod context;
+pub mod context_integration;
 pub mod enforcer;
 pub mod hot_reload;
 
@@ -33,6 +35,12 @@ pub use context::{
 pub use hot_reload::{
     HotReloadConfig, HotReloadError, HotReloadManager, HotReloadResult,
     PolicyVersion, WatcherHandle,
+};
+
+// Re-export context integration types (POL-005 complete)
+pub use context_integration::{
+    ContextSnapshot, EnrichedDecision, IntegratedPolicyEngine, IntegrationConfig,
+    IntegrationError, IntegrationResult, RiskAssessment, RiskFactor,
 };
 
 use serde::{Deserialize, Serialize};

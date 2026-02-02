@@ -14,6 +14,7 @@
 //! - Snapshot Backend: Persistent storage for memory snapshots (Issue #11)
 //! - Secret Scrubber: Automatic redaction of sensitive data (MEM-006)
 //! - Cryptographic Receipts: Verifiable execution proofs (MEM-004)
+//! - Sparse Merkle Trees: Efficient inclusion proofs (MEM-002)
 
 pub mod episodic;
 pub mod ipfs;
@@ -23,6 +24,7 @@ pub mod migrations;
 pub mod receipts;
 pub mod secret_scrubber;
 pub mod snapshot_backend;
+pub mod sparse_merkle;
 pub mod storage;
 pub mod time_travel;
 pub mod vector_store;
@@ -66,6 +68,11 @@ pub use secret_scrubber::{
 pub use snapshot_backend::{
     FileSnapshotBackend, InMemorySnapshotBackend, SnapshotBackend, SnapshotConfig, SnapshotError,
     SnapshotIndex, SnapshotIndexEntry, SnapshotResult, StoredSnapshot,
+};
+
+pub use sparse_merkle::{
+    CompactProof, SparseProof, SparseProofStep, SparseMerkleError, SparseMerkleExport,
+    SparseMerkleNode, SparseMerkleResult, SparseMerkleTree,
 };
 
 pub use storage::{

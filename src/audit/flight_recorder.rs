@@ -33,7 +33,6 @@
 //! let receipt = recorder.generate_receipt();
 //! ```
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -41,8 +40,8 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
-use std::time::{Duration, Instant};
+use std::sync::{Mutex, RwLock};
+use std::time::Instant;
 use uuid::Uuid;
 
 // ============================================================================

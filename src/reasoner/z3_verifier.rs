@@ -39,7 +39,6 @@ use crate::reasoner::verifier::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::process::Command;
-use std::time::Duration;
 use thiserror::Error;
 
 // ============================================================================

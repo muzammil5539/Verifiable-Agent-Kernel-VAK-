@@ -41,7 +41,6 @@
 
 use crate::reasoner::verifier::{
     Constraint, ConstraintKind, ConstraintValue, FormalVerifier, VerificationError,
-    VerificationResult,
 };
 use crate::reasoner::z3_verifier::{Z3Config, Z3FormalVerifier};
 
@@ -52,7 +51,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{info, warn};
 
 // ============================================================================
 // Error Types
@@ -554,10 +553,10 @@ impl VerificationGateway {
             .ok_or_else(|| GatewayError::ActionNotRegistered(action_name.to_string()))?;
 
         let mut precondition_results: Vec<ConditionResult> = Vec::new();
-        let mut postcondition_results: Vec<ConditionResult> = Vec::new();
+        let postcondition_results: Vec<ConditionResult> = Vec::new();
         let mut invariant_results: Vec<ConditionResult> = Vec::new();
         let mut violations = Vec::new();
-        let mut warnings = Vec::new();
+        let warnings = Vec::new();
 
         // Verify preconditions
         for constraint in &action.preconditions {

@@ -439,6 +439,11 @@ impl Decision {
         !self.allowed
     }
 
+    /// Get the reason for the decision
+    pub fn reason(&self) -> &str {
+        &self.reason
+    }
+
     /// Set matched policy
     pub fn with_policy(mut self, policy: impl Into<String>) -> Self {
         self.matched_policy = Some(policy.into());
@@ -550,6 +555,15 @@ impl CedarEnforcer {
     /// Create with default configuration
     pub fn with_defaults() -> EnforcerResult<Self> {
         Self::new(EnforcerConfig::default())
+    }
+
+    /// Create a permissive enforcer for testing (always allows)
+    pub fn new_permissive() -> Self {
+        Self {
+            config: EnforcerConfig::permissive(),
+            policies: Arc::new(RwLock::new(PolicySet::new())),
+            stats: EnforcerStats::default(),
+        }
     }
 
     /// Load policies from a YAML file

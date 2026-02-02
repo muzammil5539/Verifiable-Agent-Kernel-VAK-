@@ -43,7 +43,7 @@ use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -439,7 +439,7 @@ impl SkillVerifier {
         // Decode signature
         let signature_bytes = BASE64
             .decode(&sig_info.signature)
-            .map_err(|e| SigningError::InvalidSignature)?;
+            .map_err(|_e| SigningError::InvalidSignature)?;
 
         let signature = Signature::from_bytes(signature_bytes.as_slice().try_into().map_err(
             |_| SigningError::InvalidSignature,

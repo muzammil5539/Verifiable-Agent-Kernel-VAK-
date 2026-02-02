@@ -22,8 +22,6 @@
 //! ```
 
 use rusqlite::{params, Connection};
-use std::collections::HashMap;
-use std::sync::Mutex;
 use thiserror::Error;
 
 // ============================================================================

@@ -42,7 +42,7 @@
 //! - Crepe crate: https://github.com/ekzhang/crepe
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use thiserror::Error;
 use tracing::{debug, info, warn};
 

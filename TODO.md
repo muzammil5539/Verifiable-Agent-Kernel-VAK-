@@ -2,7 +2,7 @@
 
 This document contains all unimplemented items identified through a comprehensive gap analysis comparing the MVP specification documents (`AI Agent Blue Ocean Opportunity.md`, `AI Kernel Gap Analysis & Roadmap.md`) against the actual codebase implementation.
 
-**Last Updated:** February 2, 2026 (Session 2)
+**Last Updated:** February 3, 2026 (Session 3)
 
 ---
 
@@ -108,6 +108,36 @@ This document contains all unimplemented items identified through a comprehensiv
   - Risk score calculation based on action type, target, and confidence
   - Completed: Session 2026-02-02 (Session 2)
 
+### Async Host Functions (RT-004) ✅
+- [x] **Refactored Linker to use async host functions for I/O operations**
+  - Implementation: `src/sandbox/async_host.rs`
+  - Features: `AsyncHostContext`, `AsyncOperation`, `OperationResult`, `AsyncOperationExecutor`
+  - Async closures for fs, net, and HTTP operations with non-blocking I/O
+  - `AgentState` properly structured for tokio thread migration
+  - Authorization cache with TTL for performance
+  - Cooperative yielding and cancellation support
+  - Completed: Session 2026-02-03 (Session 3)
+
+### Dynamic Context Injection (POL-005) ✅
+- [x] **Built dynamic context collector for Cedar evaluation**
+  - Implementation: `src/policy/context_integration.rs`
+  - Features: `IntegratedPolicyEngine`, `EnrichedDecision`, `RiskAssessment`, `ContextSnapshot`
+  - Captures `SystemTime`, `RequestIP`, `AgentReputation` on syscalls
+  - Serializes to Cedar Context JSON blob
+  - Includes transient state: system load, agent confidence score, recent access history
+  - Multi-level risk assessment (low/medium/high/critical)
+  - Completed: Session 2026-02-03 (Session 3)
+
+### Sparse Merkle Tree Proofs (MEM-002) ✅
+- [x] **Implemented sparse Merkle tree for efficient inclusion proofs**
+  - Implementation: `src/memory/sparse_merkle.rs`
+  - Features: `SparseMerkleTree`, `SparseProof`, `CompactProof`, `NonMembershipProof`
+  - Allows proving agent *did* see specific file without revealing entire dataset
+  - Support for proof generation and verification
+  - Batch proof support for multiple keys
+  - Default leaf value and efficient sparse storage
+  - Completed: Session 2026-02-03 (Session 3)
+
 ### Default Policies (POL-007 partial) ✅
 - [x] **Default policy set created**
   - Implementation: `policies/default_policies.yaml`
@@ -118,23 +148,9 @@ This document contains all unimplemented items identified through a comprehensiv
 
 ## 🔴 CRITICAL - Runtime/Sandbox TODOs
 
-### Async Host Functions (RT-004)
-- [ ] **Refactor Linker to use `linker.func_wrap_async` for all I/O-bound host functions**
-  - Current state: Synchronous host function calls may block tokio runtime
-  - Required: Use async closures for fs, net, and other I/O operations
-  - Ensure `AgentState` struct implements `Send + Sync` for tokio thread migration
-  - Reference: Gap Analysis Section 4, Phase 1.3
-
 ---
 
 ## 🔴 CRITICAL - Policy Engine TODOs
-
-### Dynamic Context Injection (POL-005)
-- [ ] **Build dynamic context collector for Cedar evaluation**
-  - Capture `SystemTime`, `RequestIP`, `AgentReputation` on syscalls
-  - Serialize to Cedar Context JSON blob
-  - Include transient state: system load, agent confidence score, recent access history
-  - Reference: Gap Analysis Section 2.2.2
 
 ### Policy Hot-Reloading (POL-006)
 - [ ] **Implement hot-reloading of `.cedar` policy files**
@@ -165,12 +181,7 @@ This document contains all unimplemented items identified through a comprehensiv
 - [ ] **Add `rs-merkle` crate dependency for proper Merkle tree implementation**
   - Current state: Custom hash-chaining in `episodic.rs` and `merkle_dag.rs`
   - Required: Use `rs-merkle` for sparse Merkle trees with efficient inclusion proofs
-  - Reference: Gap Analysis Section 2.3.1
-
-### Sparse Merkle Tree Proofs (MEM-002)
-- [ ] **Implement sparse Merkle tree for efficient inclusion proofs**
-  - Allow proving agent *did* see specific file without revealing entire dataset
-  - Support proof generation and verification
+  - Note: Custom sparse Merkle tree implemented in `sparse_merkle.rs` - can optionally migrate to `rs-merkle` for additional features
   - Reference: Gap Analysis Section 2.3.1
 
 ### Content-Addressable Storage Backend (MEM-003)

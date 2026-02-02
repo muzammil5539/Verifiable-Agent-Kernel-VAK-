@@ -44,7 +44,6 @@
 //! # }
 //! ```
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -54,7 +53,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, oneshot, RwLock, Semaphore};
 use tokio::time::timeout;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{info, instrument};
 use uuid::Uuid;
 
 use super::types::{AgentId, KernelError, PolicyDecision, SessionId, ToolRequest, ToolResponse};

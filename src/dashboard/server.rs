@@ -3,7 +3,7 @@
 //! Provides a simple HTTP server with a basic web dashboard for monitoring
 //! VAK kernel operations.
 
-use super::health::{HealthChecker, HealthStatus, ReadinessStatus};
+use super::health::{HealthChecker, HealthStatus};
 use super::metrics::MetricsCollector;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

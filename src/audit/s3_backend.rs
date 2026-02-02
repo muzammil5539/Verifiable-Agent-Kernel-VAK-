@@ -18,13 +18,13 @@
 //! let backend = S3AuditBackend::new(config).await.unwrap();
 //! ```
 
-use crate::audit::{AuditBackend, AuditDecision, AuditEntry, AuditError};
+use crate::audit::{AuditBackend, AuditEntry, AuditError};
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::io::Write;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 // ============================================================================

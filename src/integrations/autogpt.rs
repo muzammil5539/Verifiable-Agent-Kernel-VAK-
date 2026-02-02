@@ -34,14 +34,14 @@
 //! ```
 
 use crate::integrations::common::{
-    ActionContext, ActionType, AdapterError, AdapterResult, AlertLevel, BaseAdapterConfig,
+    ActionContext, ActionType, AdapterResult, AlertLevel, BaseAdapterConfig,
     HookDecision, InterceptionHook, InterceptionResult, VakConnection,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
 // ============================================================================
@@ -414,7 +414,7 @@ impl AutoGPTAdapter {
     pub async fn evaluate_plan(
         &self,
         plan: &TaskPlan,
-        agent_id: &str,
+        _agent_id: &str,
     ) -> AdapterResult<PlanEvaluation> {
         self.stats.plans_evaluated.fetch_add(1, Ordering::Relaxed);
 
@@ -569,7 +569,7 @@ impl AutoGPTAdapter {
         &self,
         plan_id: &str,
         step_number: usize,
-        result: &ExecutionResult,
+        _result: &ExecutionResult,
     ) {
         self.stats.steps_completed.fetch_add(1, Ordering::Relaxed);
 
