@@ -2,8 +2,17 @@
 //!
 //! This module provides rate-limited policy evaluation with "deny on error" security.
 //! Includes Cedar-style policy enforcement (POL-001, POL-003).
+//!
+//! # Features
+//!
+//! - Cedar-style policy enforcement (POL-001, POL-003)
+//! - Dynamic context injection (POL-005)
+//! - Policy hot-reloading (POL-006)
+//! - Rate-limited evaluation
 
+pub mod context;
 pub mod enforcer;
+pub mod hot_reload;
 
 // Re-export Cedar enforcer types (POL-001, POL-003)
 pub use enforcer::{
@@ -13,6 +22,18 @@ pub use enforcer::{
 };
 // Rename to avoid conflict with existing PolicyContext
 pub use enforcer::PolicyContext as CedarContext;
+
+// Re-export dynamic context types (POL-005)
+pub use context::{
+    AgentReputation, ContextConfig, ContextError, ContextProvider, ContextResult,
+    DynamicContextCollector, GeolocationProvider, SystemMetrics,
+};
+
+// Re-export hot-reload types (POL-006)
+pub use hot_reload::{
+    HotReloadConfig, HotReloadError, HotReloadManager, HotReloadResult,
+    PolicyVersion, WatcherHandle,
+};
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

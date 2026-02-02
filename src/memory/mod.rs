@@ -12,12 +12,16 @@
 //! - IPFS-Lite: Content-addressable storage (MEM-006)
 //! - Persistent Storage: File and database backends (INF-001)
 //! - Snapshot Backend: Persistent storage for memory snapshots (Issue #11)
+//! - Secret Scrubber: Automatic redaction of sensitive data (MEM-006)
+//! - Cryptographic Receipts: Verifiable execution proofs (MEM-004)
 
 pub mod episodic;
 pub mod ipfs;
 pub mod knowledge_graph;
 pub mod merkle_dag;
 pub mod migrations;
+pub mod receipts;
+pub mod secret_scrubber;
 pub mod snapshot_backend;
 pub mod storage;
 pub mod time_travel;
@@ -47,6 +51,16 @@ pub use merkle_dag::{
 pub use migrations::{
     Migration, MigrationError, MigrationRecord, MigrationRunner, MigrationStatus,
     get_all_migrations,
+};
+
+pub use receipts::{
+    CompactReceipt, CryptoReceipt, ExecutionStep, ReceiptConfig, ReceiptError,
+    ReceiptGenerator, ReceiptResult, StepType,
+};
+
+pub use secret_scrubber::{
+    PatternType, ScrubReport, ScrubberConfig, ScrubberError, ScrubberResult, SecretDetection,
+    SecretScrubber,
 };
 
 pub use snapshot_backend::{
