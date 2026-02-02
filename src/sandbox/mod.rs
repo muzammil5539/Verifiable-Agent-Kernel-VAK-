@@ -8,8 +8,12 @@
 //! - Skill registry with manifest-based permissions
 //! - Cryptographic signature verification (SBX-002)
 //! - Marketplace integration for skill discovery and installation
+//! - Epoch-based preemptive termination (RT-001)
+//! - Pooling allocator for memory hardening (RT-003)
 
+pub mod epoch_ticker;
 pub mod marketplace;
+pub mod pooling;
 pub mod registry;
 
 // Re-export registry types for convenient access
@@ -23,6 +27,17 @@ pub use marketplace::{
     MarketplaceClient, MarketplaceConfig, MarketplaceError, MarketplaceSkill,
     SkillCategory, SkillLicense, SkillQuery, SkillReview, SearchResults,
     InstallResult, UninstallResult, Publisher, SortOrder,
+};
+
+// Re-export epoch ticker types (RT-001)
+pub use epoch_ticker::{
+    EpochTicker, EpochTickerBuilder, EpochTickerConfig, EpochTickerError, EpochTickerStats,
+};
+
+// Re-export pooling types (RT-003)
+pub use pooling::{
+    PoolingConfig, PoolingError, PoolingStats, PoolManager,
+    create_pooling_engine, create_standard_engine,
 };
 
 use std::time::{Duration, Instant};

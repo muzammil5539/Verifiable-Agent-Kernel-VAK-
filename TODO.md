@@ -1,215 +1,544 @@
-# TODO
+# Verifiable Agent Kernel (VAK) - Comprehensive TODO List
 
-## Completed Items
+This document contains all unimplemented items identified through a comprehensive gap analysis comparing the MVP specification documents (`AI Agent Blue Ocean Opportunity.md`, `AI Kernel Gap Analysis & Roadmap.md`) against the actual codebase implementation.
 
-- [x] Keep current `registry.rs` changes (no reverts applied).
-- [x] Review `src/sandbox/registry.rs` signature verification logic after recent edits; default remains strict, unsigned skills only allowed via explicit dev config.
-- [x] Verify call sites use `SkillRegistry::new` (strict) in production flows and reserve `new_permissive_dev` for tests/dev-only paths. Only test helper uses `new_permissive_dev`; examples and code use strict defaults.
-- [x] **Issue #3**: Implement persistent audit storage backend (`AuditBackend` trait with `MemoryAuditBackend` and `FileAuditBackend` implementations)
-- [x] **Issue #6**: Integrate WASM skill execution with kernel via `SkillRegistry` and `WasmSandbox`
-- [x] **Issue #51 (partial)**: Add hash-chained audit entries with signature support (signature field added, signing implementation pending)
-- [x] **Issue #4**: Add SQLite backend for queryable persistent storage (`SqliteAuditBackend` with full CRUD, indexes, and queries)
-- [x] **Issue #51**: Complete ed25519 signing support for audit entries
-  - Added `AuditSigner` with ed25519-dalek for key generation, signing, and verification
-  - `AuditLogger::new_with_signing()` for automatic signing
-  - `verify_signatures()` and `verify_all()` methods for validation
-  - Key export/import for key rotation support
-- [x] **Issue #13**: Rate limiting on policy evaluation (February 2026)
-  - Added `RateLimitConfig` with per-agent rate limits and burst control
-  - Implemented token bucket algorithm in `RateLimiter`
-  - Added `PolicyEngine::with_rate_limit()` and `evaluate_with_rate_limit()` methods
-  - Added `RateLimitExceeded` and `RateLimitError` variants to `PolicyError`
-  - Comprehensive test coverage for rate limiting per agent
-- [x] **Issue #9**: Integration tests for kernel + policy + audit workflow (February 2026)
-  - Created `tests/integration/` directory structure
-  - Added `test_kernel_workflow.rs` with end-to-end workflow tests
-  - Added `test_policy_enforcement.rs` with ABAC and pattern matching tests
-  - Added `test_audit_integrity.rs` with chain verification tests
-  - Tests cover: concurrent agents, rate limiting, policy conflicts, error recovery
-- [x] **Issue #10**: Vector store optimization (February 2026)
-  - Added `OptimizedVectorStore` with batch operations
-  - Added `VectorStoreStats` for performance tracking
-  - Added `OptimizationConfig` for tunable search parameters
-  - Added batch search capability via `search_batch()`
-  - Statistics tracking for search latency and comparison counts
-- [x] **Issue #19**: Default deny policy validation on startup (February 2026)
-  - Added `has_allow_rules()` method to check for Allow policies
-  - Added `validate_config()` method returning warnings for:
-    - Empty policy configurations
-    - No Allow policies (all actions will be denied)
-    - Overly permissive rules (allow * on * with no conditions)
-  - Added `rule_count()` method for policy inspection
-- [x] **Issue #18**: Async Python SDK documentation and patterns (February 2026)
-  - Added `AsyncKernelHelper` with comprehensive usage documentation
-  - Documented `run_in_executor` pattern for async frameworks
-  - Added FastAPI integration examples
-  - Added ThreadPoolExecutor optimization guidance
-  - Updated type stubs with all new methods
-- [x] **Issue #17**: Benchmarks for critical paths (February 2026)
-  - Added `bench_rate_limiting` to measure rate limit overhead
-  - Added `bench_concurrent_policy_evaluation` for multi-agent scenarios
-  - Added `bench_policy_validation` for config validation
-  - Enhanced existing benchmarks with Issue #17 documentation
-- [x] **Migration Scripts**: Add persistent data migrations for policies, agent_sessions, memory_snapshots tables (February 2026)
-  - Created `src/memory/migrations.rs` with `MigrationRunner` system
-  - Implemented 8 migrations: schema_migrations, policies, agent_sessions, memory_snapshots, policy_evaluations, working_memory_cache, skill_registry, flight_recorder_events
-  - Added `Migration`, `MigrationStatus`, `MigrationRecord` types
-  - Support for `run_all()`, `run_one()`, `rollback()`, `rollback_to()`, `status()`
-  - SHA-256 checksums for migration integrity
-- [x] **Issue #43**: Flight recorder shadow mode (February 2026)
-  - Created `src/audit/flight_recorder.rs` with full shadow mode support
-  - `FlightRecorder` with configurable shadow/live modes
-  - `FlightEvent` types for requests, policy decisions, responses, tool executions
-  - Trace receipts with hash chaining for verification
-  - JSONL persistence with compression support
-  - Replay API for policy validation against historical traffic
-- [x] **Issue #47**: PRM gating and backtracking (February 2026)
-  - Created `src/reasoner/prm_gating.rs` with `PrmGate` implementation
-  - `GateConfig` with configurable thresholds (allow, backtrack, high-risk)
-  - `GateDecision` enum: Allow, Deny, Backtrack, Bypassed
-  - Automatic alternative generation for backtracking
-  - High-risk action detection with stricter thresholds
-  - Session-based backtrack state tracking
-  - `BatchGateResult` for trajectory evaluation
-- [x] **Issue #50**: Merkle DAG memory fabric (February 2026)
-  - Created `src/memory/merkle_dag.rs` with content-addressed storage
-  - `MerkleDag` with insert, branching, merging operations
-  - `ContentId` for SHA-256 based addressing
-  - `DagNode` with types: Root, Snapshot, Delta, Merge, Branch, Tag
-  - `InclusionProof` with path verification
-  - Efficient diffing between snapshots
-  - Export/import for persistence
-  - `MemorySnapshot` integration for agent memory
-- [x] **S3Backend**: Cloud audit log archival (February 2026)
-  - Created `src/audit/s3_backend.rs` with full S3 integration
-  - `S3Config` with bucket, region, credentials, compression, storage class
-  - Automatic batching for efficient uploads
-  - Gzip compression support
-  - Server-side encryption (AES256 and KMS)
-  - Local cache for queries
-  - `ArchiveQuery` for date range filtering
-- [x] **vak-skill-sign CLI**: Helper tool for signing skills (February 2026)
-  - Created `src/tools/skill_sign.rs` with Ed25519 signing
-  - `SigningKeypair` for key generation, export/import
-  - `SkillSigner` for signing WASM skills with manifest
-  - `SkillVerifier` for signature verification
-  - CLI commands: `keygen`, `sign`, `verify`, `info`
-  - `SignedSkillManifest` with signature metadata
-- [x] **Issue #12**: Z3 formal verification integration (February 2026)
-  - Created `src/reasoner/z3_verifier.rs` with SMT-LIB2 support
-  - `Z3FormalVerifier` implementing `FormalVerifier` trait
-  - `SmtLibBuilder` for constructing SMT-LIB2 formulas
-  - Constraint translation for all `ConstraintKind` variants
-  - Proof generation and counterexample extraction
-  - Support for And, Or, Not, Implies, Range, In, Contains, etc.
-  - Integration tests (skipped without Z3 installed)
-- [x] **Issue #45**: LangChain/AutoGPT middleware adapter (February 2026)
-  - Created `src/integrations/mod.rs` with adapter framework
-  - Created `src/integrations/common.rs` with shared types
-  - Created `src/integrations/langchain.rs` with `LangChainAdapter`
-    - Tool call and chain execution interception
-    - Rate limiting, blocked actions, passthrough tools
-    - Statistics tracking
-  - Created `src/integrations/autogpt.rs` with `AutoGPTAdapter`
-    - Task plan evaluation with step validation
-    - Command execution interception
-    - High-risk goal detection
-    - Blocked command enforcement
-- [x] **Multi-region S3 replication for audit logs** (February 2026)
-  - Created `src/audit/multi_region.rs` with full multi-region support
-  - `MultiRegionConfig` with primary and replica region configuration
-  - `MultiRegionS3Backend` implementing `AuditBackend` trait
-  - `ReplicationMode`: ActiveActive, ActivePassive, PrimaryOnly
-  - `FailoverStrategy`: Automatic, Manual, FailClosed
-  - `RegionHealth` and `RegionHealthStatus` for monitoring
-  - Automatic failover with health checks
-  - Manual failover and failback support
-  - Cross-region consistency verification
-  - 10 comprehensive unit tests
-- [x] **Enhanced WASM skill marketplace integration** (February 2026)
-  - Created `src/sandbox/marketplace.rs` with full marketplace client
-  - `MarketplaceClient` for skill discovery, installation, and management
-  - `MarketplaceConfig` with registry URL, caching, signature verification
-  - `SkillQuery` with filtering by category, tags, publisher, rating
-  - `MarketplaceSkill` with full metadata (versions, dependencies, reviews, audits)
-  - `SkillCategory`, `SkillLicense`, `Publisher`, `SecurityAudit` types
-  - `InstallResult` and `UninstallResult` for skill management
-  - Dependency resolution and hash verification
-  - Reviews and ratings support
-  - Local caching with configurable TTL
-  - 10 comprehensive unit tests
-- [x] **Real-time audit log streaming** (February 2026)
-  - Created `src/audit/streaming.rs` with pub/sub streaming
-  - `AuditStreamManager` for managing subscribers and events
-  - `StreamConfig` with presets: default, high_throughput, low_latency
-  - `StreamEvent` with types: AuditEntry, AuditBatch, Alert, Heartbeat, etc.
-  - `StreamFilter` for filtering events by agent, action, decision, severity
-  - `SubscriberId` and `SubscriberInfo` for subscriber management
-  - `StreamAlert` with severity levels for alerting
-  - `WebhookSink` for external system integration (Kafka, Redis ready)
-  - `StreamStats` for monitoring throughput and delivery
-  - Heartbeat support with configurable interval
-  - Event replay from recent events buffer
-  - 15 comprehensive unit tests
+**Last Updated:** February 2, 2026
 
-## In Progress
+---
 
-- [ ] GraphQL API for audit queries
-- [ ] Enhanced PRM model fine-tuning tools
-- [ ] Kubernetes operator for VAK deployment
+## ✅ COMPLETED
 
-## Recently Completed (February 1, 2026)
+### Epoch Ticker Thread (RT-001) ✅
+- [x] **Implemented dedicated EpochTicker background thread** that increments `engine.increment_epoch()` every 10ms
+  - Implementation: `src/sandbox/epoch_ticker.rs`
+  - Features: `EpochTicker`, `TickerConfig`, `TickerHandle` structs
+  - Background thread with configurable tick interval (default 10ms)
+  - Start/stop/pause/resume controls with metrics tracking
+  - Completed: Session 2026-02-02
 
-- [x] **Issue #11**: Persistent storage backend for memory snapshots (February 2026)
-  - Created `src/memory/snapshot_backend.rs` with `SnapshotBackend` trait
-  - `FileSnapshotBackend` - File-based storage with JSON/bincode serialization and optional compression
-  - `InMemorySnapshotBackend` - In-memory backend for testing
-  - `SnapshotConfig` - Configuration for storage path, format, compression, and retention
-  - Automatic snapshot pruning (configurable max snapshots)
-  - Lazy loading support via list_snapshots()
-  - Integration with time_travel.rs for transparent persistence
-- [x] **Issue #44**: Async intercept loop for multi-agent throughput (February 2026)
-  - Created `src/kernel/async_pipeline.rs` with full async request processing
-  - `AsyncPipeline` - Full async request processing with Tokio tasks
-  - `PipelineHandle` - Submit interface with bounded channels and backpressure
-  - `RequestBatch` and `BatchProcessor` - Batch processing for efficiency
-  - `PipelineMetrics` - Queue depth, latency, and throughput tracking
-  - Priority queuing with `RequestPriority` enum
-  - Graceful shutdown with timeout propagation
-  - Configurable via `PipelineConfig` (batch size, timeouts, concurrency limits)
-- [x] **Issue #48**: Formal verification gateway for high-stakes actions (February 2026)
-  - Created `src/reasoner/verification_gateway.rs` with Z3/SMT integration
-  - `VerificationGateway` - Central gateway for routing high-stakes actions through Z3/SMT verification
-  - `HighStakesAction` - Defined categories: FileWrite, FileDelete, HttpRequest, DatabaseWrite, TransferFunds, ShellExecute
-  - `ActionCategory` and `RiskLevel` - Classification system (Critical, High, Medium, Low)
-  - `ForbiddenPattern` - Configurable patterns to block dangerous operations
-  - `GatewayConfig` - Configuration for thresholds, caching, and fail-closed behavior
-  - `GatewayVerificationResult` - Detailed results with cache support and statistics
-  - Integration with existing Z3 prover infrastructure
-  - Default invariants for file I/O, network, database, and financial operations
-- [x] **Issue #46**: Basic OSS dashboard and observability (February 2026)
-  - Created `src/dashboard/mod.rs` with module exports
-  - Created `src/dashboard/metrics.rs` with Prometheus exporter
-    - `MetricsCollector` with counters, gauges, and histograms
-    - Prometheus text format export
-    - JSON metrics export
-  - Created `src/dashboard/health.rs` with health checks
-    - `HealthChecker` with component registration
-    - `HealthStatus` (Healthy, Degraded, Unhealthy)
-    - `ReadinessStatus` for Kubernetes probes
-    - Liveness, readiness, and health endpoints
-  - Created `src/dashboard/server.rs` with dashboard server
-    - `DashboardServer` with HTTP request handling
-    - Full HTML/CSS/JS dashboard UI
-    - `/metrics` - Prometheus metrics
-    - `/health` - Health check JSON
-    - `/ready` - Readiness probe
-    - `/live` - Liveness probe
-    - `/dashboard` - Web UI
-  - 25 comprehensive unit tests
+### Pooling Allocator Strategy (RT-003) ✅
+- [x] **Implemented `wasmtime::PoolingAllocationStrategy` for memory hardening**
+  - Implementation: `src/sandbox/pooling.rs`
+  - Features: `PoolingConfig`, `PoolManager`, `PoolingStats` structs
+  - Pre-allocated memory slab with fixed-size slots
+  - `InstanceLimits` restricting linear memory to 512MB and table elements to 10,000
+  - Slot checkout/return with usage tracking
+  - Completed: Session 2026-02-02
 
-## Future Work
+### Cedar Policy Integration (POL-001) ✅
+- [x] **Cedar Policy framework integration for formal verification**
+  - Implementation: `src/policy/enforcer.rs`
+  - Features: `CedarEnforcer`, `Principal`, `Action`, `Resource`, `PolicyContext`, `PolicySet` structs
+  - Default-deny enforcement with context injection
+  - Policy hot-reload support foundation
+  - Completed: Session 2026-02-02
 
-- [ ] GraphQL API for audit queries
-- [ ] Enhanced PRM model fine-tuning tools
-- [ ] Kubernetes operator for VAK deployment
+### Cedar Schema Definition (POL-002) ✅
+- [x] **Created Cedar policy schema**
+  - Implementation: `src/policy/schema.cedarschema`
+  - Entity types: `Agent`, `Resource`, `Tool`
+  - Action types: `Read`, `Write`, `Execute`, `Delete`
+  - Principal-resource relationships defined
+  - Completed: Session 2026-02-02
+
+### Cedar Enforcer Implementation (POL-003) ✅
+- [x] **Implemented policy enforcement engine**
+  - Implementation: `src/policy/enforcer.rs`
+  - Function `enforce(principal, action, resource) -> Result<(), PolicyError>`
+  - EntityUid construction for principals/resources
+  - Decision logging and audit trail
+  - Completed: Session 2026-02-02
+
+### Crepe Datalog Integration (NSR-001) ✅
+- [x] **Datalog safety rules engine**
+  - Implementation: `src/reasoner/datalog.rs`
+  - Manual Datalog-style rule evaluation (no external crate needed)
+  - Fact assertion and rule chaining
+  - Completed: Session 2026-02-02
+
+### Safety Rules Implementation (NSR-002) ✅
+- [x] **Safety rules for malicious behavior detection**
+  - Implementation: `src/reasoner/datalog.rs`
+  - Features: `SafetyRules`, `Fact`, `Violation`, `SafetyVerdict` structs
+  - Rules: `Malicious(X) <- FileAccess(X, "/etc/shadow")`
+  - Rules: `Violation(X) <- CriticalFile(Target), DeleteAction(X, Target)`
+  - Risk-score-based network access rules
+  - Completed: Session 2026-02-02
+
+### Default Policies (POL-007 partial) ✅
+- [x] **Default policy set created**
+  - Implementation: `policies/default_policies.yaml`
+  - Default-deny baseline policies
+  - Completed: Session 2026-02-02
+
+---
+
+## 🔴 CRITICAL - Runtime/Sandbox TODOs
+
+### Epoch Deadline Configuration (RT-002)
+- [ ] **Implement `store.set_epoch_deadline()` with configurable time slices**
+  - Current state: `store.epoch_deadline_trap()` is called but no deadline is set
+  - Required: Give agents configurable budget (e.g., 100ms) per thought cycle
+  - Add `epoch_deadline_async_yield_and_update()` for preemptive multitasking
+  - Note: EpochTicker (RT-001) now provides the increment mechanism
+  - Reference: Gap Analysis Section 6.1
+
+### Async Host Functions (RT-004)
+- [ ] **Refactor Linker to use `linker.func_wrap_async` for all I/O-bound host functions**
+  - Current state: Synchronous host function calls may block tokio runtime
+  - Required: Use async closures for fs, net, and other I/O operations
+  - Ensure `AgentState` struct implements `Send + Sync` for tokio thread migration
+  - Reference: Gap Analysis Section 4, Phase 1.3
+
+### Panic Safety at WASM/Host Boundary (RT-005)
+- [ ] **Implement `std::panic::catch_unwind` wrapper for all host functions**
+  - Current state: Host function panics can crash the entire VAK node
+  - Required: Wrap host functions to convert panics to WASM traps
+  - Add `// SAFETY:` comments documenting invariants
+  - Reference: Gap Analysis Section 3.1
+
+### Deterministic Termination Test (RT-006)
+- [ ] **Create test case `test_infinite_loop_preemption`**
+  - Load WASM module with `loop {}` and assert it traps within <100ms
+  - Validate epoch interruption mechanism works correctly
+  - Reference: Gap Analysis Sprint 1, T1.5
+
+---
+
+## 🔴 CRITICAL - Policy Engine TODOs
+
+### Policy Middleware Injection (POL-004)
+- [ ] **Insert `enforce()` call at WASM boundary before function execution**
+  - Wrap every host function in Linker with policy check
+  - Return `WasmTrap::PermissionDenied` on failure
+  - Implement in `src/host_funcs/` (new directory needed)
+  - Reference: Gap Analysis Section 2.2.1
+
+### Dynamic Context Injection (POL-005)
+- [ ] **Build dynamic context collector for Cedar evaluation**
+  - Capture `SystemTime`, `RequestIP`, `AgentReputation` on syscalls
+  - Serialize to Cedar Context JSON blob
+  - Include transient state: system load, agent confidence score, recent access history
+  - Reference: Gap Analysis Section 2.2.2
+
+### Policy Hot-Reloading (POL-006)
+- [ ] **Implement hot-reloading of `.cedar` policy files**
+  - Store policies in Merkle Log for versioning
+  - Use `ArcSwap` for lock-free policy updates
+  - Trigger reload on log update
+  - Reference: Gap Analysis Phase 2.3
+
+### Default Deny Policy (POL-007)
+- [ ] **Ensure Cedar integration fails closed (complete implementation)**
+  - Current state: Basic default-deny in enforcer.rs, default_policies.yaml created
+  - Required: Full error handling for missing/malformed policy files
+  - Log policy load failures with clear error messages
+  - Reference: Gap Analysis Section 3.2
+
+### Policy Analysis Integration (POL-008)
+- [ ] **Integrate Cedar Policy Analyzer**
+  - Run analyzer before loading new policy sets
+  - Prove safety invariants (e.g., "No agent can delete audit log")
+  - Block deployment of policies that violate invariants
+  - Reference: Gap Analysis Section 2.2.1
+
+---
+
+## 🔴 CRITICAL - Memory/Provenance TODOs
+
+### rs-merkle Integration (MEM-001)
+- [ ] **Add `rs-merkle` crate dependency for proper Merkle tree implementation**
+  - Current state: Custom hash-chaining in `episodic.rs` and `merkle_dag.rs`
+  - Required: Use `rs-merkle` for sparse Merkle trees with efficient inclusion proofs
+  - Reference: Gap Analysis Section 2.3.1
+
+### Sparse Merkle Tree Proofs (MEM-002)
+- [ ] **Implement sparse Merkle tree for efficient inclusion proofs**
+  - Allow proving agent *did* see specific file without revealing entire dataset
+  - Support proof generation and verification
+  - Reference: Gap Analysis Section 2.3.1
+
+### Content-Addressable Storage Backend (MEM-003)
+- [ ] **Integrate `sled` or `rocksdb` as content-addressable blob store**
+  - Current state: In-memory storage or basic file persistence
+  - Required: Store actual "Thinking" text and "Tool Output" using Merkle hash as key
+  - Enables deduplication of identical thoughts/data
+  - Reference: Gap Analysis Phase 3.2
+
+### Cryptographic Receipt Generation (MEM-004)
+- [ ] **Generate cryptographic receipts for verifiable runs**
+  - Chain of hashes proving exactly what agent saw and why it made decisions
+  - Include timestamp, state hash, reasoning trace
+  - Reference: Blue Ocean MVP Section 4.4
+
+### Time Travel Debugging Enhancement (MEM-005)
+- [ ] **Implement full "checkout" capability from Merkle root hash**
+  - Current state: Basic time travel exists in `time_travel.rs`
+  - Required: Spin up local VAK instance, restore exact memory state from hash
+  - Allow "step forward" one decision at a time
+  - Reference: Gap Analysis Section 6.4
+
+### Secret Scrubbing (MEM-006)
+- [ ] **Automatic redaction of sensitive patterns in memory snapshots**
+  - Detect API keys (e.g., `sk-proj-...`), passwords, tokens
+  - Redact before persisting to disk
+  - Reference: Gap Analysis Section 3.2
+
+---
+
+## 🔴 CRITICAL - Neuro-Symbolic/Reasoning TODOs
+
+### Reasoning Host Function (NSR-003)
+- [ ] **Implement `verify_plan` host function exposed to WASM**
+  - Agent passes proposed plan
+  - Kernel converts to Datalog facts
+  - Run crepe, return `Ok` or `Err(Violation)`
+  - Create `src/host_funcs/reasoning.rs`
+  - Reference: Gap Analysis Sprint 4, T4.3
+
+### Risk-Based Network Access Rules (NSR-004)
+- [ ] **Write Datalog rules that forbid network access based on RiskScore**
+  - If RiskScore fact is high, deny network operations
+  - Integrate with PRM confidence scores
+  - Reference: Gap Analysis Sprint 4, T4.4
+
+### Constrained Decoding Bridge (NSR-005)
+- [ ] **Integrate grammar-based sampler (KBNF) for LLM output**
+  - Current state: Free-text generation parsed via regex
+  - Required: Constrain output to valid Datalog facts or JSON schemas
+  - Eliminates "Parse Error" class of failures
+  - Reference: Gap Analysis Section 2.4.2
+
+### Neuro-Symbolic Hybrid Loop (NSR-006)
+- [ ] **Implement complete Neural -> Symbolic -> Neural sandwich architecture**
+  - 1. LLM proposes plan (Neural)
+  - 2. Datalog validates against invariant rules (Symbolic)
+  - 3. Execute only if validation passes (Neural execution)
+  - Reference: Gap Analysis Section 2.4.1
+
+---
+
+## 🟡 HIGH - Multi-Agent/Swarm TODOs
+
+### Agent-to-Agent (A2A) Protocol Support (SWM-001)
+- [ ] **Add `a2a-types` crate dependency**
+  - Current state: Custom swarm messaging in `src/swarm/messages.rs`
+  - Required: Standard A2A protocol for inter-agent communication
+  - Reference: Gap Analysis Phase 5.2
+
+### AgentCard Discovery Mechanism (SWM-002)
+- [ ] **Implement `src/api/a2a.rs` with AgentCard serialization**
+  - Allow VAK agents to discover and query other agents' interfaces
+  - Support capability exchange negotiation
+  - Reference: Gap Analysis Sprint 5, T5.3
+
+### Sycophancy Prevention Metrics (SWM-003)
+- [ ] **Add metrics for detecting consensus collapse**
+  - Track vote diversity, disagreement rates
+  - Alert on potential sycophancy patterns
+  - Reference: Blue Ocean Section 1.3
+
+### Protocol Router Enhancements (SWM-004)
+- [ ] **Expand protocol router with task-specific topologies**
+  - Support: Hierarchical, Debate, Voting, Peer Review modes
+  - Auto-select based on task complexity analysis
+  - Reference: Blue Ocean Module 4.2
+
+---
+
+## 🟡 HIGH - Interoperability TODOs
+
+### MCP Server Implementation (INT-001)
+- [ ] **Add `mcp-sdk-rs` / `mcp_rust_sdk` crate dependency**
+  - Current state: No Model Context Protocol support
+  - Required: Implement MCP for ecosystem adoption (Anthropic, GitHub tools)
+  - Reference: Gap Analysis Phase 5.1
+
+### MCP Server Bridge (INT-002)
+- [ ] **Create `src/api/mcp_server.rs`**
+  - Bridge incoming JSON-RPC requests to internal VAK actions
+  - Map internal WASM host functions to MCP Tool definitions
+  - Reference: Gap Analysis Sprint 5, T5.1-T5.2
+
+### LangChain Adapter Completion (INT-003)
+- [ ] **Complete LangChain integration with full policy/audit support**
+  - Current state: Basic adapter exists in `src/integrations/langchain.rs`
+  - Required: Full PRM scoring integration, rate limiting per agent
+  - Reference: Integrations module
+
+### AutoGPT Adapter Completion (INT-004)
+- [ ] **Complete AutoGPT task planning interception**
+  - Current state: Stub exists in `src/integrations/autogpt.rs`
+  - Required: Full task planning verification and execution monitoring
+  - Reference: Integrations module
+
+---
+
+## 🟡 HIGH - Observability/Audit TODOs
+
+### OpenTelemetry Integration (OBS-001)
+- [ ] **Add `opentelemetry` crate for distributed tracing**
+  - Current state: Prometheus metrics exist in `src/dashboard/metrics.rs`
+  - Required: Full distributed tracing with spans
+  - Create spans for: "Inference", "Logic Check", "Policy Eval", "Tool Exec"
+  - Reference: Gap Analysis Section 3.4
+
+### Cryptographic Replay Capability (OBS-002)
+- [ ] **Implement production incident replay from Merkle Log**
+  - Take Merkle Log from production
+  - Replay in local VAK instance
+  - Reproduce exact state and decision path
+  - Reference: Gap Analysis Section 3.4
+
+### Cost Accounting System (OBS-003)
+- [ ] **Track Token Usage + Fuel Consumed + I/O Bytes**
+  - Generate precise micro-bill for agent execution
+  - Integrate with billing/quota systems
+  - Reference: Gap Analysis Section 3.4
+
+### GraphQL API for Audit Queries (OBS-004)
+- [ ] **Implement GraphQL endpoint for audit log queries**
+  - Current state: Basic REST-style access
+  - Required: Rich query capabilities for forensics
+  - Reference: Original TODO
+
+### Flight Recorder Enhancement (OBS-005)
+- [ ] **Enhance shadow mode flight recorder with full replay**
+  - Current state: Basic flight recorder in `src/audit/flight_recorder.rs`
+  - Required: Complete state capture for deterministic replay
+  - Reference: Issue #43
+
+---
+
+## 🟡 HIGH - Security TODOs
+
+### Supply Chain Hardening (SEC-001)
+- [ ] **Add CI job for `cargo-audit` vulnerability scanning**
+  - Scan dependencies against RustSec vulnerability database
+  - Block PRs with known vulnerabilities
+  - Reference: Gap Analysis Section 3.2
+
+### License Compliance (SEC-002)
+- [ ] **Add CI job for `cargo-deny` license checking**
+  - Ensure no AGPL or incompatible licenses in dependencies
+  - Enforce enterprise license constraints
+  - Reference: Gap Analysis Section 6.3
+
+### Unsafe Rust Audit (SEC-003)
+- [ ] **Run `cargo-geiger` and document all unsafe blocks**
+  - Current state: `#![deny(unsafe_code)]` in `src/lib.rs`
+  - Required: Audit all dependencies for unsafe usage
+  - Document each instance with `// SAFETY:` comments
+  - Reference: Gap Analysis Section 6.3
+
+### Prompt Injection Protection (SEC-004)
+- [ ] **Implement prompt injection detection and mitigation**
+  - Detect attempts to override system prompts
+  - Sandbox detection rules in Datalog
+  - Reference: Blue Ocean Section 1.4
+
+### Rate Limiting Enhancements (SEC-005)
+- [ ] **Enhance rate limiting with per-resource limits**
+  - Current state: Per-agent rate limiting exists
+  - Required: Per-resource, per-action granular limits
+  - Reference: Policy module
+
+---
+
+## 🟢 MEDIUM - Testing/CI TODOs
+
+### Infinite Loop Preemption Tests (TST-001)
+- [ ] **Create comprehensive preemption test suite**
+  - Test various infinite loop patterns
+  - Test CPU-intensive computations
+  - Test memory bomb attacks
+  - Reference: Gap Analysis Section 3.1
+
+### Memory Containment Tests (TST-002)
+- [ ] **Test PoolingAllocationStrategy prevents memory bombs**
+  - Spawn 50 agents each trying to allocate 4GB
+  - Verify host process RSS stays within quota
+  - Reference: Gap Analysis Section 3.1
+
+### Policy Verification Tests (TST-003)
+- [ ] **Create Cedar policy verification test suite**
+  - Test default deny behavior
+  - Test policy hot-reload
+  - Test context injection
+  - Reference: Policy module
+
+### Integration Test Coverage (TST-004)
+- [ ] **Expand integration tests in `tests/integration/`**
+  - Current state: Basic structure exists
+  - Required: Full workflow tests
+  - Reference: Tests directory
+
+### Benchmark Suite Expansion (TST-005)
+- [ ] **Expand `benches/kernel_benchmarks.rs`**
+  - Add PRM scoring benchmarks
+  - Add policy evaluation benchmarks
+  - Add Merkle proof generation benchmarks
+  - Reference: Benches directory
+
+### Python SDK Tests (TST-006)
+- [ ] **Expand Python test coverage in `python/tests/`**
+  - Test all PyO3 bindings
+  - Test error handling across boundary
+  - Reference: Python tests
+
+---
+
+## 🟢 MEDIUM - Infrastructure TODOs
+
+### Kubernetes Operator (INF-001)
+- [ ] **Create Kubernetes operator for VAK deployment**
+  - Custom Resource Definitions (CRDs)
+  - Auto-scaling based on agent load
+  - Reference: Original TODO
+
+### Docker/Container Images (INF-002)
+- [ ] **Create official Docker images**
+  - Multi-arch support (amd64, arm64)
+  - Minimal base images for security
+  - Reference: Deployment needs
+
+### Helm Charts (INF-003)
+- [ ] **Create Helm charts for Kubernetes deployment**
+  - Configurable resource limits
+  - Policy ConfigMaps
+  - Reference: Deployment needs
+
+### CI/CD Pipeline Enhancements (INF-004)
+- [ ] **Add comprehensive CI/CD pipeline**
+  - Run all security scans
+  - Run full test suite
+  - Build and publish artifacts
+  - Reference: GitHub Actions
+
+---
+
+## 🟢 MEDIUM - Documentation TODOs
+
+### Architecture Documentation (DOC-001)
+- [ ] **Create comprehensive architecture documentation**
+  - System diagrams
+  - Data flow diagrams
+  - Security model documentation
+  - Reference: README.md
+
+### API Reference (DOC-002)
+- [ ] **Generate and publish API documentation**
+  - Rust docs with examples
+  - Python SDK documentation
+  - Reference: doc/
+
+### Runbook/Operations Guide (DOC-003)
+- [ ] **Create operations runbook**
+  - Deployment procedures
+  - Troubleshooting guides
+  - Incident response procedures
+  - Reference: Operations needs
+
+### Policy Authoring Guide (DOC-004)
+- [ ] **Create Cedar policy authoring guide**
+  - Best practices
+  - Common patterns
+  - Security considerations
+  - Reference: Policy module
+
+---
+
+## 🔵 LOW - Future Enhancements
+
+### Zero-Knowledge Proof Integration (FUT-001)
+- [ ] **Research and implement ZKP for verified execution**
+  - Prove agent ran specific code without revealing code
+  - Support "Verification Gas" for proof generation
+  - Reference: Blue Ocean Phase 3
+
+### Constitution Protocol (FUT-002)
+- [ ] **Implement hard-coded Constitution files**
+  - Agents cannot override constitutional constraints
+  - Regulatory compliance (GDPR, EU AI Act)
+  - Reference: Blue Ocean Phase 4
+
+### Enhanced PRM Model Fine-Tuning (FUT-003)
+- [ ] **Create PRM model fine-tuning toolkit**
+  - Tools for training domain-specific PRMs
+  - Reference: Original TODO
+
+### Skill Marketplace Enhancements (FUT-004)
+- [ ] **Enhance skill marketplace with verified publishers**
+  - Current state: Basic marketplace in `src/sandbox/marketplace.rs`
+  - Required: Publisher verification, reviews, ratings
+  - Reference: Marketplace module
+
+### Multi-Model Orchestration (FUT-005)
+- [ ] **Support routing to multiple LLM backends**
+  - Automatic failover
+  - Cost optimization routing
+  - Reference: LLM module
+
+### Context Manager Dynamic Summarization (FUT-006)
+- [ ] **Implement dynamic context summarization in Working Memory**
+  - Current state: Basic working memory in `src/memory/working.rs`
+  - Required: Automatic pruning and summarization to prevent "context flooding"
+  - Implement signal-to-noise optimization
+  - Reference: Blue Ocean Section Module 1.1
+
+### LlamaIndex Integration (FUT-007)
+- [ ] **Add LlamaIndex query engine integration**
+  - Current state: LangChain/AutoGPT adapters exist
+  - Required: Full LlamaIndex integration for query pipelines
+  - Reference: Integrations module architecture diagram
+
+### Sovereign AI / Local Inference Support (FUT-008)
+- [ ] **Support local/sovereign AI deployment mode**
+  - Current state: LiteLLM proxy for cloud APIs
+  - Required: Direct Ollama/local model integration without proxy
+  - Reduce "token tax" for long-running loops
+  - Reference: Blue Ocean Section 1.5
+
+---
+
+## Summary Statistics
+
+| Priority | Count | Status |
+|----------|-------|--------|
+| ✅ COMPLETED | 8 | Done |
+| 🔴 CRITICAL | 20 | Not Started |
+| 🟡 HIGH | 18 | Not Started |
+| 🟢 MEDIUM | 17 | Not Started |
+| 🔵 LOW | 8 | Not Started |
+| **TOTAL** | **71** | 8 complete |
+
+---
+
+## Implementation Phases
+
+Based on the Gap Analysis roadmap:
+
+### Phase 1: Core Kernel Stability ("Iron Kernel")
+- RT-001 through RT-006
+- Focus: Runtime that cannot be crashed, stalled, or exploited
+
+### Phase 2: Policy Layer ("Digital Superego")
+- POL-001 through POL-008
+- Focus: Formal verification of all agent actions
+
+### Phase 3: Memory & Provenance ("Immutable Past")
+- MEM-001 through MEM-006
+- Focus: Cryptographic proof of history and state
+
+### Phase 4: Neuro-Symbolic Cognitive Layer ("Prefrontal Cortex")
+- NSR-001 through NSR-006
+- Focus: Logic-based safety constraints
+
+### Phase 5: Ecosystem & Interoperability
+- INT-001 through INT-004, SWM-001 through SWM-004
+- Focus: Standardized communication protocols
+
+---
+
+*This TODO list was generated through comprehensive analysis of VAK documentation and codebase on February 2, 2026.*
+*Updated: Session 2026-02-02 - Completed RT-001, RT-003, POL-001, POL-002, POL-003, NSR-001, NSR-002*

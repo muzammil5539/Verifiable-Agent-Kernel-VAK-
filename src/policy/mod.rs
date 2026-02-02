@@ -1,12 +1,24 @@
 //! ABAC (Attribute-Based Access Control) Policy Engine
 //!
 //! This module provides rate-limited policy evaluation with "deny on error" security.
+//! Includes Cedar-style policy enforcement (POL-001, POL-003).
+
+pub mod enforcer;
+
+// Re-export Cedar enforcer types (POL-001, POL-003)
+pub use enforcer::{
+    Action, CedarEnforcer, CedarRule, Decision, EnforcerConfig, EnforcerError,
+    EnforcerResult, PolicySet, Principal, Resource,
+    forbid_rule, permit_rule,
+};
+// Rename to avoid conflict with existing PolicyContext
+pub use enforcer::PolicyContext as CedarContext;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// Policy effect: allow or deny
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

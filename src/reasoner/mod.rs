@@ -66,6 +66,7 @@
 //! ```
 
 mod prm;
+pub mod datalog;
 pub mod prm_gating;
 pub mod tree_search;
 pub mod verification_gateway;
@@ -76,6 +77,12 @@ pub mod z3_verifier;
 pub use prm::{
     LlmPrm, MockPrm, PrmConfig, PrmError, ProcessRewardModel, ReasoningStep, ThoughtScore,
     PrmScorer, TrajectoryScore,
+};
+
+// Re-export Datalog safety engine types (NSR-001, NSR-002)
+pub use datalog::{
+    DatalogError, DatalogResult, Fact, SafetyConfig, SafetyEngine, SafetyEngineBuilder,
+    SafetyRule, SafetyStats, SafetyVerdict, Violation,
 };
 
 // Re-export PRM gating types (Issue #47)

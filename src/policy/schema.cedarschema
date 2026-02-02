@@ -1,0 +1,142 @@
+# VAK Cedar Policy Schema (POL-002)
+#
+# This schema defines the entity types and actions for the VAK policy engine.
+# It follows Cedar policy language conventions for formal verification.
+#
+# References:
+# - Gap Analysis Section 2.2.1: Decoupled Policy Engine (Cedar)
+# - Cedar Policy Language: https://www.cedarpolicy.com/
+
+# Entity Types
+# =============
+
+# Agents are the primary principals in VAK
+# They execute actions on resources under policy control
+entity Agent {
+  # Agent display name
+  name: String,
+  # Trust/reputation score (0.0 - 1.0)
+  trust_score: Double,
+  # List of capabilities/roles
+  capabilities: Set<String>,
+  # Whether agent is in sandbox mode
+  sandboxed: Bool,
+  # Parent organization (if any)
+  organization?: Organization,
+}
+
+# Organizations group agents together
+entity Organization {
+  name: String,
+  tier: String,  # "free", "pro", "enterprise"
+}
+
+# Users are human principals that may operate agents
+entity User {
+  email: String,
+  roles: Set<String>,
+}
+
+# Services are system-level principals
+entity Service {
+  name: String,
+  internal: Bool,
+}
+
+# File resources
+entity File {
+  path: String,
+  owner: Agent,
+  sensitivity: String,  # "public", "internal", "confidential", "critical"
+  read_only: Bool,
+}
+
+# Network endpoint resources
+entity Endpoint {
+  url: String,
+  internal: Bool,
+  requires_auth: Bool,
+}
+
+# Tool/skill resources
+entity Tool {
+  name: String,
+  version: String,
+  signed: Bool,
+  restricted: Bool,
+}
+
+# Memory/data resources
+entity Memory {
+  segment: String,
+  owner: Agent,
+  encrypted: Bool,
+}
+
+# Actions
+# =======
+
+# File system actions
+action "File::read" appliesTo {
+  principal: [Agent, User, Service],
+  resource: File,
+}
+
+action "File::write" appliesTo {
+  principal: [Agent, User, Service],
+  resource: File,
+}
+
+action "File::delete" appliesTo {
+  principal: [Agent, User],
+  resource: File,
+}
+
+action "File::execute" appliesTo {
+  principal: [Agent, Service],
+  resource: File,
+}
+
+# Network actions
+action "Network::request" appliesTo {
+  principal: [Agent, Service],
+  resource: Endpoint,
+}
+
+action "Network::connect" appliesTo {
+  principal: [Agent, Service],
+  resource: Endpoint,
+}
+
+# Tool actions
+action "Tool::execute" appliesTo {
+  principal: [Agent],
+  resource: Tool,
+}
+
+action "Tool::install" appliesTo {
+  principal: [Agent, User],
+  resource: Tool,
+}
+
+# Memory actions
+action "Memory::read" appliesTo {
+  principal: [Agent, Service],
+  resource: Memory,
+}
+
+action "Memory::write" appliesTo {
+  principal: [Agent, Service],
+  resource: Memory,
+}
+
+# Agent management actions
+action "Agent::spawn" appliesTo {
+  principal: [Agent, User, Service],
+  resource: Agent,
+}
+
+action "Agent::terminate" appliesTo {
+  principal: [Agent, User, Service],
+  resource: Agent,
+}

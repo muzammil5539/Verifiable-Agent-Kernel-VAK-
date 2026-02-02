@@ -1,0 +1,191 @@
+# VAK Default Policies (POL-001)
+#
+# These policies define the default authorization rules for VAK.
+# They follow a default-deny model with explicit permits.
+#
+# Policy Priority:
+# - Forbid rules are evaluated first and take precedence
+# - Permit rules are evaluated second
+# - If no rule matches, the default is DENY
+#
+# References:
+# - Gap Analysis Section 2.2.1: Default Deny Policy
+# - Gap Analysis Section 3.2: Default Deny Policy
+
+version: "1.0"
+modified: 1738454400  # Feb 2, 2026
+
+rules:
+  # ============================================================================
+  # FORBID RULES (evaluated first, highest priority)
+  # ============================================================================
+
+  # Forbid all access to critical system files
+  - id: "forbid-critical-files"
+    effect: "forbid"
+    principal: "*"
+    action: "*"
+    resource: "File::\"/etc/shadow\""
+    description: "Block all access to /etc/shadow"
+
+  - id: "forbid-passwd-write"
+    effect: "forbid"
+    principal: "*"
+    action: "Action::\"File::write\""
+    resource: "File::\"/etc/passwd\""
+    description: "Block writes to /etc/passwd"
+
+  - id: "forbid-passwd-delete"
+    effect: "forbid"
+    principal: "*"
+    action: "Action::\"File::delete\""
+    resource: "File::\"/etc/passwd\""
+    description: "Block deletion of /etc/passwd"
+
+  - id: "forbid-hosts-modify"
+    effect: "forbid"
+    principal: "*"
+    action: "Action::\"File::write\""
+    resource: "File::\"/etc/hosts\""
+    description: "Block modifications to /etc/hosts"
+
+  - id: "forbid-sudoers"
+    effect: "forbid"
+    principal: "*"
+    action: "*"
+    resource: "File::\"/etc/sudoers\""
+    description: "Block all access to sudoers"
+
+  # Forbid access to secrets
+  - id: "forbid-env-files"
+    effect: "forbid"
+    principal: "Agent::*"
+    action: "*"
+    resource: "File::\"*.env\""
+    description: "Block agent access to .env files"
+
+  - id: "forbid-secrets-json"
+    effect: "forbid"
+    principal: "Agent::*"
+    action: "*"
+    resource: "File::\"*secrets.json\""
+    description: "Block agent access to secrets.json files"
+
+  - id: "forbid-ssh-keys"
+    effect: "forbid"
+    principal: "Agent::*"
+    action: "*"
+    resource: "File::\"*.ssh/*\""
+    description: "Block agent access to SSH keys"
+
+  - id: "forbid-aws-credentials"
+    effect: "forbid"
+    principal: "Agent::*"
+    action: "*"
+    resource: "File::\"*.aws/credentials\""
+    description: "Block agent access to AWS credentials"
+
+  # Forbid restricted tools
+  - id: "forbid-dangerous-tools"
+    effect: "forbid"
+    principal: "*"
+    action: "Action::\"Tool::execute\""
+    resource: "Tool::\"rm -rf\""
+    description: "Block execution of rm -rf"
+
+  - id: "forbid-dd"
+    effect: "forbid"
+    principal: "Agent::*"
+    action: "Action::\"Tool::execute\""
+    resource: "Tool::\"dd\""
+    description: "Block agent execution of dd"
+
+  - id: "forbid-mkfs"
+    effect: "forbid"
+    principal: "Agent::*"
+    action: "Action::\"Tool::execute\""
+    resource: "Tool::\"mkfs\""
+    description: "Block agent execution of mkfs"
+
+  # ============================================================================
+  # PERMIT RULES (evaluated second)
+  # ============================================================================
+
+  # Allow agents to read non-sensitive files in /tmp and /home
+  - id: "permit-tmp-read"
+    effect: "permit"
+    principal: "Agent::*"
+    action: "Action::\"File::read\""
+    resource: "File::\"/tmp/*\""
+    description: "Allow agents to read files in /tmp"
+
+  - id: "permit-tmp-write"
+    effect: "permit"
+    principal: "Agent::*"
+    action: "Action::\"File::write\""
+    resource: "File::\"/tmp/*\""
+    description: "Allow agents to write files in /tmp"
+
+  - id: "permit-home-read"
+    effect: "permit"
+    principal: "Agent::*"
+    action: "Action::\"File::read\""
+    resource: "File::\"/home/*\""
+    description: "Allow agents to read files in /home"
+
+  # Allow agents to use non-restricted tools
+  - id: "permit-safe-tools"
+    effect: "permit"
+    principal: "Agent::*"
+    action: "Action::\"Tool::execute\""
+    resource: "Tool::*"
+    description: "Allow agents to execute non-restricted tools"
+    conditions:
+      - "resource.restricted == false"
+
+  # Allow agents to access internal endpoints
+  - id: "permit-internal-network"
+    effect: "permit"
+    principal: "Agent::*"
+    action: "Action::\"Network::request\""
+    resource: "Endpoint::*"
+    description: "Allow agents to access internal endpoints"
+    conditions:
+      - "resource.internal == true"
+
+  # Allow agents to read their own memory segments
+  - id: "permit-own-memory-read"
+    effect: "permit"
+    principal: "Agent::*"
+    action: "Action::\"Memory::read\""
+    resource: "Memory::*"
+    description: "Allow agents to read their own memory"
+    conditions:
+      - "resource.owner == principal"
+
+  - id: "permit-own-memory-write"
+    effect: "permit"
+    principal: "Agent::*"
+    action: "Action::\"Memory::write\""
+    resource: "Memory::*"
+    description: "Allow agents to write their own memory"
+    conditions:
+      - "resource.owner == principal"
+
+  # Allow services full access to internal resources
+  - id: "permit-service-internal"
+    effect: "permit"
+    principal: "Service::*"
+    action: "*"
+    resource: "*"
+    description: "Allow internal services full access"
+    conditions:
+      - "principal.internal == true"
+
+  # Allow users broad file access (subject to RBAC elsewhere)
+  - id: "permit-user-files"
+    effect: "permit"
+    principal: "User::*"
+    action: "Action::\"File::*\""
+    resource: "File::*"
+    description: "Allow users file operations (excluding forbidden)"
