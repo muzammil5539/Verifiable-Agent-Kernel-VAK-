@@ -553,9 +553,9 @@ impl VerificationGateway {
             .await
             .ok_or_else(|| GatewayError::ActionNotRegistered(action_name.to_string()))?;
 
-        let mut precondition_results = Vec::new();
-        let mut postcondition_results = Vec::new();
-        let mut invariant_results = Vec::new();
+        let mut precondition_results: Vec<ConditionResult> = Vec::new();
+        let mut postcondition_results: Vec<ConditionResult> = Vec::new();
+        let mut invariant_results: Vec<ConditionResult> = Vec::new();
         let mut violations = Vec::new();
         let mut warnings = Vec::new();
 
@@ -668,14 +668,13 @@ impl VerificationGateway {
         constraint: &Constraint,
         context: &HashMap<String, ConstraintValue>,
     ) -> ConditionResult {
-        match self.verifier.verify(constraint, context).await {
+        match self.verifier.verify(constraint, context) {
             Ok(result) => ConditionResult {
                 name: constraint.name.clone(),
                 satisfied: result.is_satisfied(),
-                explanation: result.proof.clone(),
+                explanation: Some(format!("Status: {:?}", result.status)),
                 counterexample: result
-                    .counterexamples
-                    .first()
+                    .counterexample
                     .map(|c| format!("{:?}", c)),
             },
             Err(e) => {
@@ -714,7 +713,7 @@ impl VerificationGateway {
                     "path_within_workspace",
                     ConstraintKind::Contains {
                         field: "path".to_string(),
-                        substring: "workspace".to_string(),
+                        value: "workspace".to_string(),
                     },
                 ),
         )
@@ -774,7 +773,7 @@ impl VerificationGateway {
                             "drop_table_check",
                             ConstraintKind::Contains {
                                 field: "query".to_string(),
-                                substring: "DROP TABLE".to_string(),
+                                value: "DROP TABLE".to_string(),
                             },
                         ),
                     )
@@ -788,7 +787,7 @@ impl VerificationGateway {
                             "truncate_check",
                             ConstraintKind::Contains {
                                 field: "query".to_string(),
-                                substring: "TRUNCATE".to_string(),
+                                value: "TRUNCATE".to_string(),
                             },
                         ),
                     )
@@ -835,7 +834,7 @@ impl VerificationGateway {
                             "rm_rf_check",
                             ConstraintKind::Contains {
                                 field: "command".to_string(),
-                                substring: "rm -rf".to_string(),
+                                value: "rm -rf".to_string(),
                             },
                         ),
                     )
@@ -849,7 +848,7 @@ impl VerificationGateway {
                             "sudo_check",
                             ConstraintKind::Contains {
                                 field: "command".to_string(),
-                                substring: "sudo".to_string(),
+                                value: "sudo".to_string(),
                             },
                         ),
                     )
@@ -1112,7 +1111,7 @@ mod tests {
                 "test",
                 ConstraintKind::Contains {
                     field: "query".to_string(),
-                    substring: "DROP".to_string(),
+                    value: "DROP".to_string(),
                 },
             ),
         )

@@ -10,10 +10,17 @@
 //! - Marketplace integration for skill discovery and installation
 //! - Epoch-based preemptive termination (RT-001)
 //! - Pooling allocator for memory hardening (RT-003)
+//! - Epoch deadline configuration (RT-002)
+//! - Host functions with panic safety (RT-005)
+//! - Policy enforcement at WASM boundary (POL-004)
+//! - Neuro-symbolic reasoning host functions (NSR-003)
 
+pub mod epoch_config;
 pub mod epoch_ticker;
+pub mod host_funcs;
 pub mod marketplace;
 pub mod pooling;
+pub mod reasoning_host;
 pub mod registry;
 
 // Re-export registry types for convenient access
@@ -38,6 +45,26 @@ pub use epoch_ticker::{
 pub use pooling::{
     PoolingConfig, PoolingError, PoolingStats, PoolManager,
     create_pooling_engine, create_standard_engine,
+};
+
+// Re-export epoch config types (RT-002)
+pub use epoch_config::{
+    EpochConfig, EpochConfigError, EpochDeadlineManager, EpochExecutionBuilder,
+    ExecutionLimits, PreemptionBudget, BudgetStats,
+};
+
+// Re-export host function types (RT-005, POL-004)
+pub use host_funcs::{
+    HostFuncConfig, HostFuncError, HostFuncLinker, HostFuncState,
+    AuditLogEntry, PermissionCache, with_panic_boundary, with_safe_permission_check,
+    check_permission,
+};
+
+// Re-export reasoning host types (NSR-003)
+pub use reasoning_host::{
+    ReasoningConfig, ReasoningHost, ReasoningHostError, ReasoningHostState,
+    PlanVerification, VerificationResult, ViolationInfo,
+    register_reasoning_functions,
 };
 
 use std::time::{Duration, Instant};
