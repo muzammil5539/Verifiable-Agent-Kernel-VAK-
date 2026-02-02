@@ -11,6 +11,7 @@
 //! - **Protocol Router**: Dynamic selection of collaboration topologies
 //! - **Message Types**: Structured inter-agent communication
 //! - **Consensus Mechanisms**: Various consensus algorithms (majority, weighted, BFT)
+//! - **A2A Protocol**: Agent-to-Agent discovery and capability exchange (SWM-001, SWM-002)
 //!
 //! # Example
 //!
@@ -25,10 +26,16 @@
 //! let voting = QuadraticVoting::new(100); // 100 credits per agent
 //! ```
 
+pub mod a2a;
 pub mod consensus;
 pub mod messages;
 pub mod router;
 pub mod voting;
+
+pub use a2a::{
+    A2AConfig, A2AError, A2AProtocol, A2AResult, A2AStats, AgentCard, AgentCardBuilder,
+    Capability, CapabilityRequest, CapabilityResponse, HandshakeRequest, HandshakeResponse,
+};
 
 pub use voting::{
     AgentCredits, QuadraticVoting, Vote, VoteResult, VotingConfig, VotingError, VotingOutcome,

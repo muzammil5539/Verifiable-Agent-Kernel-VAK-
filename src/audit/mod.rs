@@ -28,8 +28,16 @@
 
 pub mod flight_recorder;
 pub mod multi_region;
+pub mod otel;
 pub mod s3_backend;
 pub mod streaming;
+
+// Re-export OpenTelemetry tracing types (OBS-001)
+pub use otel::{
+    AttributeValue, OtlpExporter, Span as OtelSpan, SpanContext as OtelSpanContext,
+    SpanEvent, SpanKind, SpanLink, SpanStatus, TraceContext, TracerStats, TracingConfig,
+    TracingError, TracingResult, VakTracer,
+};
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;

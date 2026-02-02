@@ -68,12 +68,18 @@ pub enum KnowledgeGraphError {
     RelationshipNotFound(RelationshipId),
     /// Invalid relationship (entity doesn't exist)
     InvalidRelationship {
+        /// Source entity ID
         source: EntityId,
+        /// Target entity ID
         target: EntityId,
+        /// Reason for invalidity
         reason: String,
     },
     /// Cycle detected when cycles are not allowed
-    CycleDetected { entities: Vec<EntityId> },
+    CycleDetected {
+        /// Entities involved in the cycle
+        entities: Vec<EntityId>,
+    },
     /// Serialization error
     SerializationError(String),
     /// Query error

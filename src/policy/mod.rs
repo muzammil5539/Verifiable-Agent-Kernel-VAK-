@@ -8,9 +8,11 @@
 //! - Cedar-style policy enforcement (POL-001, POL-003)
 //! - Dynamic context injection (POL-005)
 //! - Policy hot-reloading (POL-006)
+//! - Policy analysis & verification (POL-008)
 //! - Rate-limited evaluation
 //! - Context-integrated policy decisions (POL-005)
 
+pub mod analyzer;
 pub mod context;
 pub mod context_integration;
 pub mod enforcer;
@@ -41,6 +43,13 @@ pub use hot_reload::{
 pub use context_integration::{
     ContextSnapshot, EnrichedDecision, IntegratedPolicyEngine, IntegrationConfig,
     IntegrationError, IntegrationResult, RiskAssessment, RiskFactor,
+};
+
+// Re-export analyzer types (POL-008)
+pub use analyzer::{
+    AnalysisReport, AnalysisWarning, AnalyzerConfig, AnalyzerError, AnalyzerResult,
+    CoverageReport, InvariantCondition, InvariantSeverity, PolicyAnalyzer, PolicyConflict,
+    RedundantRule, SafetyInvariant, ViolationDetails,
 };
 
 use serde::{Deserialize, Serialize};

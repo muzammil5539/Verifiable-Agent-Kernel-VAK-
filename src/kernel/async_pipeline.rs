@@ -459,15 +459,25 @@ impl PipelineMetrics {
 /// A snapshot of metrics at a point in time
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetricsSnapshot {
+    /// Total number of requests received
     pub total_requests: u64,
+    /// Current queue depth
     pub queue_depth: usize,
+    /// Number of requests currently in flight
     pub in_flight: usize,
+    /// Number of completed requests
     pub completed: u64,
+    /// Number of failed requests
     pub failed: u64,
+    /// Number of timed out requests
     pub timed_out: u64,
+    /// Number of rejected requests
     pub rejected: u64,
+    /// Average latency in microseconds
     pub avg_latency_us: f64,
+    /// Minimum latency in microseconds
     pub min_latency_us: u64,
+    /// Maximum latency in microseconds
     pub max_latency_us: u64,
 }
 
@@ -486,6 +496,14 @@ pub struct PipelineHandle {
     metrics: Arc<PipelineMetrics>,
     /// Shutdown signal
     shutdown_tx: broadcast::Sender<()>,
+}
+
+impl std::fmt::Debug for PipelineHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PipelineHandle")
+            .field("config", &self.config)
+            .finish()
+    }
 }
 
 impl PipelineHandle {
@@ -572,6 +590,15 @@ pub struct AsyncPipeline {
     /// Policy evaluator function
     policy_evaluator:
         Arc<dyn Fn(&AgentId, &ToolRequest) -> PolicyDecision + Send + Sync>,
+}
+
+impl std::fmt::Debug for AsyncPipeline {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AsyncPipeline")
+            .field("config", &self.config)
+            .field("metrics", &self.metrics)
+            .finish()
+    }
 }
 
 impl AsyncPipeline {
@@ -743,6 +770,14 @@ pub struct BatchProcessor {
     /// Metrics for tracking batch statistics
     #[allow(dead_code)]
     metrics: Arc<PipelineMetrics>,
+}
+
+impl std::fmt::Debug for BatchProcessor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BatchProcessor")
+            .field("config", &self.config)
+            .finish()
+    }
 }
 
 impl BatchProcessor {
