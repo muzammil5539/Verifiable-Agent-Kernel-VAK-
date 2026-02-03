@@ -12,6 +12,7 @@
 //! - **Message Types**: Structured inter-agent communication
 //! - **Consensus Mechanisms**: Various consensus algorithms (majority, weighted, BFT)
 //! - **A2A Protocol**: Agent-to-Agent discovery and capability exchange (SWM-001, SWM-002)
+//! - **Sycophancy Detection**: Metrics and analysis for detecting groupthink (SWM-003)
 //!
 //! # Example
 //!
@@ -30,6 +31,7 @@ pub mod a2a;
 pub mod consensus;
 pub mod messages;
 pub mod router;
+pub mod sycophancy;
 pub mod voting;
 
 pub use a2a::{
@@ -55,6 +57,12 @@ pub use messages::{
 pub use consensus::{
     BftConsensus, ConsensusConfig, ConsensusError, ConsensusMechanism, ConsensusProtocol,
     ConsensusResult, MajorityConsensus, WeightedConsensus,
+};
+
+pub use sycophancy::{
+    AnalysisRecommendation, DetectorConfig, DetectorStats, OpinionCluster, RecommendedAction,
+    RiskIndicator, RiskIndicatorType, SessionAnalysis, SycophancyDetector, SycophancyError,
+    SycophancyResult, VoteRecord,
 };
 
 use serde::{Deserialize, Serialize};
@@ -350,6 +358,14 @@ pub struct SwarmCoordinator {
     voting_sessions: Arc<RwLock<HashMap<String, VotingSession>>>,
     /// Protocol router for topology selection
     router: ProtocolRouter,
+}
+
+impl std::fmt::Debug for SwarmCoordinator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SwarmCoordinator")
+            .field("config", &self.config)
+            .finish_non_exhaustive()
+    }
 }
 
 impl SwarmCoordinator {

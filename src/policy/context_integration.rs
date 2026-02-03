@@ -555,7 +555,7 @@ mod tests {
     #[tokio::test]
     async fn test_simple_authorization() {
         let engine = IntegratedPolicyEngine::permissive();
-        let decision = engine.authorize_simple("agent-1", "read", "/data/file.txt").unwrap();
+        let decision = engine.authorize_simple("agent-1", "read", "/data/file.txt").await.unwrap();
         assert!(decision.is_allowed());
     }
 

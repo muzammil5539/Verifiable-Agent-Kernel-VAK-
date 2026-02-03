@@ -184,7 +184,16 @@ pub struct HealthChecker {
     ready_checks: RwLock<Vec<String>>,
 }
 
+impl std::fmt::Debug for HealthChecker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HealthChecker")
+            .field("uptime_secs", &self.start_time.elapsed().as_secs())
+            .finish_non_exhaustive()
+    }
+}
+
 impl HealthChecker {
+    /// Create a new health checker
     pub fn new() -> Self {
         Self {
             start_time: Instant::now(),

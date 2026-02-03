@@ -649,6 +649,7 @@ impl<S: PrmScorer + Send + Sync> PrmGate<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::reasoner::prm::TrajectoryScore;
     use async_trait::async_trait;
 
     // Mock PRM scorer for testing

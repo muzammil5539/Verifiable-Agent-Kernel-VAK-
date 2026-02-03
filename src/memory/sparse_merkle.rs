@@ -171,8 +171,13 @@ impl SparseProof {
         }
 
         // Compute the leaf hash
-        let mut current_hash = if let Some(ref value_hash) = self.value_hash {
-            compute_leaf_hash(&self.key, value_hash.as_bytes())
+        // value_hash is hex-encoded original value bytes, so decode it first
+        let mut current_hash = if let Some(ref value_hex) = self.value_hash {
+            if let Ok(value_bytes) = hex::decode(value_hex) {
+                compute_leaf_hash(&self.key, &value_bytes)
+            } else {
+                return false;
+            }
         } else {
             EMPTY_HASH.to_string()
         };
@@ -361,7 +366,11 @@ impl SparseMerkleTree {
         let mut path = Vec::new();
 
         // Walk from leaf to root, collecting siblings
-        let value_hash = self.leaves.get(key).cloned();
+        // Get the actual value (we store its hex representation for the proof)
+        let value_hash = self.leaves.get(key)
+            .and_then(|leaf_hash| self.nodes.get(leaf_hash))
+            .and_then(|node| node.value.as_ref())
+            .map(|v| hex::encode(v));
 
         for level in (0..self.depth).rev() {
             let bit = get_bit(&key_hash, self.depth - 1 - level);

@@ -271,11 +271,16 @@ This document contains all unimplemented items identified through a comprehensiv
   - Support capability exchange negotiation
   - Reference: Gap Analysis Sprint 5, T5.3
 
-### Sycophancy Prevention Metrics (SWM-003)
-- [ ] **Add metrics for detecting consensus collapse**
-  - Track vote diversity, disagreement rates
-  - Alert on potential sycophancy patterns
-  - Reference: Blue Ocean Section 1.3
+### Sycophancy Prevention Metrics (SWM-003) ✅
+- [x] **Add metrics for detecting consensus collapse**
+  - Implementation: `src/swarm/sycophancy.rs`
+  - Features: `SycophancyDetector`, `SessionAnalysis`, `VoteRecord`, `OpinionCluster`
+  - Shannon entropy calculation for vote diversity
+  - Disagreement rate tracking and anomaly detection
+  - Alert on potential sycophancy patterns (unanimous agreement, bandwagon effect, rapid consensus)
+  - Risk indicators: LowEntropy, UnanimousAgreement, RapidConsensus, NoDisagreement, BandwagonEffect
+  - Recommendation engine: Accept, RequestMoreDebate, IntroduceAdversary, HumanReview, BlockDecision
+  - Completed: Session 2026-02-03 (Session 5)
 
 ### Protocol Router Enhancements (SWM-004)
 - [ ] **Expand protocol router with task-specific topologies**
@@ -320,11 +325,19 @@ This document contains all unimplemented items identified through a comprehensiv
   - Reproduce exact state and decision path
   - Reference: Gap Analysis Section 3.4
 
-### Cost Accounting System (OBS-003)
-- [ ] **Track Token Usage + Fuel Consumed + I/O Bytes**
-  - Generate precise micro-bill for agent execution
-  - Integrate with billing/quota systems
-  - Reference: Gap Analysis Section 3.4
+### Cost Accounting System (OBS-003) ✅
+- [x] **Track Token Usage + Fuel Consumed + I/O Bytes**
+  - Implementation: `src/dashboard/cost_accounting.rs`
+  - Features: `CostAccountant`, `ExecutionCost`, `CostBreakdown`, `BillingReport`
+  - Token usage tracking (input/output tokens, LLM calls)
+  - WASM fuel consumption tracking
+  - Network I/O and storage operation metrics
+  - API call tracking per service
+  - Budget limits with alerts and enforcement
+  - Configurable pricing rates (default, free, premium)
+  - Prometheus metrics export
+  - Billing report generation with invoice formatting
+  - Completed: Session 2026-02-03 (Session 5)
 
 ### GraphQL API for Audit Queries (OBS-004)
 - [ ] **Implement GraphQL endpoint for audit log queries**
@@ -536,12 +549,12 @@ This document contains all unimplemented items identified through a comprehensiv
 
 | Priority | Count | Status |
 |----------|-------|--------|
-| ✅ COMPLETED | 14 | Done |
+| ✅ COMPLETED | 16 | Done |
 | 🔴 CRITICAL | 11 | Not Started |
-| 🟡 HIGH | 21 | Not Started |
+| 🟡 HIGH | 19 | Not Started |
 | 🟢 MEDIUM | 17 | Not Started |
 | 🔵 LOW | 8 | Not Started |
-| **TOTAL** | **71** | 14 complete (~20%) |
+| **TOTAL** | **71** | 16 complete (~23%) |
 
 ---
 
@@ -590,4 +603,5 @@ Based on the Gap Analysis roadmap:
 
 *This TODO list was generated through comprehensive analysis of VAK documentation and codebase on February 2, 2026.*
 *Updated: Session 2026-02-02 (Session 2) - Completed RT-002, RT-005, RT-006, POL-004, NSR-003*
-*New completions: epoch_config.rs, host_funcs.rs, reasoning_host.rs, preemption_tests.rs*
+*Updated: Session 2026-02-03 (Session 5) - Completed OBS-003 (Cost Accounting), SWM-003 (Sycophancy Detection)*
+*New completions: cost_accounting.rs, sycophancy.rs*

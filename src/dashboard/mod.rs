@@ -12,6 +12,7 @@
 //! - Audit log viewer
 //! - Agent activity monitor
 //! - Policy violation alerts
+//! - Cost accounting and billing (OBS-003)
 //!
 //! # Example
 //!
@@ -26,10 +27,15 @@
 //! server.start().await;
 //! ```
 
-pub mod metrics;
+pub mod cost_accounting;
 pub mod health;
+pub mod metrics;
 pub mod server;
 
-pub use metrics::{MetricsCollector, MetricsConfig, PrometheusExporter};
+pub use cost_accounting::{
+    ApiUsage, BillingReport, CostAccountant, CostBreakdown, CostConfig, CostError, CostResult,
+    ExecutionCost, FuelUsage, GlobalCostStats, IoUsage, PricingRates, TokenUsage,
+};
 pub use health::{HealthChecker, HealthStatus, ReadinessStatus};
-pub use server::{DashboardServer, DashboardConfig};
+pub use metrics::{MetricsCollector, MetricsConfig, PrometheusExporter};
+pub use server::{DashboardConfig, DashboardServer};

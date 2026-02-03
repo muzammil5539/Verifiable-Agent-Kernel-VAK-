@@ -83,7 +83,16 @@ pub struct DashboardServer {
     health: Arc<HealthChecker>,
 }
 
+impl std::fmt::Debug for DashboardServer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DashboardServer")
+            .field("config", &self.config)
+            .finish_non_exhaustive()
+    }
+}
+
 impl DashboardServer {
+    /// Create a new dashboard server
     pub fn new(
         config: DashboardConfig,
         metrics: Arc<MetricsCollector>,

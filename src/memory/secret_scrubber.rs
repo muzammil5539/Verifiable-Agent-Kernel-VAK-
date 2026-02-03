@@ -550,7 +550,13 @@ mod tests {
 
         let detections = scrubber.detect(text);
         assert!(!detections.is_empty());
-        assert_eq!(detections[0].pattern_type, PatternType::GitHubToken);
+        // Multiple patterns may match (e.g., GenericSecret matches "Token: ..."), 
+        // so check that GitHubToken is among the detections
+        assert!(
+            detections.iter().any(|d| d.pattern_type == PatternType::GitHubToken),
+            "Expected GitHubToken in detections: {:?}",
+            detections.iter().map(|d| &d.pattern_type).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -570,7 +576,13 @@ mod tests {
 
         let detections = scrubber.detect(text);
         assert!(!detections.is_empty());
-        assert_eq!(detections[0].pattern_type, PatternType::JwtToken);
+        // Multiple patterns may match (e.g., GenericSecret matches "Token: ..."),
+        // so check that JwtToken is among the detections
+        assert!(
+            detections.iter().any(|d| d.pattern_type == PatternType::JwtToken),
+            "Expected JwtToken in detections: {:?}",
+            detections.iter().map(|d| &d.pattern_type).collect::<Vec<_>>()
+        );
     }
 
     #[test]

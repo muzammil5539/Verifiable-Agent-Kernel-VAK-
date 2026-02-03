@@ -1231,6 +1231,7 @@ impl std::fmt::Debug for MarketplaceClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     #[test]
     fn test_marketplace_config() {

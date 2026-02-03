@@ -313,32 +313,61 @@ pub struct MetricsCollector {
     start_time: Instant,
 
     // Counters
+    /// Total number of policy evaluations
     pub policy_evaluations_total: Counter,
+    /// Policy evaluations that allowed the action
     pub policy_evaluations_allowed: Counter,
+    /// Policy evaluations that denied the action
     pub policy_evaluations_denied: Counter,
+    /// Total audit log entries created
     pub audit_entries_total: Counter,
+    /// Total tool executions
     pub tool_executions_total: Counter,
+    /// Successful tool executions
     pub tool_executions_success: Counter,
+    /// Failed tool executions
     pub tool_executions_failure: Counter,
+    /// Total PRM evaluations
     pub prm_evaluations_total: Counter,
+    /// PRM backtrack events triggered
     pub prm_backtrack_triggered: Counter,
+    /// Total WASM executions
     pub wasm_executions_total: Counter,
 
     // Gauges
+    /// Currently active agents
     pub active_agents: Gauge,
+    /// Currently active sessions
     pub active_sessions: Gauge,
+    /// Size of audit log in entries
     pub audit_log_size: Gauge,
+    /// Current memory usage in bytes
     pub memory_usage_bytes: Gauge,
+    /// Number of skills loaded
     pub skills_loaded: Gauge,
 
     // Histograms
+    /// Policy evaluation latency distribution
     pub policy_evaluation_duration: Histogram,
+    /// Tool execution latency distribution
     pub tool_execution_duration: Histogram,
+    /// PRM scoring latency distribution
     pub prm_scoring_duration: Histogram,
+    /// WASM execution latency distribution
     pub wasm_execution_duration: Histogram,
 }
 
+impl std::fmt::Debug for MetricsCollector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MetricsCollector")
+            .field("config", &self.config)
+            .field("uptime_secs", &self.start_time.elapsed().as_secs())
+            .finish_non_exhaustive()
+    }
+}
+
 impl MetricsCollector {
+    /// Create a new metrics collector
     pub fn new(config: MetricsConfig) -> Self {
         let buckets = config.latency_buckets_ms.clone();
         Self {
@@ -537,6 +566,12 @@ impl Default for MetricsCollector {
 /// Prometheus metrics exporter
 pub struct PrometheusExporter {
     collector: Arc<MetricsCollector>,
+}
+
+impl std::fmt::Debug for PrometheusExporter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PrometheusExporter").finish_non_exhaustive()
+    }
 }
 
 impl PrometheusExporter {

@@ -395,20 +395,14 @@ impl AuditBackend for S3AuditBackend {
     }
 
     fn load_all(&self) -> Result<Vec<AuditEntry>, AuditError> {
-        // Return entries from local cache
-        // Note: For full history, need to query S3 and combine
+        // Since append() adds to both buffer and cache, just use cache
+        // to avoid duplicating entries
         let cache = self
             .local_cache
             .read()
             .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
         
         let mut entries = cache.clone();
-
-        // Add buffered entries not yet uploaded
-        if let Ok(buffer) = self.buffer.lock() {
-            entries.extend(buffer.iter().cloned());
-        }
-
         entries.sort_by_key(|e| e.id);
         Ok(entries)
     }
@@ -431,15 +425,15 @@ impl AuditBackend for S3AuditBackend {
     }
 
     fn count(&self) -> Result<u64, AuditError> {
+        // Buffer and cache can have overlapping entries, so use cache as the source of truth
+        // since append() adds to both. Buffer entries are always in cache too.
         let cache_count = self
             .local_cache
             .read()
             .map(|c| c.len())
             .unwrap_or(0);
-        
-        let buffer_count = self.buffer.lock().map(|b| b.len()).unwrap_or(0);
 
-        Ok((cache_count + buffer_count) as u64)
+        Ok(cache_count as u64)
     }
 
     fn flush(&mut self) -> Result<(), AuditError> {
@@ -520,6 +514,7 @@ impl ArchiveQuery {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audit::AuditDecision;
 
     fn create_test_entry(id: u64, agent_id: &str) -> AuditEntry {
         AuditEntry {
