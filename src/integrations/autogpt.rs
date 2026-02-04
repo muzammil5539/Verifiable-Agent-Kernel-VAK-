@@ -630,6 +630,561 @@ impl AutoGPTAdapter {
             "high_risk_alerts": self.stats.high_risk_alerts.load(Ordering::Relaxed),
         })
     }
+
+    /// Full task verification with comprehensive analysis (INT-004)
+    ///
+    /// This method performs deep analysis of a task plan including:
+    /// - Goal safety verification
+    /// - Step-by-step command analysis
+    /// - Resource access pattern detection
+    /// - Timing and complexity estimation
+    /// - Risk assessment with mitigation suggestions
+    ///
+    /// # Arguments
+    /// * `plan` - The task plan to verify
+    /// * `agent_id` - The agent ID
+    /// * `verification_opts` - Optional verification options
+    ///
+    /// # Returns
+    /// * `FullVerificationResult` with detailed analysis
+    pub async fn verify_task_full(
+        &self,
+        plan: &TaskPlan,
+        agent_id: &str,
+        verification_opts: Option<&VerificationOptions>,
+    ) -> AdapterResult<FullVerificationResult> {
+        self.stats.plans_evaluated.fetch_add(1, Ordering::Relaxed);
+        let opts = verification_opts.cloned().unwrap_or_default();
+
+        let mut result = FullVerificationResult {
+            plan_id: plan.plan_id.clone(),
+            agent_id: agent_id.to_string(),
+            verified: true,
+            overall_risk: RiskLevel::Low,
+            goal_analysis: GoalAnalysis::default(),
+            step_analyses: Vec::new(),
+            resource_analysis: ResourceAnalysis::default(),
+            timing_analysis: TimingAnalysis::default(),
+            recommendations: Vec::new(),
+            verification_time_ms: 0,
+        };
+
+        let start = std::time::Instant::now();
+
+        // Analyze goal
+        result.goal_analysis = self.analyze_goal(&plan.goal, &opts);
+        if result.goal_analysis.is_high_risk {
+            result.overall_risk = RiskLevel::High;
+            self.stats.high_risk_alerts.fetch_add(1, Ordering::Relaxed);
+        }
+
+        // Analyze each step
+        for step in &plan.steps {
+            let step_analysis = self.analyze_step(step, &opts).await;
+            if step_analysis.risk_level >= RiskLevel::High {
+                result.overall_risk = result.overall_risk.max(step_analysis.risk_level);
+            }
+            result.step_analyses.push(step_analysis);
+        }
+
+        // Analyze resource access patterns
+        result.resource_analysis = self.analyze_resources(plan);
+
+        // Analyze timing
+        result.timing_analysis = TimingAnalysis {
+            estimated_duration_secs: plan.estimated_time_secs
+                .unwrap_or_else(|| plan.steps.len() as u64 * 30),
+            max_allowed_secs: self.config.max_execution_time_secs,
+            exceeds_limit: plan.estimated_time_secs
+                .map(|t| t > self.config.max_execution_time_secs)
+                .unwrap_or(false),
+            step_count: plan.steps.len(),
+            max_allowed_steps: self.config.max_steps,
+        };
+
+        // Generate recommendations
+        result.recommendations = self.generate_recommendations(&result, plan);
+
+        // Final verification decision
+        result.verified = result.overall_risk < RiskLevel::Critical
+            && !result.timing_analysis.exceeds_limit
+            && result.step_analyses.iter().all(|s| s.blocked_commands.is_empty());
+
+        result.verification_time_ms = start.elapsed().as_millis() as u64;
+
+        if result.verified {
+            self.stats.plans_approved.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.stats.plans_rejected.fetch_add(1, Ordering::Relaxed);
+        }
+
+        Ok(result)
+    }
+
+    /// Analyze the goal for risks
+    fn analyze_goal(&self, goal: &str, _opts: &VerificationOptions) -> GoalAnalysis {
+        let goal_lower = goal.to_lowercase();
+        
+        let mut analysis = GoalAnalysis {
+            goal: goal.to_string(),
+            is_high_risk: false,
+            risk_keywords: Vec::new(),
+            category: GoalCategory::General,
+            confidence: 0.8,
+        };
+
+        // Check for high-risk keywords
+        let high_risk_keywords = [
+            ("delete", "Data deletion"),
+            ("remove", "Data removal"),
+            ("modify system", "System modification"),
+            ("access credentials", "Credential access"),
+            ("transfer", "Data transfer"),
+            ("install", "Software installation"),
+            ("execute", "Code execution"),
+            ("sudo", "Privileged operation"),
+            ("root", "Root access"),
+        ];
+
+        for (keyword, description) in high_risk_keywords {
+            if goal_lower.contains(keyword) {
+                analysis.is_high_risk = true;
+                analysis.risk_keywords.push(RiskKeyword {
+                    keyword: keyword.to_string(),
+                    description: description.to_string(),
+                    severity: KeywordSeverity::High,
+                });
+            }
+        }
+
+        // Determine category
+        if goal_lower.contains("file") || goal_lower.contains("directory") {
+            analysis.category = GoalCategory::FileOperation;
+        } else if goal_lower.contains("network") || goal_lower.contains("http") || goal_lower.contains("api") {
+            analysis.category = GoalCategory::NetworkOperation;
+        } else if goal_lower.contains("database") || goal_lower.contains("sql") {
+            analysis.category = GoalCategory::DatabaseOperation;
+        } else if goal_lower.contains("code") || goal_lower.contains("script") {
+            analysis.category = GoalCategory::CodeExecution;
+        }
+
+        analysis
+    }
+
+    /// Analyze a single step
+    async fn analyze_step(&self, step: &TaskStep, _opts: &VerificationOptions) -> StepAnalysis {
+        let mut analysis = StepAnalysis {
+            step_number: step.step_number,
+            description: step.description.clone(),
+            risk_level: RiskLevel::Low,
+            blocked_commands: Vec::new(),
+            warnings: Vec::new(),
+            estimated_duration_secs: 30,
+        };
+
+        if let Some(ref command) = step.command {
+            // Check for blocked commands
+            for blocked in &self.config.blocked_commands {
+                if command.to_lowercase().contains(&blocked.to_lowercase()) {
+                    analysis.blocked_commands.push(BlockedCommandInfo {
+                        pattern: blocked.clone(),
+                        found_in: command.clone(),
+                        reason: format!("Command pattern '{}' is blocked", blocked),
+                    });
+                    analysis.risk_level = RiskLevel::Critical;
+                }
+            }
+
+            // Analyze command patterns
+            if command.contains("|") {
+                analysis.warnings.push("Command uses pipe - verify intermediate steps".to_string());
+                analysis.risk_level = analysis.risk_level.max(RiskLevel::Medium);
+            }
+            if command.contains("&&") || command.contains(";") {
+                analysis.warnings.push("Command chains multiple operations".to_string());
+                analysis.risk_level = analysis.risk_level.max(RiskLevel::Medium);
+            }
+            if command.contains("curl") || command.contains("wget") {
+                analysis.warnings.push("Command downloads from network".to_string());
+                analysis.risk_level = analysis.risk_level.max(RiskLevel::High);
+            }
+        }
+
+        analysis
+    }
+
+    /// Analyze resource access patterns
+    fn analyze_resources(&self, plan: &TaskPlan) -> ResourceAnalysis {
+        let mut analysis = ResourceAnalysis {
+            file_paths: Vec::new(),
+            network_endpoints: Vec::new(),
+            requires_elevated: false,
+            sensitive_resources: Vec::new(),
+        };
+
+        for step in &plan.steps {
+            if let Some(ref cmd) = step.command {
+                // Extract file paths
+                let path_pattern = regex::Regex::new(r"[/~][\w/.]+").unwrap_or_else(|_| regex::Regex::new(".^").unwrap());
+                for cap in path_pattern.find_iter(cmd) {
+                    let path = cap.as_str().to_string();
+                    if path.starts_with("/etc") || path.starts_with("/root") || path.contains("passwd") {
+                        analysis.sensitive_resources.push(path.clone());
+                    }
+                    if !analysis.file_paths.contains(&path) {
+                        analysis.file_paths.push(path);
+                    }
+                }
+
+                // Check for elevated privileges
+                if cmd.contains("sudo") || cmd.contains("as root") {
+                    analysis.requires_elevated = true;
+                }
+            }
+
+            // Check description for network operations
+            let desc_lower = step.description.to_lowercase();
+            if desc_lower.contains("http") || desc_lower.contains("api") {
+                analysis.network_endpoints.push(step.description.clone());
+            }
+        }
+
+        analysis
+    }
+
+    /// Generate recommendations based on analysis
+    fn generate_recommendations(
+        &self,
+        result: &FullVerificationResult,
+        _plan: &TaskPlan,
+    ) -> Vec<VerificationRecommendation> {
+        let mut recommendations = Vec::new();
+
+        if result.goal_analysis.is_high_risk {
+            recommendations.push(VerificationRecommendation {
+                level: RecommendationLevel::Required,
+                category: "goal".to_string(),
+                message: "High-risk goal detected. Consider human review before execution.".to_string(),
+                action: Some("request_human_review".to_string()),
+            });
+        }
+
+        for step_analysis in &result.step_analyses {
+            if !step_analysis.blocked_commands.is_empty() {
+                recommendations.push(VerificationRecommendation {
+                    level: RecommendationLevel::Blocking,
+                    category: "command".to_string(),
+                    message: format!(
+                        "Step {} contains blocked command. Cannot proceed.",
+                        step_analysis.step_number
+                    ),
+                    action: Some("remove_blocked_command".to_string()),
+                });
+            }
+
+            for warning in &step_analysis.warnings {
+                recommendations.push(VerificationRecommendation {
+                    level: RecommendationLevel::Advisory,
+                    category: "step".to_string(),
+                    message: format!("Step {}: {}", step_analysis.step_number, warning),
+                    action: None,
+                });
+            }
+        }
+
+        if result.resource_analysis.requires_elevated {
+            recommendations.push(VerificationRecommendation {
+                level: RecommendationLevel::Required,
+                category: "privileges".to_string(),
+                message: "Plan requires elevated privileges. Ensure proper authorization.".to_string(),
+                action: Some("verify_authorization".to_string()),
+            });
+        }
+
+        if !result.resource_analysis.sensitive_resources.is_empty() {
+            recommendations.push(VerificationRecommendation {
+                level: RecommendationLevel::Required,
+                category: "resources".to_string(),
+                message: format!(
+                    "Plan accesses sensitive resources: {:?}",
+                    result.resource_analysis.sensitive_resources
+                ),
+                action: Some("verify_resource_access".to_string()),
+            });
+        }
+
+        if result.timing_analysis.exceeds_limit {
+            recommendations.push(VerificationRecommendation {
+                level: RecommendationLevel::Blocking,
+                category: "timing".to_string(),
+                message: format!(
+                    "Estimated duration {}s exceeds limit {}s",
+                    result.timing_analysis.estimated_duration_secs,
+                    result.timing_analysis.max_allowed_secs
+                ),
+                action: Some("reduce_scope".to_string()),
+            });
+        }
+
+        recommendations
+    }
+
+    /// Monitor ongoing execution with real-time verification
+    pub async fn monitor_execution(
+        &self,
+        plan_id: &str,
+        step_number: usize,
+        output: &str,
+    ) -> MonitoringResult {
+        let plans = self.active_plans.read().await;
+        
+        let state = plans.get(plan_id);
+        let execution_time = state.map(|s| s.started_at.elapsed().as_secs()).unwrap_or(0);
+
+        // Check for anomalies in output
+        let mut alerts = Vec::new();
+        
+        // Check for error patterns
+        if output.to_lowercase().contains("error") || output.to_lowercase().contains("failed") {
+            alerts.push(MonitoringAlert {
+                level: AlertLevel::Medium,
+                message: "Error detected in step output".to_string(),
+                step: step_number,
+            });
+        }
+
+        // Check for timeout
+        if execution_time > self.config.max_execution_time_secs {
+            alerts.push(MonitoringAlert {
+                level: AlertLevel::Critical,
+                message: "Execution time limit exceeded".to_string(),
+                step: step_number,
+            });
+        }
+
+        // Check for sensitive data in output
+        let sensitive_patterns = ["password", "secret", "token", "api_key", "private_key"];
+        for pattern in sensitive_patterns {
+            if output.to_lowercase().contains(pattern) {
+                alerts.push(MonitoringAlert {
+                    level: AlertLevel::High,
+                    message: format!("Sensitive data pattern '{}' detected in output", pattern),
+                    step: step_number,
+                });
+            }
+        }
+
+        let should_continue = alerts.iter().all(|a| a.level < AlertLevel::Critical);
+        MonitoringResult {
+            plan_id: plan_id.to_string(),
+            current_step: step_number,
+            elapsed_secs: execution_time,
+            alerts,
+            should_continue,
+        }
+    }
+}
+
+/// Options for task verification
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VerificationOptions {
+    /// Perform deep analysis
+    pub deep_analysis: bool,
+    /// Check external resources
+    pub verify_resources: bool,
+    /// Strict mode (fail on warnings)
+    pub strict: bool,
+    /// Custom blocked patterns
+    pub additional_blocked: Vec<String>,
+}
+
+/// Risk level for operations
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum RiskLevel {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+impl Default for RiskLevel {
+    fn default() -> Self {
+        RiskLevel::Low
+    }
+}
+
+/// Full verification result (INT-004)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FullVerificationResult {
+    /// Plan ID
+    pub plan_id: String,
+    /// Agent ID
+    pub agent_id: String,
+    /// Whether verification passed
+    pub verified: bool,
+    /// Overall risk level
+    pub overall_risk: RiskLevel,
+    /// Goal analysis
+    pub goal_analysis: GoalAnalysis,
+    /// Step-by-step analysis
+    pub step_analyses: Vec<StepAnalysis>,
+    /// Resource access analysis
+    pub resource_analysis: ResourceAnalysis,
+    /// Timing analysis
+    pub timing_analysis: TimingAnalysis,
+    /// Recommendations
+    pub recommendations: Vec<VerificationRecommendation>,
+    /// Time taken for verification
+    pub verification_time_ms: u64,
+}
+
+/// Analysis of the task goal
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GoalAnalysis {
+    /// The goal text
+    pub goal: String,
+    /// Whether this is a high-risk goal
+    pub is_high_risk: bool,
+    /// Risk keywords found
+    pub risk_keywords: Vec<RiskKeyword>,
+    /// Goal category
+    pub category: GoalCategory,
+    /// Confidence in analysis
+    pub confidence: f64,
+}
+
+/// Risk keyword information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RiskKeyword {
+    /// The keyword
+    pub keyword: String,
+    /// Description of why it's risky
+    pub description: String,
+    /// Severity
+    pub severity: KeywordSeverity,
+}
+
+/// Keyword severity
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum KeywordSeverity {
+    Low,
+    Medium,
+    High,
+}
+
+/// Goal category
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GoalCategory {
+    #[default]
+    General,
+    FileOperation,
+    NetworkOperation,
+    DatabaseOperation,
+    CodeExecution,
+    SystemAdmin,
+}
+
+/// Analysis of a single step
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StepAnalysis {
+    /// Step number
+    pub step_number: usize,
+    /// Step description
+    pub description: String,
+    /// Risk level
+    pub risk_level: RiskLevel,
+    /// Blocked commands found
+    pub blocked_commands: Vec<BlockedCommandInfo>,
+    /// Warnings
+    pub warnings: Vec<String>,
+    /// Estimated duration
+    pub estimated_duration_secs: u64,
+}
+
+/// Information about a blocked command
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockedCommandInfo {
+    /// The pattern that matched
+    pub pattern: String,
+    /// Where it was found
+    pub found_in: String,
+    /// Reason for blocking
+    pub reason: String,
+}
+
+/// Resource access analysis
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ResourceAnalysis {
+    /// File paths accessed
+    pub file_paths: Vec<String>,
+    /// Network endpoints accessed
+    pub network_endpoints: Vec<String>,
+    /// Whether elevated privileges are needed
+    pub requires_elevated: bool,
+    /// Sensitive resources accessed
+    pub sensitive_resources: Vec<String>,
+}
+
+/// Timing analysis
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TimingAnalysis {
+    /// Estimated duration in seconds
+    pub estimated_duration_secs: u64,
+    /// Maximum allowed duration
+    pub max_allowed_secs: u64,
+    /// Whether limit is exceeded
+    pub exceeds_limit: bool,
+    /// Number of steps
+    pub step_count: usize,
+    /// Maximum allowed steps
+    pub max_allowed_steps: usize,
+}
+
+/// Verification recommendation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerificationRecommendation {
+    /// Recommendation level
+    pub level: RecommendationLevel,
+    /// Category
+    pub category: String,
+    /// Message
+    pub message: String,
+    /// Suggested action
+    pub action: Option<String>,
+}
+
+/// Recommendation level
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RecommendationLevel {
+    Advisory,
+    Required,
+    Blocking,
+}
+
+/// Monitoring alert
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitoringAlert {
+    /// Alert level
+    pub level: AlertLevel,
+    /// Alert message
+    pub message: String,
+    /// Related step
+    pub step: usize,
+}
+
+/// Result of execution monitoring
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitoringResult {
+    /// Plan ID
+    pub plan_id: String,
+    /// Current step
+    pub current_step: usize,
+    /// Elapsed time
+    pub elapsed_secs: u64,
+    /// Alerts
+    pub alerts: Vec<MonitoringAlert>,
+    /// Whether execution should continue
+    pub should_continue: bool,
 }
 
 /// Result of plan evaluation

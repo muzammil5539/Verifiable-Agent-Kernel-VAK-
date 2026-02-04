@@ -67,7 +67,9 @@
 
 mod prm;
 pub mod datalog;
+pub mod hybrid_loop;
 pub mod prm_gating;
+pub mod prompt_injection;
 pub mod tree_search;
 pub mod verification_gateway;
 pub mod verifier;
@@ -89,6 +91,12 @@ pub use datalog::{
 pub use prm_gating::{
     AlternativeAction, BatchGateResult, GateConfig, GateContext, GateDecision, GateError,
     GateStats, PrmGate,
+};
+
+// Re-export Neuro-Symbolic Hybrid Loop types (NSR-006)
+pub use hybrid_loop::{
+    CycleResult, ExecutionPlan, HybridLoop, HybridLoopConfig, HybridLoopError, HybridResult,
+    LoopPhase, PlanParser, PlanStep,
 };
 
 // Re-export all public types from tree_search (NSR-003)
@@ -115,4 +123,10 @@ pub use verification_gateway::{
     ActionCategory, ConditionResult, ForbiddenPattern, GatewayConfig, GatewayError,
     GatewayResult, GatewayVerificationResult, HighStakesAction, RiskLevel,
     VerificationGateway, VerificationStats, ViolationDetail,
+};
+
+// Re-export prompt injection detection types (SEC-004)
+pub use prompt_injection::{
+    DetectionResult, DetectorConfig, DetectorStats, HeuristicFlag, InjectionError,
+    InjectionResult, InjectionType, PatternMatch, PromptInjectionDetector, RecommendedAction,
 };

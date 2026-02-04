@@ -1,0 +1,131 @@
+name: Security Audit
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run weekly on Sundays at midnight UTC
+    - cron: '0 0 * * 0'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # SEC-001: Supply Chain Hardening with cargo-audit
+  cargo-audit:
+    name: Vulnerability Scan (cargo-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run vulnerability scan
+        run: cargo audit --deny warnings
+
+      - name: Generate audit report
+        if: always()
+        run: cargo audit --json > security-audit-report.json || true
+
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-audit-report
+          path: security-audit-report.json
+          retention-days: 30
+
+  # SEC-002: License Compliance with cargo-deny
+  cargo-deny:
+    name: License & Dependency Check (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      - name: Check licenses and dependencies
+        run: cargo deny check
+
+  # SEC-003: Unsafe Rust Audit with cargo-geiger
+  cargo-geiger:
+    name: Unsafe Code Audit (cargo-geiger)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Install cargo-geiger
+        run: cargo install cargo-geiger --locked
+
+      - name: Run unsafe code audit
+        run: |
+          cargo geiger --all-features --all-targets 2>&1 | tee geiger-report.txt || true
+
+      - name: Upload geiger report
+        uses: actions/upload-artifact@v4
+        with:
+          name: geiger-report
+          path: geiger-report.txt
+          retention-days: 30
+
+  # Additional security checks
+  clippy-security:
+    name: Clippy Security Lints
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          components: clippy
+
+      - name: Run security-focused clippy lints
+        run: |
+          cargo clippy --all-targets --all-features -- \
+            -D clippy::unwrap_used \
+            -D clippy::expect_used \
+            -D clippy::panic \
+            -W clippy::cognitive_complexity \
+            -W clippy::too_many_arguments
+
+  # SBOM Generation for supply chain transparency
+  sbom:
+    name: Generate SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Install cargo-sbom
+        run: cargo install cargo-sbom --locked
+
+      - name: Generate SBOM
+        run: cargo sbom > sbom.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
+          retention-days: 90

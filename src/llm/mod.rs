@@ -27,11 +27,16 @@
 //! }
 //! ```
 
+pub mod constrained;
 mod litellm;
 mod mock;
 mod traits;
 
 // Re-export all public types
+pub use constrained::{
+    ConstrainedDecoder, ConstraintError, DatalogConstraint, DatalogFact, Grammar,
+    JsonSchemaConstraint, OutputConstraint, ParsedVakAction, VakActionConstraint,
+};
 pub use litellm::LiteLlmClient;
 pub use mock::{MockLlmProvider, MockResponse};
 pub use traits::{

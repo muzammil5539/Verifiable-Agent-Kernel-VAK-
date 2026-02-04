@@ -401,6 +401,97 @@ impl RouterConfig {
 // Protocol Router
 // ============================================================================
 
+/// Task type for auto-selection (SWM-004)
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TaskType {
+    /// Code review task
+    CodeReview,
+    /// Security analysis
+    SecurityAnalysis,
+    /// Decision making
+    DecisionMaking,
+    /// Creative brainstorming
+    Creative,
+    /// Data analysis
+    DataAnalysis,
+    /// Planning and coordination
+    Planning,
+    /// Research and investigation
+    Research,
+    /// General task
+    General,
+}
+
+impl TaskType {
+    /// Get recommended topologies for this task type
+    pub fn recommended_topologies(&self) -> Vec<Topology> {
+        match self {
+            TaskType::CodeReview => vec![Topology::Pipeline, Topology::Hierarchical, Topology::Expert],
+            TaskType::SecurityAnalysis => vec![Topology::Adversarial, Topology::Debate, Topology::Expert],
+            TaskType::DecisionMaking => vec![Topology::Voting, Topology::Debate, Topology::Hierarchical],
+            TaskType::Creative => vec![Topology::Mesh, Topology::Debate, Topology::Broadcast],
+            TaskType::DataAnalysis => vec![Topology::Pipeline, Topology::Hierarchical, Topology::Expert],
+            TaskType::Planning => vec![Topology::Hierarchical, Topology::Debate, Topology::Pipeline],
+            TaskType::Research => vec![Topology::Expert, Topology::Mesh, Topology::Pipeline],
+            TaskType::General => vec![Topology::Hierarchical, Topology::Solo],
+        }
+    }
+
+    /// Detect task type from description
+    pub fn from_description(desc: &str) -> Self {
+        let desc_lower = desc.to_lowercase();
+        
+        if desc_lower.contains("security") || desc_lower.contains("vulnerability") || 
+           desc_lower.contains("penetration") || desc_lower.contains("threat") {
+            TaskType::SecurityAnalysis
+        } else if desc_lower.contains("code") && 
+                  (desc_lower.contains("review") || desc_lower.contains("audit")) {
+            TaskType::CodeReview
+        } else if desc_lower.contains("decide") || desc_lower.contains("vote") || 
+                  desc_lower.contains("choose") || desc_lower.contains("select") {
+            TaskType::DecisionMaking
+        } else if desc_lower.contains("create") || desc_lower.contains("brainstorm") || 
+                  desc_lower.contains("imagine") || desc_lower.contains("design") {
+            TaskType::Creative
+        } else if desc_lower.contains("analyze") || desc_lower.contains("data") || 
+                  desc_lower.contains("metrics") || desc_lower.contains("statistics") {
+            TaskType::DataAnalysis
+        } else if desc_lower.contains("plan") || desc_lower.contains("coordinate") || 
+                  desc_lower.contains("organize") || desc_lower.contains("schedule") {
+            TaskType::Planning
+        } else if desc_lower.contains("research") || desc_lower.contains("investigate") || 
+                  desc_lower.contains("find") || desc_lower.contains("discover") {
+            TaskType::Research
+        } else {
+            TaskType::General
+        }
+    }
+}
+
+/// Enhanced routing decision with task type (SWM-004)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnhancedRoutingDecision {
+    /// Basic routing decision
+    pub decision: RoutingDecision,
+    /// Detected task type
+    pub task_type: TaskType,
+    /// Alternative topology recommendations
+    pub alternatives: Vec<TopologyRecommendation>,
+    /// Routing explanation
+    pub explanation: String,
+}
+
+/// A topology recommendation with score
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopologyRecommendation {
+    /// The topology
+    pub topology: Topology,
+    /// Score (0.0 to 1.0)
+    pub score: f64,
+    /// Reasons for this recommendation
+    pub reasons: Vec<String>,
+}
+
 /// Protocol router for dynamic topology selection
 #[derive(Debug, Clone)]
 pub struct ProtocolRouter {
@@ -654,6 +745,182 @@ impl ProtocolRouter {
     /// Get the current configuration
     pub fn config(&self) -> &RouterConfig {
         &self.config
+    }
+
+    /// Enhanced routing with task type detection (SWM-004)
+    pub fn route_enhanced(
+        &self,
+        task: &str,
+        complexity: TaskComplexity,
+        available_agents: usize,
+    ) -> EnhancedRoutingDecision {
+        // Detect task type
+        let task_type = TaskType::from_description(task);
+        
+        // Get basic routing decision
+        let decision = self.route(task, complexity, available_agents);
+        
+        // Get alternative recommendations
+        let alternatives = self.get_alternative_recommendations(
+            task, 
+            &task_type, 
+            complexity, 
+            available_agents,
+        );
+        
+        // Generate detailed explanation
+        let explanation = self.generate_explanation(&decision, &task_type, &alternatives);
+        
+        EnhancedRoutingDecision {
+            decision,
+            task_type,
+            alternatives,
+            explanation,
+        }
+    }
+
+    /// Get alternative topology recommendations (SWM-004)
+    fn get_alternative_recommendations(
+        &self,
+        task: &str,
+        task_type: &TaskType,
+        complexity: TaskComplexity,
+        available_agents: usize,
+    ) -> Vec<TopologyRecommendation> {
+        let task_lower = task.to_lowercase();
+        let characteristics = self.analyze_task(&task_lower);
+        let mut recommendations = Vec::new();
+
+        // Score all topologies recommended for this task type
+        for topology in task_type.recommended_topologies() {
+            if available_agents < topology.min_agents() {
+                continue;
+            }
+
+            let score = self.score_topology(
+                topology,
+                &task_lower,
+                &characteristics,
+                complexity,
+                available_agents,
+            );
+
+            let mut reasons = Vec::new();
+            
+            // Add task-type specific reasons
+            match (task_type, topology) {
+                (TaskType::SecurityAnalysis, Topology::Adversarial) => {
+                    reasons.push("Red team vs blue team ideal for security analysis".to_string());
+                }
+                (TaskType::CodeReview, Topology::Pipeline) => {
+                    reasons.push("Sequential review stages for thorough code analysis".to_string());
+                }
+                (TaskType::DecisionMaking, Topology::Voting) => {
+                    reasons.push("Democratic consensus for important decisions".to_string());
+                }
+                (TaskType::Creative, Topology::Mesh) => {
+                    reasons.push("All-to-all communication fosters creative collaboration".to_string());
+                }
+                _ => {}
+            }
+
+            // Add complexity-based reasons
+            if complexity == TaskComplexity::Critical && topology.min_agents() >= 3 {
+                reasons.push("Multiple agents for critical task verification".to_string());
+            }
+
+            recommendations.push(TopologyRecommendation {
+                topology,
+                score,
+                reasons,
+            });
+        }
+
+        // Sort by score descending
+        recommendations.sort_by(|a, b| 
+            b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+        );
+
+        // Return top 3 alternatives
+        recommendations.into_iter().take(3).collect()
+    }
+
+    /// Generate detailed routing explanation (SWM-004)
+    fn generate_explanation(
+        &self,
+        decision: &RoutingDecision,
+        task_type: &TaskType,
+        alternatives: &[TopologyRecommendation],
+    ) -> String {
+        let mut explanation = format!(
+            "Task Type: {:?}\n\
+             Selected Topology: {:?} (confidence: {:.1}%)\n\
+             Suggested Agents: {}\n\
+             Estimated Overhead: {:.1}x\n\n",
+            task_type,
+            decision.topology,
+            decision.confidence * 100.0,
+            decision.suggested_agents,
+            decision.estimated_overhead
+        );
+
+        explanation.push_str("Reasoning: ");
+        explanation.push_str(&decision.reasoning);
+        explanation.push_str("\n\n");
+
+        if !alternatives.is_empty() {
+            explanation.push_str("Alternative Topologies:\n");
+            for alt in alternatives {
+                explanation.push_str(&format!(
+                    "  - {:?} (score: {:.1}%)",
+                    alt.topology,
+                    alt.score * 100.0
+                ));
+                if !alt.reasons.is_empty() {
+                    explanation.push_str(&format!(": {}", alt.reasons.join(", ")));
+                }
+                explanation.push('\n');
+            }
+        }
+
+        explanation
+    }
+
+    /// Auto-select the best topology based on task analysis (SWM-004)
+    pub fn auto_select(
+        &self,
+        task: &str,
+        available_agents: usize,
+    ) -> EnhancedRoutingDecision {
+        // Automatically detect complexity
+        let complexity = self.detect_complexity(task);
+        
+        self.route_enhanced(task, complexity, available_agents)
+    }
+
+    /// Detect task complexity from description (SWM-004)
+    fn detect_complexity(&self, task: &str) -> TaskComplexity {
+        let task_lower = task.to_lowercase();
+        let word_count = task.split_whitespace().count();
+        
+        // Complexity indicators
+        let critical_words = ["critical", "urgent", "production", "security", "sensitive"];
+        let high_words = ["complex", "comprehensive", "thorough", "detailed", "analyze"];
+        let medium_words = ["review", "check", "evaluate", "assess"];
+        
+        if critical_words.iter().any(|w| task_lower.contains(w)) {
+            return TaskComplexity::Critical;
+        }
+        
+        if high_words.iter().any(|w| task_lower.contains(w)) || word_count > 50 {
+            return TaskComplexity::High;
+        }
+        
+        if medium_words.iter().any(|w| task_lower.contains(w)) || word_count > 20 {
+            return TaskComplexity::Medium;
+        }
+        
+        TaskComplexity::Low
     }
 }
 

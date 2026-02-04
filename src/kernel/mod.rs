@@ -30,11 +30,20 @@
 pub mod async_pipeline;
 pub mod config;
 pub mod error;
+pub mod neurosymbolic_pipeline;
+pub mod rate_limiter;
 pub mod traits;
 pub mod types;
 
 // Re-export commonly used types at the module level
 pub use self::config::KernelConfig;
+pub use self::neurosymbolic_pipeline::{
+    AgentPlan, ExecutionResult, NeuroSymbolicPipeline, PipelineConfig, PipelineError,
+    ProposedAction,
+};
+pub use self::rate_limiter::{
+    ActionLimit, CheckResult, LimitType, RateLimitConfig, RateLimiter, ResourceLimit,
+};
 
 use std::path::PathBuf;
 use std::sync::Arc;

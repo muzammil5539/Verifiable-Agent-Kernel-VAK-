@@ -498,6 +498,232 @@ impl LangChainAdapter {
             "prm_rejections": self.stats.prm_rejections.load(Ordering::Relaxed),
         })
     }
+
+    /// Intercept a tool call with full PRM scoring integration (INT-003)
+    ///
+    /// This method performs comprehensive evaluation including:
+    /// - Rate limiting checks
+    /// - Policy evaluation
+    /// - PRM scoring for reasoning quality
+    /// - Audit logging
+    ///
+    /// # Arguments
+    /// * `tool_call` - The tool call to evaluate
+    /// * `agent_id` - Identifier of the calling agent
+    /// * `reasoning_context` - Optional reasoning context for PRM scoring
+    ///
+    /// # Returns
+    /// * `InterceptionResult` with detailed evaluation including PRM score
+    pub async fn intercept_tool_with_prm(
+        &self,
+        tool_call: &ToolCall,
+        agent_id: &str,
+        reasoning_context: Option<&ReasoningContext>,
+    ) -> AdapterResult<InterceptionResult> {
+        let start = Instant::now();
+        self.stats.tool_calls_total.fetch_add(1, Ordering::Relaxed);
+
+        // Skip passthrough tools
+        if self.is_passthrough(&tool_call.tool_name) {
+            return Ok(InterceptionResult {
+                context: tool_call.to_context(agent_id, None),
+                decision: HookDecision::Allow,
+                hook_name: "passthrough".to_string(),
+                prm_score: None,
+                evaluation_time_us: start.elapsed().as_micros() as u64,
+                audit_entry_id: None,
+            });
+        }
+
+        // Check rate limit
+        self.check_rate_limit(agent_id).await?;
+
+        // Check if action is blocked
+        let action = format!("{}:{}", tool_call.tool_name, tool_call.action);
+        if self.config.base.blocked_actions.contains(&action) {
+            self.stats.tool_calls_blocked.fetch_add(1, Ordering::Relaxed);
+            self.stats.policy_violations.fetch_add(1, Ordering::Relaxed);
+            return Ok(InterceptionResult {
+                context: tool_call.to_context(agent_id, None),
+                decision: HookDecision::Block {
+                    reason: format!("Action '{}' is blocked by policy", action),
+                },
+                hook_name: "blocked_actions".to_string(),
+                prm_score: None,
+                evaluation_time_us: start.elapsed().as_micros() as u64,
+                audit_entry_id: None,
+            });
+        }
+
+        // PRM scoring if reasoning context is provided
+        let prm_score = if let Some(ctx) = reasoning_context {
+            let score = self.evaluate_prm_score(ctx, &action).await;
+            
+            // Check against threshold
+            if score < self.config.base.prm_threshold {
+                self.stats.prm_rejections.fetch_add(1, Ordering::Relaxed);
+                self.stats.tool_calls_blocked.fetch_add(1, Ordering::Relaxed);
+                return Ok(InterceptionResult {
+                    context: tool_call.to_context(agent_id, None),
+                    decision: HookDecision::Block {
+                        reason: format!(
+                            "PRM score {:.2} below threshold {:.2}. Reasoning quality insufficient.",
+                            score, self.config.base.prm_threshold
+                        ),
+                    },
+                    hook_name: "prm_gating".to_string(),
+                    prm_score: Some(score),
+                    evaluation_time_us: start.elapsed().as_micros() as u64,
+                    audit_entry_id: None,
+                });
+            }
+            Some(score)
+        } else {
+            None
+        };
+
+        // Run custom hooks
+        let context = tool_call.to_context(agent_id, None);
+        for hook in &self.hooks {
+            if hook.applies_to(&context) {
+                let decision = hook.evaluate(&context);
+                if !matches!(decision, HookDecision::Allow) {
+                    return Ok(InterceptionResult {
+                        context,
+                        decision,
+                        hook_name: hook.name().to_string(),
+                        prm_score,
+                        evaluation_time_us: start.elapsed().as_micros() as u64,
+                        audit_entry_id: None,
+                    });
+                }
+            }
+        }
+
+        // Default: allow
+        self.stats.tool_calls_allowed.fetch_add(1, Ordering::Relaxed);
+        Ok(InterceptionResult {
+            context,
+            decision: HookDecision::Allow,
+            hook_name: "default".to_string(),
+            prm_score,
+            evaluation_time_us: start.elapsed().as_micros() as u64,
+            audit_entry_id: None,
+        })
+    }
+
+    /// Evaluate PRM score for a reasoning context
+    async fn evaluate_prm_score(&self, ctx: &ReasoningContext, action: &str) -> f64 {
+        // Simplified PRM scoring based on reasoning quality indicators
+        let mut score = 0.5; // Base score
+
+        // Check reasoning chain length (longer chains may indicate more thorough reasoning)
+        if ctx.reasoning_steps.len() >= 2 {
+            score += 0.1;
+        }
+
+        // Check for presence of observation and planning
+        if ctx.has_observation {
+            score += 0.1;
+        }
+        if ctx.has_plan {
+            score += 0.1;
+        }
+
+        // Check confidence
+        score += ctx.confidence * 0.2;
+
+        // Penalize if action seems risky without proper justification
+        let risky_actions = ["delete", "write", "execute", "modify", "remove"];
+        let action_lower = action.to_lowercase();
+        if risky_actions.iter().any(|r| action_lower.contains(r)) {
+            if ctx.reasoning_steps.len() < 3 || !ctx.has_plan {
+                score -= 0.2;
+            }
+        }
+
+        score.clamp(0.0, 1.0)
+    }
+
+    /// Batch intercept multiple tool calls
+    pub async fn intercept_tools_batch(
+        &self,
+        tool_calls: &[ToolCall],
+        agent_id: &str,
+    ) -> Vec<AdapterResult<InterceptionResult>> {
+        let mut results = Vec::with_capacity(tool_calls.len());
+        for call in tool_calls {
+            results.push(self.intercept_tool(call, agent_id).await);
+        }
+        results
+    }
+}
+
+/// Reasoning context for PRM scoring (INT-003)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReasoningContext {
+    /// Reasoning steps taken so far
+    pub reasoning_steps: Vec<String>,
+    /// Whether the agent made an observation
+    pub has_observation: bool,
+    /// Whether the agent has a plan
+    pub has_plan: bool,
+    /// Agent's confidence in the action (0.0 - 1.0)
+    pub confidence: f64,
+    /// Goal being pursued
+    pub goal: Option<String>,
+    /// Previous actions in this reasoning chain
+    pub previous_actions: Vec<String>,
+}
+
+impl Default for ReasoningContext {
+    fn default() -> Self {
+        Self {
+            reasoning_steps: Vec::new(),
+            has_observation: false,
+            has_plan: false,
+            confidence: 0.5,
+            goal: None,
+            previous_actions: Vec::new(),
+        }
+    }
+}
+
+impl ReasoningContext {
+    /// Create a new reasoning context
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add a reasoning step
+    pub fn with_step(mut self, step: impl Into<String>) -> Self {
+        self.reasoning_steps.push(step.into());
+        self
+    }
+
+    /// Mark that an observation was made
+    pub fn with_observation(mut self) -> Self {
+        self.has_observation = true;
+        self
+    }
+
+    /// Mark that a plan exists
+    pub fn with_plan(mut self) -> Self {
+        self.has_plan = true;
+        self
+    }
+
+    /// Set confidence level
+    pub fn with_confidence(mut self, confidence: f64) -> Self {
+        self.confidence = confidence.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Set goal
+    pub fn with_goal(mut self, goal: impl Into<String>) -> Self {
+        self.goal = Some(goal.into());
+        self
+    }
 }
 
 // ============================================================================

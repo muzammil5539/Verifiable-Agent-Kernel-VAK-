@@ -27,10 +27,25 @@
 //! ```
 
 pub mod flight_recorder;
+pub mod graphql;
 pub mod multi_region;
 pub mod otel;
+pub mod replay;
 pub mod s3_backend;
 pub mod streaming;
+
+// Re-export GraphQL/Query API types (OBS-004)
+pub use graphql::{
+    AuditLogEntry as GqlAuditLogEntry, AuditQueryEngine, AuditStats as GqlAuditStats,
+    ChainVerificationResult as GqlChainVerificationResult, PolicyDecisionEntry,
+    PolicyDecisionResult, QueryError, QueryRequest, QueryResponse, QueryResult, SortOrder,
+};
+
+// Re-export cryptographic replay types (OBS-002)
+pub use replay::{
+    ActiveReplay, LogMetadata, ReplayConfig, ReplayError, ReplayReport, ReplayResult,
+    ReplaySession, ReplayStep, ReplayVerifier, ReplayedResult, StepComparison,
+};
 
 // Re-export OpenTelemetry tracing types (OBS-001)
 pub use otel::{

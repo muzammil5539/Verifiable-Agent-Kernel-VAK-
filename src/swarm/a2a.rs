@@ -901,6 +901,425 @@ fn current_timestamp() -> u64 {
 }
 
 // ============================================================================
+// Discovery Mechanism (SWM-002)
+// ============================================================================
+
+/// Discovery configuration for finding agents on the network
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveryConfig {
+    /// Enable active discovery
+    pub enabled: bool,
+    /// Discovery methods to use
+    pub methods: Vec<DiscoveryMethod>,
+    /// Discovery interval in seconds
+    pub interval_secs: u64,
+    /// Maximum agents to discover per cycle
+    pub max_per_cycle: usize,
+    /// Cache discovered agents
+    pub cache_results: bool,
+    /// Cache TTL in seconds
+    pub cache_ttl_secs: u64,
+}
+
+impl Default for DiscoveryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            methods: vec![DiscoveryMethod::Local, DiscoveryMethod::Registry],
+            interval_secs: 60,
+            max_per_cycle: 100,
+            cache_results: true,
+            cache_ttl_secs: 300,
+        }
+    }
+}
+
+/// Methods for discovering agents
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiscoveryMethod {
+    /// Local network broadcast
+    Local,
+    /// Central registry lookup
+    Registry,
+    /// DNS-based discovery
+    Dns,
+    /// Peer exchange (gossip)
+    PeerExchange,
+    /// Static configuration
+    Static,
+}
+
+/// Result of an agent discovery operation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveryResult {
+    /// Discovered agents
+    pub agents: Vec<DiscoveredAgent>,
+    /// Methods used
+    pub methods_used: Vec<DiscoveryMethod>,
+    /// Discovery time in milliseconds
+    pub discovery_time_ms: u64,
+    /// Errors encountered
+    pub errors: Vec<String>,
+}
+
+/// A discovered agent
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveredAgent {
+    /// Agent card
+    pub card: AgentCard,
+    /// How the agent was discovered
+    pub discovery_method: DiscoveryMethod,
+    /// When the agent was discovered
+    pub discovered_at: u64,
+    /// Discovery score (higher = more reliable)
+    pub reliability_score: f64,
+    /// Network latency estimate (ms)
+    pub latency_estimate_ms: Option<u64>,
+}
+
+/// Agent discovery service (SWM-002)
+pub struct AgentDiscoveryService {
+    /// Configuration
+    config: DiscoveryConfig,
+    /// Known agents cache
+    cache: Arc<RwLock<Vec<DiscoveredAgent>>>,
+    /// Registry endpoints
+    registry_endpoints: Vec<String>,
+    /// Our agent card for announcements
+    our_card: Arc<RwLock<Option<AgentCard>>>,
+}
+
+impl AgentDiscoveryService {
+    /// Create a new discovery service
+    pub fn new(config: DiscoveryConfig) -> Self {
+        Self {
+            config,
+            cache: Arc::new(RwLock::new(Vec::new())),
+            registry_endpoints: Vec::new(),
+            our_card: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Set our agent card
+    pub async fn set_our_card(&self, card: AgentCard) {
+        let mut our_card = self.our_card.write().await;
+        *our_card = Some(card);
+    }
+
+    /// Add a registry endpoint
+    pub fn add_registry_endpoint(&mut self, endpoint: impl Into<String>) {
+        self.registry_endpoints.push(endpoint.into());
+    }
+
+    /// Discover agents using configured methods
+    pub async fn discover(&self) -> DiscoveryResult {
+        let start = std::time::Instant::now();
+        let mut all_agents = Vec::new();
+        let mut errors = Vec::new();
+        let mut methods_used = Vec::new();
+
+        for method in &self.config.methods {
+            match method {
+                DiscoveryMethod::Local => {
+                    match self.discover_local().await {
+                        Ok(agents) => {
+                            all_agents.extend(agents);
+                            methods_used.push(DiscoveryMethod::Local);
+                        }
+                        Err(e) => errors.push(format!("Local discovery failed: {}", e)),
+                    }
+                }
+                DiscoveryMethod::Registry => {
+                    match self.discover_from_registry().await {
+                        Ok(agents) => {
+                            all_agents.extend(agents);
+                            methods_used.push(DiscoveryMethod::Registry);
+                        }
+                        Err(e) => errors.push(format!("Registry discovery failed: {}", e)),
+                    }
+                }
+                DiscoveryMethod::Dns => {
+                    match self.discover_via_dns().await {
+                        Ok(agents) => {
+                            all_agents.extend(agents);
+                            methods_used.push(DiscoveryMethod::Dns);
+                        }
+                        Err(e) => errors.push(format!("DNS discovery failed: {}", e)),
+                    }
+                }
+                DiscoveryMethod::PeerExchange => {
+                    match self.discover_via_peers().await {
+                        Ok(agents) => {
+                            all_agents.extend(agents);
+                            methods_used.push(DiscoveryMethod::PeerExchange);
+                        }
+                        Err(e) => errors.push(format!("Peer exchange failed: {}", e)),
+                    }
+                }
+                DiscoveryMethod::Static => {
+                    // Static agents are added manually, no discovery needed
+                    methods_used.push(DiscoveryMethod::Static);
+                }
+            }
+        }
+
+        // Deduplicate by agent ID
+        let mut seen = std::collections::HashSet::new();
+        all_agents.retain(|a| seen.insert(a.card.id.clone()));
+
+        // Limit results
+        if all_agents.len() > self.config.max_per_cycle {
+            all_agents.truncate(self.config.max_per_cycle);
+        }
+
+        // Update cache
+        if self.config.cache_results {
+            let mut cache = self.cache.write().await;
+            *cache = all_agents.clone();
+        }
+
+        DiscoveryResult {
+            agents: all_agents,
+            methods_used,
+            discovery_time_ms: start.elapsed().as_millis() as u64,
+            errors,
+        }
+    }
+
+    /// Discover local network agents
+    async fn discover_local(&self) -> Result<Vec<DiscoveredAgent>, String> {
+        // Simplified: In production, this would use mDNS/Bonjour or UDP broadcast
+        let now = current_timestamp();
+        Ok(vec![]) // No local agents discovered in simplified implementation
+    }
+
+    /// Discover agents from registry
+    async fn discover_from_registry(&self) -> Result<Vec<DiscoveredAgent>, String> {
+        let mut discovered = Vec::new();
+        let now = current_timestamp();
+
+        for endpoint in &self.registry_endpoints {
+            // In production, this would make HTTP requests to the registry
+            // Simplified implementation
+            info!(endpoint = %endpoint, "Querying agent registry");
+            
+            // Simulate registry response
+            // In production: let response = reqwest::get(endpoint).await?;
+        }
+
+        Ok(discovered)
+    }
+
+    /// Discover agents via DNS SRV records
+    async fn discover_via_dns(&self) -> Result<Vec<DiscoveredAgent>, String> {
+        // In production, this would resolve DNS SRV records like:
+        // _vak-agent._tcp.example.com
+        Ok(vec![])
+    }
+
+    /// Discover agents via peer exchange
+    async fn discover_via_peers(&self) -> Result<Vec<DiscoveredAgent>, String> {
+        let cache = self.cache.read().await;
+        let mut discovered = Vec::new();
+
+        // In production, this would query known peers for their peer lists
+        for cached_agent in cache.iter() {
+            if cached_agent.card.endpoint.is_some() {
+                // Would query this agent for its known peers
+            }
+        }
+
+        Ok(discovered)
+    }
+
+    /// Get cached agents
+    pub async fn get_cached(&self) -> Vec<DiscoveredAgent> {
+        self.cache.read().await.clone()
+    }
+
+    /// Find agents by capability from cache
+    pub async fn find_by_capability(&self, capability_id: &str) -> Vec<DiscoveredAgent> {
+        let cache = self.cache.read().await;
+        cache
+            .iter()
+            .filter(|a| a.card.has_capability(capability_id))
+            .cloned()
+            .collect()
+    }
+
+    /// Find agents by tag from cache
+    pub async fn find_by_tag(&self, tag: &str) -> Vec<DiscoveredAgent> {
+        let cache = self.cache.read().await;
+        cache
+            .iter()
+            .filter(|a| {
+                a.card.capabilities.iter().any(|c| c.tags.contains(&tag.to_string()))
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Announce our presence to registries
+    pub async fn announce(&self) -> Result<(), String> {
+        let our_card = self.our_card.read().await;
+        let card = our_card
+            .as_ref()
+            .ok_or_else(|| "Our agent card not set".to_string())?;
+
+        for endpoint in &self.registry_endpoints {
+            // In production, this would POST our card to the registry
+            info!(endpoint = %endpoint, agent_id = %card.id, "Announcing to registry");
+        }
+
+        Ok(())
+    }
+
+    /// Start background discovery loop
+    pub fn start_discovery_loop(&self) -> DiscoveryHandle {
+        let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let running_clone = running.clone();
+        let interval = std::time::Duration::from_secs(self.config.interval_secs);
+        let cache = Arc::clone(&self.cache);
+        let methods = self.config.methods.clone();
+        let max_per_cycle = self.config.max_per_cycle;
+
+        tokio::spawn(async move {
+            while running_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                tokio::time::sleep(interval).await;
+                
+                // Simplified discovery in background
+                info!("Running background agent discovery");
+            }
+            info!("Discovery loop stopped");
+        });
+
+        DiscoveryHandle { running }
+    }
+}
+
+/// Handle to control the discovery loop
+pub struct DiscoveryHandle {
+    running: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl DiscoveryHandle {
+    /// Stop the discovery loop
+    pub fn stop(&self) {
+        self.running.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl Drop for DiscoveryHandle {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// Query for filtering discovered agents
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DiscoveryQuery {
+    /// Filter by capability IDs
+    pub capabilities: Vec<String>,
+    /// Filter by tags
+    pub tags: Vec<String>,
+    /// Minimum reliability score
+    pub min_reliability: Option<f64>,
+    /// Maximum latency in milliseconds
+    pub max_latency_ms: Option<u64>,
+    /// Maximum results to return
+    pub limit: Option<usize>,
+}
+
+impl DiscoveryQuery {
+    /// Create a new query
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Filter by capability
+    pub fn with_capability(mut self, cap: impl Into<String>) -> Self {
+        self.capabilities.push(cap.into());
+        self
+    }
+
+    /// Filter by tag
+    pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
+        self.tags.push(tag.into());
+        self
+    }
+
+    /// Set minimum reliability
+    pub fn with_min_reliability(mut self, score: f64) -> Self {
+        self.min_reliability = Some(score);
+        self
+    }
+
+    /// Set maximum latency
+    pub fn with_max_latency(mut self, ms: u64) -> Self {
+        self.max_latency_ms = Some(ms);
+        self
+    }
+
+    /// Set result limit
+    pub fn with_limit(mut self, limit: usize) -> Self {
+        self.limit = Some(limit);
+        self
+    }
+
+    /// Apply query to a list of agents
+    pub fn apply(&self, agents: &[DiscoveredAgent]) -> Vec<DiscoveredAgent> {
+        let mut result: Vec<_> = agents
+            .iter()
+            .filter(|a| {
+                // Check capabilities
+                if !self.capabilities.is_empty() {
+                    let has_all = self.capabilities.iter().all(|c| a.card.has_capability(c));
+                    if !has_all {
+                        return false;
+                    }
+                }
+
+                // Check tags
+                if !self.tags.is_empty() {
+                    let has_tag = self.tags.iter().any(|tag| {
+                        a.card.capabilities.iter().any(|c| c.tags.contains(tag))
+                    });
+                    if !has_tag {
+                        return false;
+                    }
+                }
+
+                // Check reliability
+                if let Some(min) = self.min_reliability {
+                    if a.reliability_score < min {
+                        return false;
+                    }
+                }
+
+                // Check latency
+                if let Some(max) = self.max_latency_ms {
+                    if let Some(latency) = a.latency_estimate_ms {
+                        if latency > max {
+                            return false;
+                        }
+                    }
+                }
+
+                true
+            })
+            .cloned()
+            .collect();
+
+        // Apply limit
+        if let Some(limit) = self.limit {
+            result.truncate(limit);
+        }
+
+        result
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 

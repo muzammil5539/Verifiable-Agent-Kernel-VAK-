@@ -5,5 +5,7 @@
 
 mod preemption_tests;
 mod test_audit_integrity;
+mod test_cedar_policy;
+mod test_full_workflow;
 mod test_kernel_workflow;
 mod test_policy_enforcement;

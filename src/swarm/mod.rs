@@ -37,6 +37,8 @@ pub mod voting;
 pub use a2a::{
     A2AConfig, A2AError, A2AProtocol, A2AResult, A2AStats, AgentCard, AgentCardBuilder,
     Capability, CapabilityRequest, CapabilityResponse, HandshakeRequest, HandshakeResponse,
+    AgentDiscoveryService, DiscoveryConfig, DiscoveryMethod, DiscoveryResult, DiscoveredAgent,
+    DiscoveryQuery, DiscoveryHandle,
 };
 
 pub use voting::{
@@ -45,7 +47,8 @@ pub use voting::{
 };
 
 pub use router::{
-    ProtocolRouter, RouterConfig, RoutingDecision, RoutingError, TaskComplexity, Topology,
+    EnhancedRoutingDecision, ProtocolRouter, RouterConfig, RoutingDecision, RoutingError,
+    TaskCharacteristics, TaskComplexity, TaskType, Topology, TopologyRecommendation,
     TopologySelection,
 };
 

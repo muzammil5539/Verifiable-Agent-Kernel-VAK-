@@ -1,0 +1,149 @@
+# cargo-deny configuration for VAK (SEC-002)
+# https://embarkstudios.github.io/cargo-deny/
+#
+# This file ensures license compliance and dependency security
+# for the Verifiable Agent Kernel project.
+
+[graph]
+# Which targets to check
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+all-features = true
+
+# ============================================================================
+# Advisories - Check for known vulnerabilities
+# ============================================================================
+[advisories]
+# Path to advisory database
+db-path = "~/.cargo/advisory-db"
+# URL of the advisory database
+url = ["https://github.com/rustsec/advisory-db"]
+# How to handle vulnerabilities
+vulnerability = "deny"
+# How to handle unmaintained crates
+unmaintained = "warn"
+# How to handle yanked crates
+yanked = "warn"
+# How to handle crates with security notices
+notice = "warn"
+# Minimum severity to trigger denial
+severity-threshold = "medium"
+# Ignore specific advisories (with justification)
+ignore = [
+    # Example: "RUSTSEC-2020-0001", # Reason for ignoring
+]
+
+# ============================================================================
+# Licenses - Ensure license compliance
+# ============================================================================
+[licenses]
+# How to handle unlicensed crates
+unlicensed = "deny"
+# How to handle copyleft licenses
+copyleft = "warn"
+# Allow OSI-approved or FSF free licenses
+allow-osi-fsf-free = "either"
+# Confidence threshold for license detection
+confidence-threshold = 0.8
+
+# Explicitly allowed licenses (enterprise-compatible)
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "MPL-2.0",
+    "CC0-1.0",
+    "BSL-1.0",
+    "Unlicense",
+]
+
+# Explicitly denied licenses (copyleft/incompatible)
+deny = [
+    "AGPL-3.0",
+    "AGPL-3.0-only",
+    "AGPL-3.0-or-later",
+    "GPL-2.0",
+    "GPL-2.0-only",
+    "GPL-2.0-or-later",
+    "GPL-3.0",
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+    "LGPL-2.0",
+    "LGPL-2.1",
+    "LGPL-3.0",
+    "SSPL-1.0",
+]
+
+# Private crates (internal use only)
+private = { ignore = true }
+
+# Exceptions for specific crates
+[[licenses.clarify]]
+name = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+
+[[licenses.clarify]]
+name = "webpki"
+expression = "ISC"
+license-files = [{ path = "LICENSE", hash = 0x1c7e6c }]
+
+# ============================================================================
+# Bans - Prevent problematic dependencies
+# ============================================================================
+[bans]
+# How to handle multiple versions of the same crate
+multiple-versions = "warn"
+# How to handle wildcard dependencies
+wildcards = "allow"
+# Highlight the crate that caused the duplicate
+highlight = "all"
+# Allow workspace crates to be duplicated
+workspace-default-features = "allow"
+external-default-features = "allow"
+
+# Deny specific problematic crates
+deny = [
+    # Crates with known issues
+    { name = "openssl", wrappers = ["openssl-sys"] }, # Prefer rustls
+]
+
+# Skip specific crate versions for duplicate checking
+skip = [
+    # Example: { name = "foo", version = "1.0" },
+]
+
+# Skip entire dependency trees
+skip-tree = [
+    # Example: { name = "windows-sys" },
+]
+
+# ============================================================================
+# Sources - Verify crate sources
+# ============================================================================
+[sources]
+# How to handle unknown registries
+unknown-registry = "warn"
+# How to handle unknown git sources
+unknown-git = "warn"
+# Allowed registries
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Allowed git organizations/repos
+allow-git = []
+
+[sources.allow-org]
+# Allow crates from these GitHub organizations
+github = [
+    "AquaVerifiable", # VAK organization
+]

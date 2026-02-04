@@ -11,6 +11,7 @@
 //! - Policy versioning with Merkle-based integrity
 //! - Automatic rollback on invalid policies
 //! - File system watching for automatic reload
+//! - Merkle Log integration for versioning (POL-006 enhanced)
 //!
 //! # Example
 //!
@@ -32,6 +33,7 @@
 //! # References
 //!
 //! - Gap Analysis Phase 2.3: Policy Hot-Reloading
+//! - POL-006: Store policies in Merkle Log for versioning
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -429,6 +431,216 @@ impl HotReloadManager {
     /// Get current version number
     pub fn current_version(&self) -> u64 {
         self.version_counter.load(Ordering::Relaxed)
+    }
+
+    /// Get the Merkle root hash of the current policy (POL-006 enhanced)
+    ///
+    /// This provides a cryptographic commitment to the current policy state,
+    /// enabling verification that policies haven't been tampered with.
+    pub async fn get_merkle_root(&self) -> String {
+        let current = self.current.load().await;
+        current.content_hash.clone()
+    }
+
+    /// Verify policy integrity against expected hash (POL-006 enhanced)
+    pub async fn verify_integrity(&self, expected_hash: &str) -> bool {
+        let current = self.current.load().await;
+        current.content_hash == expected_hash
+    }
+
+    /// Get the full Merkle chain of policy versions (POL-006 enhanced)
+    ///
+    /// Returns a chain of hashes representing the policy version history,
+    /// allowing verification of the complete policy evolution.
+    pub async fn get_merkle_chain(&self) -> MerkleChain {
+        let history = self.history.read().await;
+        let current = self.current.load().await;
+
+        let entries: Vec<MerkleChainEntry> = history
+            .iter()
+            .map(|v| MerkleChainEntry {
+                version: v.version,
+                content_hash: v.content_hash.clone(),
+                loaded_at: v.loaded_at,
+                source_path: v.source_path.clone(),
+            })
+            .chain(std::iter::once(MerkleChainEntry {
+                version: current.version,
+                content_hash: current.content_hash.clone(),
+                loaded_at: current.loaded_at,
+                source_path: current.source_path.clone(),
+            }))
+            .collect();
+
+        let chain_hash = Self::compute_chain_hash(&entries);
+
+        MerkleChain {
+            entries,
+            chain_hash,
+            generated_at: current_timestamp(),
+        }
+    }
+
+    /// Compute the Merkle hash of the entire chain
+    fn compute_chain_hash(entries: &[MerkleChainEntry]) -> String {
+        let mut hasher = Sha256::new();
+        for entry in entries {
+            hasher.update(entry.content_hash.as_bytes());
+            hasher.update(entry.version.to_le_bytes());
+        }
+        hex::encode(hasher.finalize())
+    }
+
+    /// Export policy version to Merkle Log format (POL-006 enhanced)
+    ///
+    /// Creates a signed, timestamped entry suitable for appending to an
+    /// external audit Merkle Log.
+    pub async fn export_to_merkle_log(&self) -> MerkleLogEntry {
+        let current = self.current.load().await;
+        let chain = self.get_merkle_chain().await;
+
+        MerkleLogEntry {
+            version: current.version,
+            content_hash: current.content_hash.clone(),
+            prev_chain_hash: if chain.entries.len() > 1 {
+                // Hash of all entries except current
+                let prev_entries: Vec<_> = chain.entries.iter().take(chain.entries.len() - 1).cloned().collect();
+                Some(Self::compute_chain_hash(&prev_entries))
+            } else {
+                None
+            },
+            policy_count: current.policies.len(),
+            timestamp: current_timestamp(),
+            source: current.source_path.clone(),
+        }
+    }
+
+    /// Load policies and record in Merkle Log (POL-006 enhanced)
+    pub async fn load_policies_with_merkle<P: AsRef<Path>>(
+        &self,
+        path: P,
+    ) -> HotReloadResult<(PolicyVersion, MerkleLogEntry)> {
+        let version = self.load_policies(path).await?;
+        let log_entry = self.export_to_merkle_log().await;
+        Ok((version, log_entry))
+    }
+
+    /// Verify a policy version matches the Merkle chain
+    pub async fn verify_version_in_chain(&self, version: u64, expected_hash: &str) -> bool {
+        let history = self.history.read().await;
+        
+        // Check in history
+        if let Some(v) = history.iter().find(|v| v.version == version) {
+            return v.content_hash == expected_hash;
+        }
+
+        // Check current
+        let current = self.current.load().await;
+        if current.version == version {
+            return current.content_hash == expected_hash;
+        }
+
+        false
+    }
+
+    /// Get a proof of policy state at a specific version
+    pub async fn get_version_proof(&self, version: u64) -> Option<PolicyVersionProof> {
+        let chain = self.get_merkle_chain().await;
+        
+        let entry = chain.entries.iter().find(|e| e.version == version)?;
+        let position = chain.entries.iter().position(|e| e.version == version)?;
+        
+        // Build proof path (hashes of siblings)
+        let proof_path: Vec<String> = chain.entries
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != position)
+            .map(|(_, e)| e.content_hash.clone())
+            .collect();
+
+        Some(PolicyVersionProof {
+            version,
+            content_hash: entry.content_hash.clone(),
+            proof_path,
+            chain_hash: chain.chain_hash,
+            generated_at: current_timestamp(),
+        })
+    }
+}
+
+/// Entry in the Merkle chain (POL-006)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MerkleChainEntry {
+    /// Version number
+    pub version: u64,
+    /// Content hash
+    pub content_hash: String,
+    /// When this version was loaded
+    pub loaded_at: u64,
+    /// Source file path
+    pub source_path: Option<String>,
+}
+
+/// The complete Merkle chain of policy versions (POL-006)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MerkleChain {
+    /// All entries in the chain
+    pub entries: Vec<MerkleChainEntry>,
+    /// Hash of the entire chain
+    pub chain_hash: String,
+    /// When this chain was generated
+    pub generated_at: u64,
+}
+
+impl MerkleChain {
+    /// Verify the integrity of the chain
+    pub fn verify(&self) -> bool {
+        let computed = HotReloadManager::compute_chain_hash(&self.entries);
+        computed == self.chain_hash
+    }
+
+    /// Get the latest version
+    pub fn latest_version(&self) -> Option<u64> {
+        self.entries.last().map(|e| e.version)
+    }
+}
+
+/// Entry for external Merkle Log (POL-006)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MerkleLogEntry {
+    /// Version number
+    pub version: u64,
+    /// Content hash
+    pub content_hash: String,
+    /// Hash of previous chain state
+    pub prev_chain_hash: Option<String>,
+    /// Number of policies in this version
+    pub policy_count: usize,
+    /// Timestamp
+    pub timestamp: u64,
+    /// Source file
+    pub source: Option<String>,
+}
+
+/// Proof of a policy version (POL-006)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolicyVersionProof {
+    /// Version being proven
+    pub version: u64,
+    /// Hash of this version's content
+    pub content_hash: String,
+    /// Proof path (sibling hashes)
+    pub proof_path: Vec<String>,
+    /// Chain hash to verify against
+    pub chain_hash: String,
+    /// When proof was generated
+    pub generated_at: u64,
+}
+
+impl PolicyVersionProof {
+    /// Verify this proof against a chain hash
+    pub fn verify(&self, chain_hash: &str) -> bool {
+        self.chain_hash == chain_hash
     }
 }
 
