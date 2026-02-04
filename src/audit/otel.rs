@@ -752,6 +752,115 @@ impl OtlpExporter {
 }
 
 // ============================================================================
+// Kernel-Specific Tracing Helpers (OBS-001)
+// ============================================================================
+
+impl VakTracer {
+    /// Start a span for inference operations
+    /// 
+    /// Use this when an LLM is being called or reasoning is happening.
+    pub async fn trace_inference(&self, operation: impl Into<String>) -> SpanContext<'_> {
+        let name = format!("inference::{}", operation.into());
+        self.span_context(name, SpanKind::Inference).await
+    }
+
+    /// Start a span for logic/Datalog verification
+    /// 
+    /// Use this when validating plans against safety rules.
+    pub async fn trace_logic_check(&self, rule_set: impl Into<String>) -> SpanContext<'_> {
+        let name = format!("logic_check::{}", rule_set.into());
+        self.span_context(name, SpanKind::LogicCheck).await
+    }
+
+    /// Start a span for policy evaluation
+    /// 
+    /// Use this when Cedar policies are being evaluated.
+    pub async fn trace_policy_eval(
+        &self,
+        principal: impl Into<String>,
+        action: impl Into<String>,
+    ) -> SpanContext<'_> {
+        let name = format!("policy_eval::{}::{}", principal.into(), action.into());
+        self.span_context(name, SpanKind::PolicyEval).await
+    }
+
+    /// Start a span for tool/skill execution
+    /// 
+    /// Use this when a WASM skill or built-in tool is being executed.
+    pub async fn trace_tool_exec(&self, tool_name: impl Into<String>) -> SpanContext<'_> {
+        let name = format!("tool_exec::{}", tool_name.into());
+        self.span_context(name, SpanKind::ToolExec).await
+    }
+
+    /// Start a span for memory operations
+    /// 
+    /// Use this when reading/writing to the memory system (Merkle DAG, vector store, etc.)
+    pub async fn trace_memory_op(&self, operation: impl Into<String>) -> SpanContext<'_> {
+        let name = format!("memory_op::{}", operation.into());
+        self.span_context(name, SpanKind::MemoryOp).await
+    }
+
+    /// Start a span for swarm communication
+    /// 
+    /// Use this when agents are communicating in a multi-agent scenario.
+    pub async fn trace_swarm_comm(&self, protocol: impl Into<String>) -> SpanContext<'_> {
+        let name = format!("swarm_comm::{}", protocol.into());
+        self.span_context(name, SpanKind::SwarmComm).await
+    }
+
+    /// Start a span for MCP request handling
+    /// 
+    /// Use this when processing Model Context Protocol requests.
+    pub async fn trace_mcp_request(&self, method: impl Into<String>) -> SpanContext<'_> {
+        let name = format!("mcp_request::{}", method.into());
+        self.span_context(name, SpanKind::McpRequest).await
+    }
+}
+
+/// A traced operation that automatically records timing and status
+/// 
+/// This is a convenience wrapper for executing operations with automatic tracing.
+/// 
+/// # Example
+/// 
+/// ```rust,no_run
+/// use vak::audit::otel::{VakTracer, TracingConfig, traced_operation, SpanKind};
+/// 
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let tracer = VakTracer::new(TracingConfig::default())?;
+/// 
+/// let result = traced_operation(&tracer, "my_operation", SpanKind::ToolExec, async {
+///     // Your async operation here
+///     Ok::<_, String>("result")
+/// }).await;
+/// # Ok(())
+/// # }
+/// ```
+pub async fn traced_operation<T, E, F>(
+    tracer: &VakTracer,
+    name: impl Into<String>,
+    kind: SpanKind,
+    operation: F,
+) -> Result<T, E>
+where
+    F: std::future::Future<Output = Result<T, E>>,
+    E: std::fmt::Display,
+{
+    let span = tracer.span_context(name, kind).await;
+    
+    match operation.await {
+        Ok(result) => {
+            span.end().await;
+            Ok(result)
+        }
+        Err(e) => {
+            span.end_with_error(e.to_string()).await;
+            Err(e)
+        }
+    }
+}
+
+// ============================================================================
 // Helper Functions
 // ============================================================================
 

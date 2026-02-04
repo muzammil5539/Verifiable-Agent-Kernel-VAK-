@@ -504,6 +504,31 @@ impl PolicySet {
     }
 }
 
+/// Default deny policy set used when no policies are loaded
+/// This implements the fail-closed requirement from Gap Analysis Section 3.2
+fn default_deny_policy_set() -> PolicySet {
+    PolicySet {
+        rules: vec![
+            CedarRule {
+                id: "default-deny-all".to_string(),
+                effect: "forbid".to_string(),
+                principal: "*".to_string(),
+                action: "*".to_string(),
+                resource: "*".to_string(),
+                conditions: vec![],
+                description: Some("Default deny rule - no policies loaded (fail-closed)".to_string()),
+            },
+        ],
+        version: Some("default-deny-v1".to_string()),
+        modified: Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        ),
+    }
+}
+
 /// The Cedar Policy Enforcer
 ///
 /// This is the main entry point for policy enforcement. It evaluates
@@ -512,6 +537,8 @@ pub struct CedarEnforcer {
     config: EnforcerConfig,
     policies: Arc<RwLock<PolicySet>>,
     stats: EnforcerStats,
+    /// Flag indicating if a valid policy was loaded
+    policy_loaded: std::sync::atomic::AtomicBool,
 }
 
 /// Statistics for the enforcer
@@ -545,10 +572,18 @@ impl CedarEnforcer {
             "Creating Cedar enforcer"
         );
 
+        // Start with default-deny policy set (POL-007: fail closed)
+        let initial_policies = if config.default_deny {
+            default_deny_policy_set()
+        } else {
+            PolicySet::new()
+        };
+
         Ok(Self {
             config,
-            policies: Arc::new(RwLock::new(PolicySet::new())),
+            policies: Arc::new(RwLock::new(initial_policies)),
             stats: EnforcerStats::default(),
+            policy_loaded: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -563,18 +598,48 @@ impl CedarEnforcer {
             config: EnforcerConfig::permissive(),
             policies: Arc::new(RwLock::new(PolicySet::new())),
             stats: EnforcerStats::default(),
+            policy_loaded: std::sync::atomic::AtomicBool::new(true),
         }
     }
 
-    /// Load policies from a YAML file
+    /// Check if valid policies have been loaded
+    pub fn has_policies_loaded(&self) -> bool {
+        self.policy_loaded.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Load policies from a YAML file with proper error handling (POL-007)
     pub async fn load_policies<P: AsRef<Path>>(&self, path: P) -> EnforcerResult<()> {
         let path = path.as_ref();
+        
+        // Check file exists
+        if !path.exists() {
+            error!(
+                path = %path.display(),
+                "Policy file not found - using default-deny"
+            );
+            return Err(EnforcerError::PolicyNotFound(path.display().to_string()));
+        }
+        
         let content = tokio::fs::read_to_string(path)
             .await
-            .map_err(|e| EnforcerError::IoError(format!("{}: {}", path.display(), e)))?;
+            .map_err(|e| {
+                error!(
+                    path = %path.display(),
+                    error = %e,
+                    "Failed to read policy file - using default-deny"
+                );
+                EnforcerError::IoError(format!("{}: {}", path.display(), e))
+            })?;
 
         let policy_set: PolicySet = serde_yaml::from_str(&content)
-            .map_err(|e| EnforcerError::InvalidPolicy(e.to_string()))?;
+            .map_err(|e| {
+                error!(
+                    path = %path.display(),
+                    error = %e,
+                    "Invalid policy format - using default-deny"
+                );
+                EnforcerError::InvalidPolicy(e.to_string())
+            })?;
 
         info!(
             path = %path.display(),
@@ -584,6 +649,7 @@ impl CedarEnforcer {
 
         let mut policies = self.policies.write().await;
         *policies = policy_set;
+        self.policy_loaded.store(true, std::sync::atomic::Ordering::Relaxed);
 
         Ok(())
     }
@@ -591,10 +657,14 @@ impl CedarEnforcer {
     /// Load policies from a string
     pub async fn load_policies_from_str(&self, content: &str) -> EnforcerResult<()> {
         let policy_set: PolicySet = serde_yaml::from_str(content)
-            .map_err(|e| EnforcerError::InvalidPolicy(e.to_string()))?;
+            .map_err(|e| {
+                error!(error = %e, "Invalid policy format - using default-deny");
+                EnforcerError::InvalidPolicy(e.to_string())
+            })?;
 
         let mut policies = self.policies.write().await;
         *policies = policy_set;
+        self.policy_loaded.store(true, std::sync::atomic::Ordering::Relaxed);
 
         Ok(())
     }
@@ -627,17 +697,32 @@ impl CedarEnforcer {
 
         let policies = self.policies.read().await;
 
-        // Default deny if no policies loaded
+        // POL-007: Explicit handling when no valid policies loaded
+        if !self.policy_loaded.load(Ordering::Relaxed) && self.config.default_deny {
+            warn!(
+                principal = %principal.to_entity_uid(),
+                action = %action.to_action_uid(),
+                resource = %resource.to_entity_uid(),
+                "No valid policies loaded - failing closed (default-deny)"
+            );
+            self.stats.denied_requests.fetch_add(1, Ordering::Relaxed);
+            return Ok(Decision::deny(
+                "No valid policies loaded - system operating in fail-closed mode. \
+                 Load policies using load_policies() before authorizing requests."
+            ));
+        }
+
+        // Default deny if policies are empty (should be rare with default-deny policy set)
         if policies.is_empty() {
             if self.config.default_deny {
                 warn!(
                     principal = %principal.to_entity_uid(),
                     action = %action.to_action_uid(),
                     resource = %resource.to_entity_uid(),
-                    "No policies loaded, denying (default-deny mode)"
+                    "Empty policy set, denying (default-deny mode)"
                 );
                 self.stats.denied_requests.fetch_add(1, Ordering::Relaxed);
-                return Ok(Decision::deny("No policies loaded (default-deny)"));
+                return Ok(Decision::deny("Empty policy set (default-deny)"));
             } else {
                 return Ok(Decision::allow("No policies loaded (default-allow)"));
             }
@@ -828,23 +913,30 @@ mod tests {
             .await
             .unwrap();
 
+        // With POL-007, we now fail closed with explicit message when no valid policies loaded
         assert!(decision.is_denied());
-        assert!(decision.reason.contains("No policies loaded"));
+        assert!(
+            decision.reason.contains("fail-closed") || decision.reason.contains("No valid policies"),
+            "Expected fail-closed message, got: {}",
+            decision.reason
+        );
     }
 
     #[tokio::test]
     async fn test_enforcer_permit_rule() {
         let enforcer = CedarEnforcer::new(EnforcerConfig::default()).unwrap();
 
-        // Add a permit rule
-        enforcer
-            .add_rule(permit_rule(
-                "allow-agent-read",
-                "Agent::*",
-                "Action::\"File::read\"",
-                "File::*",
-            ))
-            .await;
+        // Load a valid policy to set the policy_loaded flag
+        let policies_yaml = r#"
+rules:
+  - id: "allow-agent-read"
+    effect: "permit"
+    principal: "Agent::*"
+    action: "Action::\"File::read\""
+    resource: "File::*"
+    description: "Allow agents to read files"
+"#;
+        enforcer.load_policies_from_str(policies_yaml).await.unwrap();
 
         let principal = Principal::agent("test-agent");
         let action = Action::file_read();
@@ -855,32 +947,30 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(decision.is_allowed());
+        assert!(decision.is_allowed(), "Expected allowed, got: {}", decision.reason);
     }
 
     #[tokio::test]
     async fn test_enforcer_forbid_overrides_permit() {
         let enforcer = CedarEnforcer::new(EnforcerConfig::default()).unwrap();
 
-        // Add permit rule for all files
-        enforcer
-            .add_rule(permit_rule(
-                "allow-all-read",
-                "*",
-                "*",
-                "File::*",
-            ))
-            .await;
-
-        // Add forbid rule for sensitive files
-        enforcer
-            .add_rule(forbid_rule(
-                "deny-secrets",
-                "*",
-                "*",
-                "File::\"/etc/shadow\"",
-            ))
-            .await;
+        // Load policies via YAML string (sets policy_loaded flag)
+        let policies_yaml = r#"
+rules:
+  - id: "allow-all-read"
+    effect: "permit"
+    principal: "*"
+    action: "*"
+    resource: "File::*"
+    description: "Allow all file reads"
+  - id: "deny-secrets"
+    effect: "forbid"
+    principal: "*"
+    action: "*"
+    resource: "File::\"/etc/shadow\""
+    description: "Deny access to shadow file"
+"#;
+        enforcer.load_policies_from_str(policies_yaml).await.unwrap();
 
         let principal = Principal::agent("test-agent");
         let action = Action::file_read();
@@ -891,8 +981,13 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(decision.is_denied());
-        assert!(decision.matched_policy.as_deref() == Some("deny-secrets"));
+        assert!(decision.is_denied(), "Expected denied, got: {}", decision.reason);
+        assert_eq!(
+            decision.matched_policy.as_deref(),
+            Some("deny-secrets"),
+            "Expected deny-secrets policy, got: {:?}",
+            decision.matched_policy
+        );
     }
 
     #[tokio::test]

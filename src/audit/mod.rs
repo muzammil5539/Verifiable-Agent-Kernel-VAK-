@@ -36,7 +36,7 @@ pub mod streaming;
 pub use otel::{
     AttributeValue, OtlpExporter, Span as OtelSpan, SpanContext as OtelSpanContext,
     SpanEvent, SpanKind, SpanLink, SpanStatus, TraceContext, TracerStats, TracingConfig,
-    TracingError, TracingResult, VakTracer,
+    TracingError, TracingResult, VakTracer, traced_operation,
 };
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};

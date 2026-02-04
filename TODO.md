@@ -177,6 +177,26 @@ This document contains all unimplemented items identified through a comprehensiv
   - Maps internal WASM host functions to MCP Tool definitions
   - Completed: Session 2026-02-04 (Session 4)
 
+### OpenTelemetry Distributed Tracing (OBS-001) ✅
+- [x] **Distributed tracing with automatic span creation**
+  - Implementation: `src/audit/otel.rs`
+  - Features: `VakTracer`, `Span`, `SpanContext`, `TraceContext`, `SpanKind` structs
+  - Kernel-specific helpers: `trace_inference()`, `trace_logic_check()`, `trace_policy_eval()`, `trace_tool_exec()`, `trace_memory_op()`, `trace_swarm_comm()`, `trace_mcp_request()`
+  - `traced_operation()` helper for automatic timing and error tracking
+  - OTLP export support via `OtlpExporter`
+  - W3C traceparent header support for distributed trace propagation
+  - Completed: Session 2026-02-04 (Session 6)
+
+### Default Deny Policy - Complete Implementation (POL-007) ✅
+- [x] **Cedar integration fails closed with proper error handling**
+  - Implementation: `src/policy/enforcer.rs`
+  - Features: `default_deny_policy_set()` function providing hardcoded fail-closed policy
+  - `policy_loaded` flag to track if valid policies have been loaded
+  - Enhanced `load_policies()` with proper error handling and logging
+  - `authorize()` returns explicit fail-closed message when no valid policies loaded
+  - `has_policies_loaded()` method to check policy state
+  - Completed: Session 2026-02-04 (Session 6)
+
 ---
 
 ## 🔴 CRITICAL - Runtime/Sandbox TODOs
@@ -192,12 +212,15 @@ This document contains all unimplemented items identified through a comprehensiv
   - Trigger reload on log update
   - Reference: Gap Analysis Phase 2.3
 
-### Default Deny Policy (POL-007)
-- [ ] **Ensure Cedar integration fails closed (complete implementation)**
-  - Current state: Basic default-deny in enforcer.rs, default_policies.yaml created
-  - Required: Full error handling for missing/malformed policy files
+### Default Deny Policy (POL-007) ✅
+- [x] **Ensure Cedar integration fails closed (complete implementation)**
+  - Implementation: `src/policy/enforcer.rs`
+  - Features: `default_deny_policy_set()` function providing hardcoded fail-closed policy
+  - `policy_loaded` flag to track if valid policies have been loaded
+  - Enhanced `load_policies()` with proper error handling and logging
+  - `authorize()` returns explicit fail-closed message when no valid policies loaded
   - Log policy load failures with clear error messages
-  - Reference: Gap Analysis Section 3.2
+  - Completed: Session 2026-02-04 (Session 6)
 
 ### Policy Analysis Integration (POL-008)
 - [ ] **Integrate Cedar Policy Analyzer**
@@ -230,11 +253,14 @@ This document contains all unimplemented items identified through a comprehensiv
   - Allow "step forward" one decision at a time
   - Reference: Gap Analysis Section 6.4
 
-### Secret Scrubbing (MEM-006)
-- [ ] **Automatic redaction of sensitive patterns in memory snapshots**
-  - Detect API keys (e.g., `sk-proj-...`), passwords, tokens
-  - Redact before persisting to disk
-  - Reference: Gap Analysis Section 3.2
+### Secret Scrubbing (MEM-006) ✅
+- [x] **Automatic redaction of sensitive patterns in memory snapshots**
+  - Implementation: `src/memory/secret_scrubber.rs`
+  - Features: `SecretScrubber`, `ScrubberConfig`, `PatternType` structs
+  - Detects API keys (OpenAI, Anthropic, AWS, GitHub), passwords, tokens, PII
+  - Regex-based pattern matching with configurable redaction
+  - Scrub reports with detection details
+  - Completed: Session 2026-02-02 (marked in earlier session)
 
 ---
 
@@ -311,12 +337,16 @@ This document contains all unimplemented items identified through a comprehensiv
 
 ## 🟡 HIGH - Observability/Audit TODOs
 
-### OpenTelemetry Integration (OBS-001)
-- [ ] **Add `opentelemetry` crate for distributed tracing**
-  - Current state: Prometheus metrics exist in `src/dashboard/metrics.rs`
-  - Required: Full distributed tracing with spans
-  - Create spans for: "Inference", "Logic Check", "Policy Eval", "Tool Exec"
-  - Reference: Gap Analysis Section 3.4
+### OpenTelemetry Integration (OBS-001) ✅
+- [x] **Distributed tracing implementation with spans**
+  - Implementation: `src/audit/otel.rs`
+  - Features: `VakTracer`, `Span`, `SpanContext`, `TraceContext`, `SpanKind` structs
+  - Spans for: Inference, LogicCheck, PolicyEval, ToolExec, MemoryOp, SwarmComm, McpRequest
+  - Kernel-specific helpers: `trace_inference()`, `trace_logic_check()`, `trace_policy_eval()`, `trace_tool_exec()`
+  - `traced_operation()` helper for automatic timing and error tracking
+  - OTLP export support via `OtlpExporter`
+  - W3C traceparent header support for distributed trace propagation
+  - Completed: Session 2026-02-04 (Session 6)
 
 ### Cryptographic Replay Capability (OBS-002)
 - [ ] **Implement production incident replay from Merkle Log**
@@ -549,12 +579,12 @@ This document contains all unimplemented items identified through a comprehensiv
 
 | Priority | Count | Status |
 |----------|-------|--------|
-| ✅ COMPLETED | 16 | Done |
-| 🔴 CRITICAL | 11 | Not Started |
-| 🟡 HIGH | 19 | Not Started |
+| ✅ COMPLETED | 20 | Done |
+| 🔴 CRITICAL | 7 | Not Started |
+| 🟡 HIGH | 16 | Not Started |
 | 🟢 MEDIUM | 17 | Not Started |
 | 🔵 LOW | 8 | Not Started |
-| **TOTAL** | **71** | 16 complete (~23%) |
+| **TOTAL** | **68** | 20 complete (~29%) |
 
 ---
 
@@ -562,11 +592,11 @@ This document contains all unimplemented items identified through a comprehensiv
 
 Based on the Gap Analysis roadmap:
 
-### Phase 1: Core Kernel Stability ("Iron Kernel") ✅ MOSTLY COMPLETE
+### Phase 1: Core Kernel Stability ("Iron Kernel") ✅ COMPLETE
 - RT-001 ✅ Epoch Ticker
 - RT-002 ✅ Epoch Deadline Configuration
 - RT-003 ✅ Pooling Allocator
-- RT-004 ⏳ Async Host Functions
+- RT-004 ✅ Async Host Functions
 - RT-005 ✅ Panic Safety
 - RT-006 ✅ Preemption Tests
 - Focus: Runtime that cannot be crashed, stalled, or exploited
@@ -576,14 +606,19 @@ Based on the Gap Analysis roadmap:
 - POL-002 ✅ Cedar Schema
 - POL-003 ✅ Cedar Enforcer
 - POL-004 ✅ Policy Middleware Injection
-- POL-005 ⏳ Dynamic Context Injection
-- POL-006 ⏳ Policy Hot-Reloading
-- POL-007 ⏳ Default Deny (partial)
-- POL-008 ⏳ Policy Analysis
+- POL-005 ✅ Dynamic Context Injection
+- POL-006 ⏳ Policy Hot-Reloading (foundation exists)
+- POL-007 ✅ Default Deny (complete)
+- POL-008 ⏳ Policy Analysis (foundation exists)
 - Focus: Formal verification of all agent actions
 
-### Phase 3: Memory & Provenance ("Immutable Past")
-- MEM-001 through MEM-006
+### Phase 3: Memory & Provenance ("Immutable Past") ✅ MOSTLY COMPLETE
+- MEM-001 ⏳ rs-merkle Integration (custom implementation exists)
+- MEM-002 ✅ Sparse Merkle Tree Proofs
+- MEM-003 ✅ Content-Addressable Storage
+- MEM-004 ⏳ Cryptographic Receipt Generation (foundation exists)
+- MEM-005 ⏳ Time Travel Enhancement (basic exists)
+- MEM-006 ✅ Secret Scrubbing
 - Focus: Cryptographic proof of history and state
 
 ### Phase 4: Neuro-Symbolic Cognitive Layer ("Prefrontal Cortex") ✅ CORE COMPLETE
@@ -595,13 +630,28 @@ Based on the Gap Analysis roadmap:
 - NSR-006 ⏳ Full Hybrid Loop (partial)
 - Focus: Logic-based safety constraints
 
-### Phase 5: Ecosystem & Interoperability
-- INT-001 through INT-004, SWM-001 through SWM-004
+### Phase 5: Ecosystem & Interoperability ✅ PARTIALLY COMPLETE
+- INT-001 ✅ MCP Server Implementation
+- INT-002 ✅ MCP Tool Mapping
+- INT-003 ⏳ LangChain Adapter (foundation exists)
+- INT-004 ⏳ AutoGPT Adapter (foundation exists)
+- SWM-001 ⏳ A2A Protocol Support
+- SWM-002 ⏳ AgentCard Discovery
+- SWM-003 ✅ Sycophancy Prevention
+- SWM-004 ⏳ Protocol Router
 - Focus: Standardized communication protocols
+
+### Observability Layer ✅ MOSTLY COMPLETE
+- OBS-001 ✅ OpenTelemetry Distributed Tracing
+- OBS-002 ⏳ Cryptographic Replay
+- OBS-003 ✅ Cost Accounting
+- OBS-004 ⏳ GraphQL API
+- OBS-005 ⏳ Flight Recorder Enhancement
 
 ---
 
 *This TODO list was generated through comprehensive analysis of VAK documentation and codebase on February 2, 2026.*
 *Updated: Session 2026-02-02 (Session 2) - Completed RT-002, RT-005, RT-006, POL-004, NSR-003*
 *Updated: Session 2026-02-03 (Session 5) - Completed OBS-003 (Cost Accounting), SWM-003 (Sycophancy Detection)*
-*New completions: cost_accounting.rs, sycophancy.rs*
+*Updated: Session 2026-02-04 (Session 6) - Completed POL-007 (Default Deny), OBS-001 (OpenTelemetry), MEM-006 (Secret Scrubbing)*
+*New completions: Enhanced default_deny_policy_set() in enforcer.rs, kernel tracing helpers in otel.rs*
