@@ -58,7 +58,7 @@ chrono = { version = "0.4", features = ["serde"] }
 arc-swap = "1.7"
 
 # Merkle tree implementation (MEM-001)
-rs_merkle = "1.4"
+rs_merkle = "1.5"
 
 # HTTP client (using rustls for TLS to avoid system OpenSSL dependency)
 reqwest = { version = "0.11", default-features = false, features = ["json", "stream", "rustls-tls"] }

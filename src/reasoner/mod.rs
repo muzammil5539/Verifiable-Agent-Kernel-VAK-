@@ -74,6 +74,7 @@ pub mod tree_search;
 pub mod verification_gateway;
 pub mod verifier;
 pub mod z3_verifier;
+pub mod constrained_decoding;
 
 // Re-export all public types from PRM
 pub use prm::{
@@ -145,4 +146,10 @@ pub use verification_gateway::{
 pub use prompt_injection::{
     DetectionResult, DetectorConfig, DetectorStats, HeuristicFlag, InjectionError,
     InjectionResult, InjectionType, PatternMatch, PromptInjectionDetector, RecommendedAction,
+};
+
+pub use constrained_decoding::{
+    ConstrainedDecoder, ConstraintError, ConstraintResult,
+    OutputGrammar, GrammarRule, GrammarType, ValidationResult,
+    ValidationError, ErrorSeverity, RepairSuggestion, RepairType,
 };

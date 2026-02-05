@@ -89,9 +89,10 @@ pub use storage::{
 
 // Time Travel with full checkout capability (MEM-005)
 pub use time_travel::{
-    Branch, CheckoutOptions, CheckoutResult, CheckoutStateSummary, ReplayIterator, SnapshotId,
-    StateCheckpoint, StateComparison, StateDiff, StateEntry, StepResult, TimeTravelConfig,
-    TimeTravelError, TimeTravelExport, TimeTravelManager, TimeTravelResult,
+    TimeTravelManager, TimeTravelConfig, TimeTravelError, SnapshotId,
+    StateCheckpoint, StateDiff,
+    // MEM-005 Enhanced exports
+    FullCheckout, CheckoutMetadata, ProvenanceLink, ReplayStep, ReplayAction, StateChange,
 };
 
 pub use vector_store::{

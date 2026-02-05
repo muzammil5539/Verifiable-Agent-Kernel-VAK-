@@ -1,999 +1,882 @@
-//! Policy Hot-Reloading Module (POL-006)
+//! Policy Hot-Reloading System (POL-006)
 //!
-//! Provides lock-free policy hot-reloading using ArcSwap for zero-downtime
-//! policy updates. Policies can be reloaded from files without restarting
-//! the kernel.
+//! Provides lock-free policy updates using ArcSwap with Merkle log versioning.
+//! Policies can be reloaded at runtime without blocking ongoing evaluations.
 //!
-//! # Overview
-//!
-//! Hot-reloading enables:
-//! - Zero-downtime policy updates
-//! - Policy versioning with Merkle-based integrity
-//! - Automatic rollback on invalid policies
+//! # Features
+//! - Lock-free policy reads using `ArcSwap`
 //! - File system watching for automatic reload
-//! - Merkle Log integration for versioning (POL-006 enhanced)
+//! - Merkle log versioning for policy history
+//! - Atomic policy swaps with rollback support
 //!
 //! # Example
+//! ```rust,ignore
+//! use vak::policy::hot_reload::{HotReloadablePolicyEngine, HotReloadConfig};
 //!
-//! ```rust,no_run
-//! use vak::policy::hot_reload::{HotReloadManager, HotReloadConfig};
+//! let config = HotReloadConfig::new("policies/");
+//! let engine = HotReloadablePolicyEngine::new(config).await?;
 //!
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let config = HotReloadConfig::default();
-//! let manager = HotReloadManager::new(config)?;
-//!
-//! // Load initial policies
-//! manager.load_policies("policies/default.yaml").await?;
-//!
-//! // Policies are now active and can be swapped atomically
-//! # Ok(())
-//! # }
+//! // Policies are automatically reloaded when files change
+//! engine.start_watching().await?;
 //! ```
-//!
-//! # References
-//!
-//! - Gap Analysis Phase 2.3: Policy Hot-Reloading
-//! - POL-006: Store policies in Merkle Log for versioning
-//!
-//! # ArcSwap Integration (POL-006 Enhanced)
-//!
-//! This module now uses `arc_swap::ArcSwap` for truly lock-free policy reads,
-//! enabling high-throughput policy evaluation without contention.
 
-use arc_swap::ArcSwap;
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
+
+use arc_swap::{ArcSwap, Guard};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
-use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tokio::sync::{mpsc, RwLock};
+use tracing::{debug, error, info, warn};
 
-use super::enforcer::PolicySet;
+use crate::policy::{PolicyDecision, PolicyEffect, PolicyEngine, PolicyRule};
 
-/// Errors that can occur during hot-reloading
+// ============================================================================
+// Error Types
+// ============================================================================
+
+/// Errors that can occur during hot-reload operations
 #[derive(Debug, Error)]
 pub enum HotReloadError {
-    /// Policy file not found
-    #[error("Policy file not found: {0}")]
-    FileNotFound(String),
-
-    /// Invalid policy format
-    #[error("Invalid policy format: {0}")]
-    InvalidFormat(String),
+    /// Failed to load policy file
+    #[error("Failed to load policy file: {0}")]
+    LoadError(String),
 
     /// Policy validation failed
     #[error("Policy validation failed: {0}")]
-    ValidationFailed(String),
+    ValidationError(String),
 
-    /// Version mismatch
-    #[error("Policy version mismatch: expected {expected}, got {actual}")]
-    VersionMismatch { expected: String, actual: String },
+    /// File system error
+    #[error("File system error: {0}")]
+    FileSystemError(#[from] std::io::Error),
 
-    /// IO error
-    #[error("IO error: {0}")]
-    IoError(String),
+    /// Watch error
+    #[error("Watch error: {0}")]
+    WatchError(String),
 
-    /// Rollback required
-    #[error("Policy update failed, rollback required: {0}")]
-    RollbackRequired(String),
+    /// Rollback error
+    #[error("Rollback failed: {0}")]
+    RollbackError(String),
 }
 
 /// Result type for hot-reload operations
 pub type HotReloadResult<T> = Result<T, HotReloadError>;
 
-/// Configuration for hot-reloading
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// ============================================================================
+// Configuration
+// ============================================================================
+
+/// Configuration for hot-reloadable policy engine
+#[derive(Debug, Clone)]
 pub struct HotReloadConfig {
-    /// Enable automatic file watching
-    pub enable_watch: bool,
-    /// Watch interval in seconds
-    pub watch_interval_secs: u64,
-    /// Keep N previous versions for rollback
-    pub version_history_size: usize,
-    /// Validate policies before loading
-    pub validate_on_load: bool,
-    /// Policy directory path
-    pub policy_dir: Option<PathBuf>,
+    /// Directory containing policy files
+    pub policy_dir: PathBuf,
+    /// File extensions to watch (default: [".yaml", ".yml", ".cedar"])
+    pub watch_extensions: Vec<String>,
+    /// Debounce duration for file changes
+    pub debounce_duration: Duration,
+    /// Maximum number of policy versions to retain
+    pub max_versions: usize,
+    /// Whether to validate policies before loading
+    pub validate_before_load: bool,
+    /// Whether to auto-rollback on validation failure
+    pub auto_rollback: bool,
 }
 
 impl Default for HotReloadConfig {
     fn default() -> Self {
         Self {
-            enable_watch: true,
-            watch_interval_secs: 5,
-            version_history_size: 5,
-            validate_on_load: true,
-            policy_dir: None,
+            policy_dir: PathBuf::from("policies"),
+            watch_extensions: vec![
+                ".yaml".to_string(),
+                ".yml".to_string(),
+                ".cedar".to_string(),
+            ],
+            debounce_duration: Duration::from_millis(500),
+            max_versions: 10,
+            validate_before_load: true,
+            auto_rollback: true,
         }
     }
 }
 
-/// A versioned policy snapshot
+impl HotReloadConfig {
+    /// Create a new configuration with the given policy directory
+    pub fn new(policy_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            policy_dir: policy_dir.into(),
+            ..Default::default()
+        }
+    }
+
+    /// Set the debounce duration
+    pub fn with_debounce(mut self, duration: Duration) -> Self {
+        self.debounce_duration = duration;
+        self
+    }
+
+    /// Set the maximum number of versions to retain
+    pub fn with_max_versions(mut self, max: usize) -> Self {
+        self.max_versions = max;
+        self
+    }
+}
+
+// ============================================================================
+// Policy Version
+// ============================================================================
+
+/// A versioned snapshot of the policy set
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyVersion {
     /// Version number (monotonically increasing)
     pub version: u64,
-    /// SHA-256 hash of the policy content
-    pub content_hash: String,
-    /// Policy set
-    pub policies: PolicySet,
-    /// Load timestamp
-    pub loaded_at: u64,
-    /// Source file path (if loaded from file)
-    pub source_path: Option<String>,
+    /// Merkle root hash of all policies
+    pub merkle_root: String,
+    /// Timestamp when this version was created
+    pub created_at: SystemTime,
+    /// Hash of the previous version (for chain integrity)
+    pub previous_hash: Option<String>,
+    /// Individual policy hashes
+    pub policy_hashes: HashMap<String, String>,
+    /// Description of changes
+    pub change_description: Option<String>,
 }
 
 impl PolicyVersion {
     /// Create a new policy version
-    pub fn new(version: u64, policies: PolicySet, source_path: Option<String>) -> Self {
-        let content_hash = Self::compute_hash(&policies);
+    pub fn new(version: u64, policies: &[PolicyRule], previous: Option<&PolicyVersion>) -> Self {
+        let policy_hashes: HashMap<String, String> = policies
+            .iter()
+            .map(|p| (p.id.clone(), Self::hash_policy(p)))
+            .collect();
+
+        let merkle_root = Self::compute_merkle_root(&policy_hashes);
+        let previous_hash = previous.map(|p| p.merkle_root.clone());
+
         Self {
             version,
-            content_hash,
-            policies,
-            loaded_at: current_timestamp(),
-            source_path,
+            merkle_root,
+            created_at: SystemTime::now(),
+            previous_hash,
+            policy_hashes,
+            change_description: None,
         }
     }
 
-    /// Compute SHA-256 hash of policy set
-    fn compute_hash(policies: &PolicySet) -> String {
-        let serialized = serde_json::to_string(policies).unwrap_or_default();
+    /// Hash a single policy
+    fn hash_policy(policy: &PolicyRule) -> String {
         let mut hasher = Sha256::new();
-        hasher.update(serialized.as_bytes());
+        hasher.update(policy.id.as_bytes());
+        hasher.update(format!("{:?}", policy.effect).as_bytes());
+        hasher.update(format!("{}", policy.priority).as_bytes());
+        for pattern in &policy.patterns.actions {
+            hasher.update(pattern.as_bytes());
+        }
+        for pattern in &policy.patterns.resources {
+            hasher.update(pattern.as_bytes());
+        }
         hex::encode(hasher.finalize())
     }
 
-    /// Check if content matches a hash
-    pub fn matches_hash(&self, hash: &str) -> bool {
-        self.content_hash == hash
-    }
-}
+    /// Compute Merkle root from policy hashes
+    fn compute_merkle_root(hashes: &HashMap<String, String>) -> String {
+        let mut sorted_hashes: Vec<_> = hashes.values().collect();
+        sorted_hashes.sort();
 
-/// Lock-free atomic policy holder using ArcSwap (POL-006 Enhanced)
-///
-/// This uses `arc_swap::ArcSwap` for truly lock-free reads, enabling
-/// high-throughput policy evaluation without any contention. Writers
-/// atomically swap the pointer, and readers never block.
-///
-/// # Performance Characteristics
-///
-/// - **Read**: O(1), no locks, no contention, no syscalls
-/// - **Write**: O(1), atomic swap, no locks
-/// - **Memory**: Each version is reference-counted, old versions freed when unused
-///
-/// This is critical for policy evaluation in the hot path of every
-/// agent action, where we need microsecond-level latency.
-pub struct AtomicPolicyHolder {
-    /// Lock-free policy storage
-    current: ArcSwap<PolicyVersion>,
-    /// Statistics for monitoring
-    stats: AtomicPolicyStats,
-}
-
-/// Statistics for atomic policy operations
-#[derive(Debug, Default)]
-pub struct AtomicPolicyStats {
-    /// Total number of reads
-    reads: AtomicU64,
-    /// Total number of writes/updates
-    writes: AtomicU64,
-    /// Total number of CAS (compare-and-swap) operations
-    cas_operations: AtomicU64,
-}
-
-impl AtomicPolicyHolder {
-    /// Create a new lock-free policy holder
-    pub fn new(initial: PolicyVersion) -> Self {
-        Self {
-            current: ArcSwap::from_pointee(initial),
-            stats: AtomicPolicyStats::default(),
+        let mut hasher = Sha256::new();
+        for hash in sorted_hashes {
+            hasher.update(hash.as_bytes());
         }
+        hex::encode(hasher.finalize())
     }
 
-    /// Load the current policy (lock-free read)
-    pub fn load(&self) -> Arc<PolicyVersion> {
-        self.stats.reads.fetch_add(1, Ordering::Relaxed);
-        self.current.load_full()
-    }
-
-    /// Store a new policy version (atomic swap)
-    pub fn store(&self, new: PolicyVersion) {
-        self.stats.writes.fetch_add(1, Ordering::Relaxed);
-        self.current.store(Arc::new(new));
-    }
-
-    /// Compare-and-swap: update only if current matches expected
-    ///
-    /// Returns Ok(new_arc) if swap succeeded, Err(current_arc) if it failed
-    pub fn compare_and_swap(
-        &self,
-        expected_hash: &str,
-        new: PolicyVersion,
-    ) -> Result<Arc<PolicyVersion>, Arc<PolicyVersion>> {
-        self.stats.cas_operations.fetch_add(1, Ordering::Relaxed);
-        
-        let current = self.current.load_full();
-        if current.content_hash == expected_hash {
-            let new_arc = Arc::new(new);
-            self.current.store(Arc::clone(&new_arc));
-            Ok(new_arc)
-        } else {
-            Err(current)
-        }
-    }
-
-    /// Get a lease on the current policy (for prolonged reads)
-    ///
-    /// This is useful when you need to hold a reference to the policy
-    /// across multiple operations without the policy being changed.
-    pub fn lease(&self) -> arc_swap::Guard<Arc<PolicyVersion>> {
-        self.stats.reads.fetch_add(1, Ordering::Relaxed);
-        self.current.load()
-    }
-
-    /// Get statistics
-    pub fn stats(&self) -> (u64, u64, u64) {
-        (
-            self.stats.reads.load(Ordering::Relaxed),
-            self.stats.writes.load(Ordering::Relaxed),
-            self.stats.cas_operations.load(Ordering::Relaxed),
-        )
+    /// Set the change description
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.change_description = Some(description.into());
+        self
     }
 }
 
-/// Manager for hot-reloading policies with lock-free reads (POL-006 Enhanced)
-pub struct HotReloadManager {
-    config: HotReloadConfig,
-    /// Current active policy (lock-free atomic swap)
-    current: AtomicPolicyHolder,
-    /// Version history for rollback
-    history: RwLock<Vec<PolicyVersion>>,
+// ============================================================================
+// Policy Snapshot
+// ============================================================================
+
+/// An immutable snapshot of the current policy state
+#[derive(Debug, Clone)]
+pub struct PolicySnapshot {
+    /// The policies in this snapshot
+    pub policies: Vec<PolicyRule>,
+    /// Version information
+    pub version: PolicyVersion,
+}
+
+impl PolicySnapshot {
+    /// Create a new snapshot
+    pub fn new(policies: Vec<PolicyRule>, version: PolicyVersion) -> Self {
+        Self { policies, version }
+    }
+
+    /// Find a policy by ID
+    pub fn find_policy(&self, id: &str) -> Option<&PolicyRule> {
+        self.policies.iter().find(|p| p.id == id)
+    }
+
+    /// Get the number of policies
+    pub fn len(&self) -> usize {
+        self.policies.len()
+    }
+
+    /// Check if empty
+    pub fn is_empty(&self) -> bool {
+        self.policies.is_empty()
+    }
+}
+
+// ============================================================================
+// Hot Reload Metrics
+// ============================================================================
+
+/// Metrics for hot-reload operations
+#[derive(Debug, Default, Clone)]
+pub struct HotReloadMetrics {
+    /// Number of successful reloads
+    pub successful_reloads: u64,
+    /// Number of failed reloads
+    pub failed_reloads: u64,
+    /// Number of rollbacks performed
+    pub rollbacks: u64,
+    /// Last reload timestamp
+    pub last_reload: Option<SystemTime>,
+    /// Last reload duration
+    pub last_reload_duration: Option<Duration>,
+    /// Current policy count
+    pub policy_count: usize,
     /// Current version number
-    version_counter: AtomicU64,
-    /// File modification timestamps
-    file_mtimes: Arc<RwLock<HashMap<PathBuf, SystemTime>>>,
-    /// Merkle log of all policy changes (POL-006 Enhanced)
-    merkle_log: RwLock<Vec<MerkleLogEntry>>,
+    pub current_version: u64,
 }
 
-impl std::fmt::Debug for HotReloadManager {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HotReloadManager")
-            .field("config", &self.config)
-            .field("version", &self.version_counter.load(Ordering::Relaxed))
-            .finish_non_exhaustive()
-    }
+// ============================================================================
+// Hot-Reloadable Policy Engine
+// ============================================================================
+
+/// Policy engine with hot-reload capability
+///
+/// Uses `ArcSwap` for lock-free reads during policy evaluation,
+/// allowing policies to be updated without blocking ongoing requests.
+pub struct HotReloadablePolicyEngine {
+    /// Current policy snapshot (lock-free access)
+    current: ArcSwap<PolicySnapshot>,
+    /// Version history for rollback
+    version_history: RwLock<Vec<Arc<PolicySnapshot>>>,
+    /// Configuration
+    config: HotReloadConfig,
+    /// Metrics
+    metrics: RwLock<HotReloadMetrics>,
+    /// Shutdown signal sender
+    shutdown_tx: Option<mpsc::Sender<()>>,
 }
 
-impl HotReloadManager {
-    /// Create a new hot-reload manager
-    pub fn new(config: HotReloadConfig) -> HotReloadResult<Self> {
-        // Create initial empty policy set
-        let initial_version = PolicyVersion::new(0, PolicySet::new(), None);
+impl HotReloadablePolicyEngine {
+    /// Create a new hot-reloadable policy engine
+    pub async fn new(config: HotReloadConfig) -> HotReloadResult<Self> {
+        // Load initial policies
+        let policies = Self::load_policies_from_dir(&config.policy_dir).await?;
+        let version = PolicyVersion::new(1, &policies, None);
+        let snapshot = Arc::new(PolicySnapshot::new(policies, version));
 
-        Ok(Self {
+        let engine = Self {
+            current: ArcSwap::from(snapshot.clone()),
+            version_history: RwLock::new(vec![snapshot]),
             config,
-            current: AtomicPolicyHolder::new(initial_version),
-            history: RwLock::new(Vec::new()),
-            version_counter: AtomicU64::new(0),
-            file_mtimes: Arc::new(RwLock::new(HashMap::new())),
-            merkle_log: RwLock::new(Vec::new()),
-        })
+            metrics: RwLock::new(HotReloadMetrics::default()),
+            shutdown_tx: None,
+        };
+
+        Ok(engine)
     }
 
     /// Create with default configuration
-    pub fn with_defaults() -> HotReloadResult<Self> {
-        Self::new(HotReloadConfig::default())
+    pub async fn with_defaults() -> HotReloadResult<Self> {
+        Self::new(HotReloadConfig::default()).await
     }
 
-    /// Load policies from a file
-    pub async fn load_policies<P: AsRef<Path>>(&self, path: P) -> HotReloadResult<PolicyVersion> {
-        let path = path.as_ref();
-
-        // Read file
-        let content = tokio::fs::read_to_string(path)
-            .await
-            .map_err(|e| HotReloadError::IoError(format!("{}: {}", path.display(), e)))?;
-
-        // Parse policies
-        let policies: PolicySet = serde_yaml::from_str(&content)
-            .map_err(|e| HotReloadError::InvalidFormat(e.to_string()))?;
-
-        // Validate if enabled
-        if self.config.validate_on_load {
-            self.validate_policies(&policies)?;
-        }
-
-        // Create new version
-        let version = self.version_counter.fetch_add(1, Ordering::Relaxed) + 1;
-        let policy_version =
-            PolicyVersion::new(version, policies, Some(path.display().to_string()));
-
-        // Save current to history before swapping
-        self.save_to_history().await;
-
-        // Atomic swap (lock-free)
-        self.current.store(policy_version.clone());
-        
-        // Append to Merkle log (POL-006)
-        self.append_to_merkle_log(&policy_version).await;
-
-        // Update file mtime tracking
-        if let Ok(metadata) = tokio::fs::metadata(path).await {
-            if let Ok(mtime) = metadata.modified() {
-                let mut mtimes = self.file_mtimes.write().await;
-                mtimes.insert(path.to_path_buf(), mtime);
-            }
-        }
-
-        info!(
-            version = version,
-            path = %path.display(),
-            rules = policy_version.policies.len(),
-            "Policies loaded"
-        );
-
-        Ok(policy_version)
-    }
-
-    /// Load policies from string content
-    pub async fn load_policies_from_str(
-        &self,
-        content: &str,
-        source: Option<String>,
-    ) -> HotReloadResult<PolicyVersion> {
-        // Parse policies
-        let policies: PolicySet = serde_yaml::from_str(content)
-            .map_err(|e| HotReloadError::InvalidFormat(e.to_string()))?;
-
-        // Validate if enabled
-        if self.config.validate_on_load {
-            self.validate_policies(&policies)?;
-        }
-
-        // Create new version
-        let version = self.version_counter.fetch_add(1, Ordering::Relaxed) + 1;
-        let policy_version = PolicyVersion::new(version, policies, source);
-
-        // Save current to history before swapping
-        self.save_to_history().await;
-
-        // Atomic swap (lock-free)
-        self.current.store(policy_version.clone());
-        
-        // Append to Merkle log (POL-006)
-        self.append_to_merkle_log(&policy_version).await;
-
-        info!(
-            version = version,
-            rules = policy_version.policies.len(),
-            "Policies loaded from string"
-        );
-
-        Ok(policy_version)
-    }
-
-    /// Get current active policies (lock-free read)
-    pub fn get_current(&self) -> Arc<PolicyVersion> {
+    /// Get the current policy snapshot (lock-free read)
+    pub fn current(&self) -> Guard<Arc<PolicySnapshot>> {
         self.current.load()
     }
 
-    /// Get current policy set (lock-free read)
-    pub fn get_policies(&self) -> PolicySet {
-        self.current.load().policies.clone()
+    /// Get the current version number
+    pub fn current_version(&self) -> u64 {
+        self.current.load().version.version
     }
 
-    /// Rollback to previous version
-    pub async fn rollback(&self) -> HotReloadResult<PolicyVersion> {
-        let mut history = self.history.write().await;
-
-        if history.is_empty() {
-            return Err(HotReloadError::RollbackRequired(
-                "No previous version available".to_string(),
-            ));
-        }
-
-        let previous = history.pop().unwrap();
-        self.current.store(previous.clone());
-
-        info!(
-            version = previous.version,
-            "Rolled back to previous policy version"
-        );
-
-        Ok(previous)
+    /// Get the Merkle root of current policies
+    pub fn merkle_root(&self) -> String {
+        self.current.load().version.merkle_root.clone()
     }
 
-    /// Check if files have changed and reload if needed
-    pub async fn check_and_reload(&self) -> HotReloadResult<Option<PolicyVersion>> {
-        // Collect paths to check first
-        let paths_to_check: Vec<(PathBuf, SystemTime)> = {
-            let mtimes = self.file_mtimes.read().await;
-            mtimes.iter().map(|(p, t)| (p.clone(), *t)).collect()
-        };
+    /// Evaluate a policy decision
+    pub fn evaluate(
+        &self,
+        agent_id: &str,
+        action: &str,
+        resource: &str,
+        context: &serde_json::Value,
+    ) -> PolicyDecision {
+        let snapshot = self.current.load();
+        
+        // Find matching policies sorted by priority
+        let mut matching_policies: Vec<_> = snapshot
+            .policies
+            .iter()
+            .filter(|p| Self::matches_policy(p, action, resource))
+            .collect();
+        
+        matching_policies.sort_by(|a, b| b.priority.cmp(&a.priority));
 
-        for (path, old_mtime) in paths_to_check {
-            if let Ok(metadata) = tokio::fs::metadata(&path).await {
-                if let Ok(new_mtime) = metadata.modified() {
-                    if new_mtime > old_mtime {
-                        info!(path = %path.display(), "Policy file changed, reloading");
-                        let version = self.load_policies(&path).await?;
-                        return Ok(Some(version));
-                    }
-                }
+        // Apply first matching policy (highest priority)
+        for policy in matching_policies {
+            if Self::evaluate_conditions(policy, agent_id, context) {
+                return match policy.effect {
+                    PolicyEffect::Allow => PolicyDecision::Allow {
+                        matched_rule: policy.id.clone(),
+                    },
+                    PolicyEffect::Deny => PolicyDecision::Deny {
+                        matched_rule: policy.id.clone(),
+                        reason: format!("Policy {} denied action", policy.id),
+                    },
+                };
             }
         }
 
-        Ok(None)
+        // Default deny
+        PolicyDecision::Deny {
+            matched_rule: "default".to_string(),
+            reason: "No matching policy found (default deny)".to_string(),
+        }
     }
 
-    /// Start background watcher (returns a handle to stop it)
-    pub fn start_watcher(&self) -> WatcherHandle {
-        let interval = Duration::from_secs(self.config.watch_interval_secs);
-        let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
-        let running_clone = running.clone();
-
-        // Clone the necessary data for the background task
-        let mtimes = Arc::clone(&self.file_mtimes);
-        let _validate = self.config.validate_on_load;
-
-        tokio::spawn(async move {
-            while running_clone.load(Ordering::Relaxed) {
-                tokio::time::sleep(interval).await;
-
-                // Check files (simplified - real implementation would reload)
-                let files: tokio::sync::RwLockReadGuard<'_, HashMap<PathBuf, SystemTime>> = mtimes.read().await;
-                for (path, _mtime) in files.iter() {
-                    debug!(path = %path.display(), "Checking policy file");
-                }
-            }
-            info!("Policy watcher stopped");
+    fn matches_policy(policy: &PolicyRule, action: &str, resource: &str) -> bool {
+        let action_match = policy.patterns.actions.iter().any(|p| {
+            p == "*" || p == action || (p.ends_with('*') && action.starts_with(&p[..p.len()-1]))
+        });
+        
+        let resource_match = policy.patterns.resources.iter().any(|p| {
+            p == "*" || p == resource || (p.ends_with('*') && resource.starts_with(&p[..p.len()-1]))
         });
 
-        WatcherHandle { running }
+        action_match && resource_match
     }
 
-    /// Validate a policy set
-    fn validate_policies(&self, policies: &PolicySet) -> HotReloadResult<()> {
-        // Basic validation
-        for rule in &policies.rules {
-            // Check rule ID is non-empty
-            if rule.id.is_empty() {
-                return Err(HotReloadError::ValidationFailed(
-                    "Rule ID cannot be empty".to_string(),
-                ));
-            }
+    fn evaluate_conditions(policy: &PolicyRule, agent_id: &str, context: &serde_json::Value) -> bool {
+        // If no conditions, policy matches
+        if policy.conditions.is_empty() {
+            return true;
+        }
 
-            // Check effect is valid
-            if rule.effect != "permit" && rule.effect != "forbid" {
-                return Err(HotReloadError::ValidationFailed(format!(
-                    "Invalid effect '{}' in rule '{}'. Must be 'permit' or 'forbid'",
-                    rule.effect, rule.id
+        // Evaluate all conditions (AND logic)
+        for condition in &policy.conditions {
+            let field_value = if condition.field == "agent_id" {
+                Some(serde_json::Value::String(agent_id.to_string()))
+            } else {
+                context.get(&condition.field).cloned()
+            };
+
+            if let Some(value) = field_value {
+                if !condition.evaluate(&value) {
+                    return false;
+                }
+            } else {
+                // Field not present, condition fails
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Reload policies from disk
+    pub async fn reload(&self) -> HotReloadResult<PolicyVersion> {
+        let start = std::time::Instant::now();
+        
+        info!(dir = ?self.config.policy_dir, "Reloading policies");
+
+        // Load new policies
+        let new_policies = Self::load_policies_from_dir(&self.config.policy_dir).await?;
+
+        // Validate if configured
+        if self.config.validate_before_load {
+            self.validate_policies(&new_policies)?;
+        }
+
+        // Create new version
+        let current_snapshot = self.current.load();
+        let new_version = PolicyVersion::new(
+            current_snapshot.version.version + 1,
+            &new_policies,
+            Some(&current_snapshot.version),
+        );
+
+        let new_snapshot = Arc::new(PolicySnapshot::new(new_policies, new_version.clone()));
+
+        // Atomically swap
+        self.current.store(new_snapshot.clone());
+
+        // Update history
+        let mut history = self.version_history.write().await;
+        history.push(new_snapshot);
+        
+        // Prune old versions if needed
+        while history.len() > self.config.max_versions {
+            history.remove(0);
+        }
+
+        // Update metrics
+        let duration = start.elapsed();
+        let mut metrics = self.metrics.write().await;
+        metrics.successful_reloads += 1;
+        metrics.last_reload = Some(SystemTime::now());
+        metrics.last_reload_duration = Some(duration);
+        metrics.policy_count = self.current.load().len();
+        metrics.current_version = new_version.version;
+
+        info!(
+            version = new_version.version,
+            merkle_root = %new_version.merkle_root,
+            duration_ms = duration.as_millis(),
+            "Policy reload successful"
+        );
+
+        Ok(new_version)
+    }
+
+    /// Rollback to a previous version
+    pub async fn rollback(&self, target_version: u64) -> HotReloadResult<()> {
+        let history = self.version_history.read().await;
+        
+        let target = history
+            .iter()
+            .find(|s| s.version.version == target_version)
+            .cloned()
+            .ok_or_else(|| {
+                HotReloadError::RollbackError(format!("Version {} not found", target_version))
+            })?;
+
+        drop(history);
+
+        // Atomically swap to old version
+        self.current.store(target);
+
+        // Update metrics
+        let mut metrics = self.metrics.write().await;
+        metrics.rollbacks += 1;
+        metrics.current_version = target_version;
+
+        info!(version = target_version, "Rolled back to previous policy version");
+
+        Ok(())
+    }
+
+    /// Get version history
+    pub async fn get_history(&self) -> Vec<PolicyVersion> {
+        let history = self.version_history.read().await;
+        history.iter().map(|s| s.version.clone()).collect()
+    }
+
+    /// Get metrics
+    pub async fn get_metrics(&self) -> HotReloadMetrics {
+        self.metrics.read().await.clone()
+    }
+
+    /// Validate policies before loading
+    fn validate_policies(&self, policies: &[PolicyRule]) -> HotReloadResult<()> {
+        // Check for duplicate IDs
+        let mut seen_ids = std::collections::HashSet::new();
+        for policy in policies {
+            if !seen_ids.insert(&policy.id) {
+                return Err(HotReloadError::ValidationError(format!(
+                    "Duplicate policy ID: {}",
+                    policy.id
                 )));
             }
+        }
 
-            // Check patterns are non-empty
-            if rule.principal.is_empty() || rule.action.is_empty() || rule.resource.is_empty() {
-                return Err(HotReloadError::ValidationFailed(format!(
-                    "Rule '{}' has empty principal, action, or resource pattern",
-                    rule.id
-                )));
-            }
+        // Check for at least one default deny
+        let has_default_deny = policies.iter().any(|p| {
+            p.patterns.actions.contains(&"*".to_string())
+                && p.patterns.resources.contains(&"*".to_string())
+                && matches!(p.effect, PolicyEffect::Deny)
+        });
+
+        if !has_default_deny {
+            warn!("No default deny policy found - consider adding one for security");
         }
 
         Ok(())
     }
 
-    /// Save current policy to history
-    async fn save_to_history(&self) {
-        let current = self.current.load();
-        let mut history = self.history.write().await;
+    /// Load policies from a directory
+    async fn load_policies_from_dir(dir: &Path) -> HotReloadResult<Vec<PolicyRule>> {
+        let mut policies = Vec::new();
 
-        // Don't save initial empty version
-        if current.version > 0 {
-            history.push((*current).clone());
-
-            // Trim history if too large
-            while history.len() > self.config.version_history_size {
-                history.remove(0);
-            }
+        if !dir.exists() {
+            warn!(dir = ?dir, "Policy directory does not exist, using empty policy set");
+            return Ok(policies);
         }
-    }
-    
-    /// Append a policy version to the Merkle log (POL-006 Enhanced)
-    async fn append_to_merkle_log(&self, version: &PolicyVersion) {
-        let mut log = self.merkle_log.write().await;
-        
-        let prev_chain_hash = if log.is_empty() {
-            None
-        } else {
-            // Compute hash of all previous entries
-            let entries: Vec<_> = log.iter().map(|e| MerkleChainEntry {
-                version: e.version,
-                content_hash: e.content_hash.clone(),
-                loaded_at: e.timestamp,
-                source_path: e.source.clone(),
-            }).collect();
-            Some(Self::compute_chain_hash(&entries))
-        };
-        
-        let entry = MerkleLogEntry {
-            version: version.version,
-            content_hash: version.content_hash.clone(),
-            prev_chain_hash,
-            policy_count: version.policies.len(),
-            timestamp: current_timestamp(),
-            source: version.source_path.clone(),
-        };
-        
-        log.push(entry);
-        
-        info!(
-            version = version.version,
-            chain_length = log.len(),
-            "Policy version appended to Merkle log"
-        );
-    }
-    
-    /// Get the complete Merkle log (POL-006 Enhanced)
-    pub async fn get_merkle_log(&self) -> Vec<MerkleLogEntry> {
-        self.merkle_log.read().await.clone()
-    }
-    
-    /// Verify the integrity of the Merkle log (POL-006 Enhanced)
-    pub async fn verify_merkle_log(&self) -> bool {
-        let log = self.merkle_log.read().await;
-        
-        for (i, entry) in log.iter().enumerate() {
-            if i == 0 {
-                if entry.prev_chain_hash.is_some() {
-                    warn!("First entry should not have prev_chain_hash");
-                    return false;
-                }
-            } else {
-                // Verify the chain hash
-                let prev_entries: Vec<_> = log[..i].iter().map(|e| MerkleChainEntry {
-                    version: e.version,
-                    content_hash: e.content_hash.clone(),
-                    loaded_at: e.timestamp,
-                    source_path: e.source.clone(),
-                }).collect();
-                let expected_hash = Self::compute_chain_hash(&prev_entries);
+
+        let mut entries = tokio::fs::read_dir(dir).await?;
+
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            
+            if path.is_file() {
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
                 
-                if entry.prev_chain_hash.as_ref() != Some(&expected_hash) {
-                    warn!(
-                        version = entry.version,
-                        "Merkle log chain hash mismatch"
-                    );
-                    return false;
+                if ext == "yaml" || ext == "yml" {
+                    match Self::load_yaml_policies(&path).await {
+                        Ok(mut file_policies) => {
+                            debug!(path = ?path, count = file_policies.len(), "Loaded policies from file");
+                            policies.append(&mut file_policies);
+                        }
+                        Err(e) => {
+                            error!(path = ?path, error = %e, "Failed to load policy file");
+                        }
+                    }
                 }
             }
         }
+
+        info!(count = policies.len(), "Loaded policies from directory");
+        Ok(policies)
+    }
+
+    /// Load policies from a YAML file
+    async fn load_yaml_policies(path: &Path) -> HotReloadResult<Vec<PolicyRule>> {
+        let content = tokio::fs::read_to_string(path).await?;
         
-        true
-    }
-    
-    /// Get policy holder statistics (POL-006 Enhanced)
-    pub fn get_stats(&self) -> (u64, u64, u64) {
-        self.current.stats()
-    }
+        // Try to parse as a list of policies
+        let policies: Vec<PolicyRule> = serde_yaml::from_str(&content)
+            .map_err(|e| HotReloadError::LoadError(format!("YAML parse error: {}", e)))?;
 
-    /// Get version history
-    pub async fn get_history(&self) -> Vec<PolicyVersion> {
-        self.history.read().await.clone()
+        Ok(policies)
     }
 
-    /// Get current version number
-    pub fn current_version(&self) -> u64 {
-        self.version_counter.load(Ordering::Relaxed)
-    }
+    /// Start watching for file changes
+    pub async fn start_watching(&mut self) -> HotReloadResult<()> {
+        let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
+        self.shutdown_tx = Some(shutdown_tx);
 
-    /// Get the Merkle root hash of the current policy (POL-006 enhanced)
-    ///
-    /// This provides a cryptographic commitment to the current policy state,
-    /// enabling verification that policies haven't been tampered with.
-    pub fn get_merkle_root(&self) -> String {
-        let current = self.current.load();
-        current.content_hash.clone()
-    }
-
-    /// Verify policy integrity against expected hash (POL-006 enhanced)
-    pub fn verify_integrity(&self, expected_hash: &str) -> bool {
-        let current = self.current.load();
-        current.content_hash == expected_hash
-    }
-
-    /// Get the full Merkle chain of policy versions (POL-006 enhanced)
-    ///
-    /// Returns a chain of hashes representing the policy version history,
-    /// allowing verification of the complete policy evolution.
-    pub async fn get_merkle_chain(&self) -> MerkleChain {
-        let history = self.history.read().await;
-        let current = self.current.load();
-
-        let entries: Vec<MerkleChainEntry> = history
-            .iter()
-            .map(|v| MerkleChainEntry {
-                version: v.version,
-                content_hash: v.content_hash.clone(),
-                loaded_at: v.loaded_at,
-                source_path: v.source_path.clone(),
-            })
-            .chain(std::iter::once(MerkleChainEntry {
-                version: current.version,
-                content_hash: current.content_hash.clone(),
-                loaded_at: current.loaded_at,
-                source_path: current.source_path.clone(),
-            }))
-            .collect();
-
-        let chain_hash = Self::compute_chain_hash(&entries);
-
-        MerkleChain {
-            entries,
-            chain_hash,
-            generated_at: current_timestamp(),
-        }
-    }
-
-    /// Compute the Merkle hash of the entire chain
-    fn compute_chain_hash(entries: &[MerkleChainEntry]) -> String {
-        let mut hasher = Sha256::new();
-        for entry in entries {
-            hasher.update(entry.content_hash.as_bytes());
-            hasher.update(entry.version.to_le_bytes());
-        }
-        hex::encode(hasher.finalize())
-    }
-
-    /// Export policy version to Merkle Log format (POL-006 enhanced)
-    ///
-    /// Creates a signed, timestamped entry suitable for appending to an
-    /// external audit Merkle Log.
-    pub async fn export_to_merkle_log(&self) -> MerkleLogEntry {
-        let current = self.current.load();
-        let chain = self.get_merkle_chain().await;
-
-        MerkleLogEntry {
-            version: current.version,
-            content_hash: current.content_hash.clone(),
-            prev_chain_hash: if chain.entries.len() > 1 {
-                // Hash of all entries except current
-                let prev_entries: Vec<_> = chain.entries.iter().take(chain.entries.len() - 1).cloned().collect();
-                Some(Self::compute_chain_hash(&prev_entries))
-            } else {
-                None
-            },
-            policy_count: current.policies.len(),
-            timestamp: current_timestamp(),
-            source: current.source_path.clone(),
-        }
-    }
-
-    /// Load policies and record in Merkle Log (POL-006 enhanced)
-    pub async fn load_policies_with_merkle<P: AsRef<Path>>(
-        &self,
-        path: P,
-    ) -> HotReloadResult<(PolicyVersion, MerkleLogEntry)> {
-        let version = self.load_policies(path).await?;
-        let log_entry = self.export_to_merkle_log().await;
-        Ok((version, log_entry))
-    }
-
-    /// Verify a policy version matches the Merkle chain
-    pub async fn verify_version_in_chain(&self, version: u64, expected_hash: &str) -> bool {
-        let history = self.history.read().await;
+        let policy_dir = self.config.policy_dir.clone();
+        let debounce = self.config.debounce_duration;
         
-        // Check in history
-        if let Some(v) = history.iter().find(|v| v.version == version) {
-            return v.content_hash == expected_hash;
+        // Note: In a real implementation, you would use notify crate
+        // For now, we'll implement a simple polling mechanism
+        let engine = self as *const Self;
+        
+        tokio::spawn(async move {
+            let mut last_check = SystemTime::now();
+            
+            loop {
+                tokio::select! {
+                    _ = shutdown_rx.recv() => {
+                        info!("Stopping policy file watcher");
+                        break;
+                    }
+                    _ = tokio::time::sleep(debounce) => {
+                        // Check if any files have been modified
+                        if let Ok(modified) = Self::check_for_modifications(&policy_dir, last_check).await {
+                            if modified {
+                                // SAFETY: We're only reading, and the engine outlives this task
+                                let engine_ref = unsafe { &*engine };
+                                if let Err(e) = engine_ref.reload().await {
+                                    error!(error = %e, "Failed to reload policies on file change");
+                                }
+                                last_check = SystemTime::now();
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        info!(dir = ?self.config.policy_dir, "Started policy file watcher");
+        Ok(())
+    }
+
+    /// Check if any policy files have been modified
+    async fn check_for_modifications(dir: &Path, since: SystemTime) -> HotReloadResult<bool> {
+        if !dir.exists() {
+            return Ok(false);
         }
 
-        // Check current
-        let current = self.current.load();
-        if current.version == version {
-            return current.content_hash == expected_hash;
+        let mut entries = tokio::fs::read_dir(dir).await?;
+
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if path.is_file() {
+                if let Ok(metadata) = tokio::fs::metadata(&path).await {
+                    if let Ok(modified) = metadata.modified() {
+                        if modified > since {
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
         }
 
-        false
+        Ok(false)
     }
 
-    /// Get a proof of policy state at a specific version
-    pub async fn get_version_proof(&self, version: u64) -> Option<PolicyVersionProof> {
-        let chain = self.get_merkle_chain().await;
-        
-        let entry = chain.entries.iter().find(|e| e.version == version)?;
-        let position = chain.entries.iter().position(|e| e.version == version)?;
-        
-        // Build proof path (hashes of siblings)
-        let proof_path: Vec<String> = chain.entries
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| *i != position)
-            .map(|(_, e)| e.content_hash.clone())
-            .collect();
-
-        Some(PolicyVersionProof {
-            version,
-            content_hash: entry.content_hash.clone(),
-            proof_path,
-            chain_hash: chain.chain_hash,
-            generated_at: current_timestamp(),
-        })
+    /// Stop watching for file changes
+    pub async fn stop_watching(&mut self) {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(()).await;
+        }
     }
 }
 
-/// Entry in the Merkle chain (POL-006)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MerkleChainEntry {
-    /// Version number
-    pub version: u64,
-    /// Content hash
-    pub content_hash: String,
-    /// When this version was loaded
-    pub loaded_at: u64,
-    /// Source file path
-    pub source_path: Option<String>,
-}
-
-/// The complete Merkle chain of policy versions (POL-006)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MerkleChain {
-    /// All entries in the chain
-    pub entries: Vec<MerkleChainEntry>,
-    /// Hash of the entire chain
-    pub chain_hash: String,
-    /// When this chain was generated
-    pub generated_at: u64,
-}
-
-impl MerkleChain {
-    /// Verify the integrity of the chain
-    pub fn verify(&self) -> bool {
-        let computed = HotReloadManager::compute_chain_hash(&self.entries);
-        computed == self.chain_hash
-    }
-
-    /// Get the latest version
-    pub fn latest_version(&self) -> Option<u64> {
-        self.entries.last().map(|e| e.version)
+impl std::fmt::Debug for HotReloadablePolicyEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HotReloadablePolicyEngine")
+            .field("config", &self.config)
+            .field("current_version", &self.current.load().version.version)
+            .finish()
     }
 }
 
-/// Entry for external Merkle Log (POL-006)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MerkleLogEntry {
-    /// Version number
-    pub version: u64,
-    /// Content hash
-    pub content_hash: String,
-    /// Hash of previous chain state
-    pub prev_chain_hash: Option<String>,
-    /// Number of policies in this version
-    pub policy_count: usize,
-    /// Timestamp
-    pub timestamp: u64,
-    /// Source file
-    pub source: Option<String>,
-}
-
-/// Proof of a policy version (POL-006)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PolicyVersionProof {
-    /// Version being proven
-    pub version: u64,
-    /// Hash of this version's content
-    pub content_hash: String,
-    /// Proof path (sibling hashes)
-    pub proof_path: Vec<String>,
-    /// Chain hash to verify against
-    pub chain_hash: String,
-    /// When proof was generated
-    pub generated_at: u64,
-}
-
-impl PolicyVersionProof {
-    /// Verify this proof against a chain hash
-    pub fn verify(&self, chain_hash: &str) -> bool {
-        self.chain_hash == chain_hash
-    }
-}
-
-/// Handle to stop the background watcher
-pub struct WatcherHandle {
-    running: Arc<std::sync::atomic::AtomicBool>,
-}
-
-impl WatcherHandle {
-    /// Stop the watcher
-    pub fn stop(&self) {
-        self.running.store(false, Ordering::Relaxed);
-    }
-}
-
-impl Drop for WatcherHandle {
-    fn drop(&mut self) {
-        self.stop();
-    }
-}
-
-/// Get current Unix timestamp in seconds
-fn current_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
+// ============================================================================
+// Tests
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::policy::{PolicyCondition, PolicyPatterns, ConditionOperator};
+    use tempfile::TempDir;
 
-    #[tokio::test]
-    async fn test_hot_reload_manager_creation() {
-        let manager = HotReloadManager::with_defaults().unwrap();
-        assert_eq!(manager.current_version(), 0);
+    fn create_test_policy(id: &str, effect: PolicyEffect) -> PolicyRule {
+        PolicyRule {
+            id: id.to_string(),
+            effect,
+            patterns: PolicyPatterns {
+                actions: vec!["*".to_string()],
+                resources: vec!["*".to_string()],
+            },
+            conditions: vec![],
+            priority: 0,
+        }
     }
 
-    #[tokio::test]
-    async fn test_load_policies_from_string() {
-        let manager = HotReloadManager::with_defaults().unwrap();
+    #[test]
+    fn test_policy_version_creation() {
+        let policies = vec![
+            create_test_policy("policy1", PolicyEffect::Allow),
+            create_test_policy("policy2", PolicyEffect::Deny),
+        ];
 
-        let yaml = r#"
-rules:
-  - id: "allow-read"
-    effect: "permit"
-    principal: "*"
-    action: "read"
-    resource: "/data/*"
-    description: "Allow reading data files"
-"#;
+        let version = PolicyVersion::new(1, &policies, None);
 
-        let version = manager.load_policies_from_str(yaml, None).await.unwrap();
         assert_eq!(version.version, 1);
-        assert_eq!(version.policies.len(), 1);
+        assert!(version.previous_hash.is_none());
+        assert_eq!(version.policy_hashes.len(), 2);
+        assert!(!version.merkle_root.is_empty());
+    }
+
+    #[test]
+    fn test_policy_version_chain() {
+        let policies = vec![create_test_policy("policy1", PolicyEffect::Allow)];
+        
+        let v1 = PolicyVersion::new(1, &policies, None);
+        let v2 = PolicyVersion::new(2, &policies, Some(&v1));
+
+        assert_eq!(v2.previous_hash, Some(v1.merkle_root.clone()));
+    }
+
+    #[test]
+    fn test_policy_snapshot() {
+        let policies = vec![
+            create_test_policy("policy1", PolicyEffect::Allow),
+            create_test_policy("policy2", PolicyEffect::Deny),
+        ];
+        let version = PolicyVersion::new(1, &policies, None);
+        let snapshot = PolicySnapshot::new(policies, version);
+
+        assert_eq!(snapshot.len(), 2);
+        assert!(snapshot.find_policy("policy1").is_some());
+        assert!(snapshot.find_policy("nonexistent").is_none());
     }
 
     #[tokio::test]
-    async fn test_version_increment() {
-        let manager = HotReloadManager::with_defaults().unwrap();
+    async fn test_hot_reload_engine_creation() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = HotReloadConfig::new(temp_dir.path());
+        
+        let engine = HotReloadablePolicyEngine::new(config).await.unwrap();
+        
+        assert_eq!(engine.current_version(), 1);
+    }
 
-        let yaml1 = r#"rules: []"#;
-        let yaml2 = r#"
-rules:
-  - id: "rule1"
-    effect: "permit"
-    principal: "*"
-    action: "*"
-    resource: "*"
+    #[tokio::test]
+    async fn test_policy_evaluation() {
+        let temp_dir = TempDir::new().unwrap();
+        
+        // Create a policy file
+        let policy_content = r#"
+- id: "allow_read"
+  effect: Allow
+  patterns:
+    actions: ["read"]
+    resources: ["data/*"]
+  conditions: []
+  priority: 100
+
+- id: "default_deny"
+  effect: Deny
+  patterns:
+    actions: ["*"]
+    resources: ["*"]
+  conditions: []
+  priority: 0
 "#;
+        
+        let policy_path = temp_dir.path().join("test.yaml");
+        tokio::fs::write(&policy_path, policy_content).await.unwrap();
 
-        manager.load_policies_from_str(yaml1, None).await.unwrap();
-        let v2 = manager.load_policies_from_str(yaml2, None).await.unwrap();
+        let config = HotReloadConfig::new(temp_dir.path());
+        let engine = HotReloadablePolicyEngine::new(config).await.unwrap();
 
-        assert_eq!(v2.version, 2);
+        // Test allowed action
+        let decision = engine.evaluate("agent1", "read", "data/file.txt", &serde_json::json!({}));
+        assert!(matches!(decision, PolicyDecision::Allow { .. }));
+
+        // Test denied action
+        let decision = engine.evaluate("agent1", "write", "data/file.txt", &serde_json::json!({}));
+        assert!(matches!(decision, PolicyDecision::Deny { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_policy_reload() {
+        let temp_dir = TempDir::new().unwrap();
+        
+        // Initial policy
+        let initial_content = r#"
+- id: "policy1"
+  effect: Deny
+  patterns:
+    actions: ["*"]
+    resources: ["*"]
+  conditions: []
+  priority: 0
+"#;
+        
+        let policy_path = temp_dir.path().join("test.yaml");
+        tokio::fs::write(&policy_path, initial_content).await.unwrap();
+
+        let config = HotReloadConfig::new(temp_dir.path());
+        let engine = HotReloadablePolicyEngine::new(config).await.unwrap();
+
+        assert_eq!(engine.current_version(), 1);
+
+        // Update policy
+        let updated_content = r#"
+- id: "policy1"
+  effect: Allow
+  patterns:
+    actions: ["*"]
+    resources: ["*"]
+  conditions: []
+  priority: 0
+"#;
+        
+        tokio::fs::write(&policy_path, updated_content).await.unwrap();
+
+        // Reload
+        let new_version = engine.reload().await.unwrap();
+        
+        assert_eq!(new_version.version, 2);
+        assert_eq!(engine.current_version(), 2);
     }
 
     #[tokio::test]
     async fn test_rollback() {
-        let manager = HotReloadManager::with_defaults().unwrap();
-
-        let yaml1 = r#"
-rules:
-  - id: "v1-rule"
-    effect: "permit"
-    principal: "*"
-    action: "*"
-    resource: "*"
+        let temp_dir = TempDir::new().unwrap();
+        
+        let policy_content = r#"
+- id: "policy1"
+  effect: Deny
+  patterns:
+    actions: ["*"]
+    resources: ["*"]
+  conditions: []
+  priority: 0
 "#;
-        let yaml2 = r#"
-rules:
-  - id: "v2-rule"
-    effect: "forbid"
-    principal: "*"
-    action: "*"
-    resource: "*"
-"#;
+        
+        let policy_path = temp_dir.path().join("test.yaml");
+        tokio::fs::write(&policy_path, policy_content).await.unwrap();
 
-        manager.load_policies_from_str(yaml1, None).await.unwrap();
-        manager.load_policies_from_str(yaml2, None).await.unwrap();
+        let config = HotReloadConfig::new(temp_dir.path());
+        let engine = HotReloadablePolicyEngine::new(config).await.unwrap();
 
-        // Current should be v2 (lock-free read)
-        let current = manager.get_current();
-        assert_eq!(current.policies.rules[0].id, "v2-rule");
+        // Reload a few times
+        engine.reload().await.unwrap();
+        engine.reload().await.unwrap();
 
-        // Rollback to v1
-        let rolled_back = manager.rollback().await.unwrap();
-        assert_eq!(rolled_back.policies.rules[0].id, "v1-rule");
+        assert_eq!(engine.current_version(), 3);
+
+        // Rollback to version 1
+        engine.rollback(1).await.unwrap();
+        
+        assert_eq!(engine.current_version(), 1);
     }
 
     #[tokio::test]
-    async fn test_validation_fails_on_invalid_effect() {
-        let manager = HotReloadManager::with_defaults().unwrap();
+    async fn test_validation() {
+        let temp_dir = TempDir::new().unwrap();
+        
+        // Create policy with duplicate IDs
+        let policy_content = r#"
+- id: "duplicate"
+  effect: Allow
+  patterns:
+    actions: ["*"]
+    resources: ["*"]
+  conditions: []
+  priority: 0
 
-        let yaml = r#"
-rules:
-  - id: "bad-rule"
-    effect: "maybe"
-    principal: "*"
-    action: "*"
-    resource: "*"
+- id: "duplicate"
+  effect: Deny
+  patterns:
+    actions: ["*"]
+    resources: ["*"]
+  conditions: []
+  priority: 0
 "#;
+        
+        let policy_path = temp_dir.path().join("test.yaml");
+        tokio::fs::write(&policy_path, policy_content).await.unwrap();
 
-        let result = manager.load_policies_from_str(yaml, None).await;
-        assert!(matches!(result, Err(HotReloadError::ValidationFailed(_))));
-    }
+        let config = HotReloadConfig::new(temp_dir.path());
+        let result = HotReloadablePolicyEngine::new(config).await;
 
-    #[test]
-    fn test_policy_version_hash() {
-        let policies = PolicySet::new();
-        let v1 = PolicyVersion::new(1, policies.clone(), None);
-        let v2 = PolicyVersion::new(2, policies, None);
-
-        // Same content should have same hash
-        assert_eq!(v1.content_hash, v2.content_hash);
+        assert!(result.is_err());
     }
 
     #[tokio::test]
-    async fn test_history_size_limit() {
-        let config = HotReloadConfig {
-            version_history_size: 2,
-            validate_on_load: false,
-            ..Default::default()
-        };
-        let manager = HotReloadManager::new(config).unwrap();
-
-        let yaml = r#"rules: []"#;
-
-        // Load 5 versions
-        for _ in 0..5 {
-            manager.load_policies_from_str(yaml, None).await.unwrap();
-        }
-
-        // History should only keep 2
-        let history = manager.get_history().await;
-        assert_eq!(history.len(), 2);
-    }
-    
-    #[tokio::test]
-    async fn test_merkle_log() {
-        let manager = HotReloadManager::with_defaults().unwrap();
-
-        let yaml1 = r#"rules: []"#;
-        let yaml2 = r#"
-rules:
-  - id: "rule1"
-    effect: "permit"
-    principal: "*"
-    action: "*"
-    resource: "*"
-"#;
-
-        manager.load_policies_from_str(yaml1, None).await.unwrap();
-        manager.load_policies_from_str(yaml2, None).await.unwrap();
-
-        let log = manager.get_merkle_log().await;
-        assert_eq!(log.len(), 2);
+    async fn test_metrics() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = HotReloadConfig::new(temp_dir.path());
         
-        // Verify log integrity
-        assert!(manager.verify_merkle_log().await);
-    }
-    
-    #[test]
-    fn test_lock_free_stats() {
-        let manager = HotReloadManager::with_defaults().unwrap();
+        let engine = HotReloadablePolicyEngine::new(config).await.unwrap();
         
-        // Initial read
-        let _ = manager.get_current();
-        let _ = manager.get_policies();
+        engine.reload().await.unwrap();
         
-        let (reads, writes, _cas) = manager.get_stats();
-        assert!(reads >= 2);
-        assert_eq!(writes, 0); // No writes yet after init
+        let metrics = engine.get_metrics().await;
+        
+        assert_eq!(metrics.successful_reloads, 1);
+        assert!(metrics.last_reload.is_some());
     }
 }

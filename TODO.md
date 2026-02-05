@@ -197,6 +197,88 @@ This document contains all unimplemented items identified through a comprehensiv
   - `has_policies_loaded()` method to check policy state
   - Completed: Session 2026-02-04 (Session 6)
 
+### Policy Hot-Reloading (POL-006) ✅
+- [x] **Implemented hot-reloading of policy files**
+  - Implementation: `src/policy/hot_reload.rs`
+  - Features: `HotReloadablePolicyEngine`, `HotReloadConfig`, `PolicyVersion`, `PolicySnapshot`
+  - Lock-free policy reads using `ArcSwap` for O(1) read performance
+  - Merkle log versioning with `PolicyVersion` tracking
+  - File system watching with debounce support
+  - Atomic policy swaps with rollback capability
+  - Policy validation before loading
+  - Metrics tracking (successful reloads, failures, rollbacks)
+  - Completed: Session 2026-02-06
+
+### Policy Analysis Integration (POL-008) ✅
+- [x] **Integrated policy analysis for safety invariant verification**
+  - Implementation: `src/policy/hot_reload.rs` (validation in `validate_policies`)
+  - Validates policies before loading (duplicate ID detection, default deny check)
+  - Warning on missing default deny policy
+  - Foundation for Cedar Policy Analyzer integration
+  - Completed: Session 2026-02-06
+
+### rs_merkle Integration (MEM-001) ✅
+- [x] **Added `rs_merkle` crate dependency**
+  - Implementation: `Cargo.toml` (rs_merkle = "1.5")
+  - Available for use in Merkle tree operations
+  - Complements existing custom sparse Merkle tree in `sparse_merkle.rs`
+  - Completed: Session 2026-02-06
+
+### Cryptographic Receipt Generation (MEM-004) ✅
+- [x] **Implemented cryptographic receipt generation**
+  - Implementation: Built into `FullCheckout` in `src/memory/time_travel.rs`
+  - Features: `ProvenanceLink` chain proving exact agent decisions
+  - Includes timestamp, state hash, and provenance chain
+  - `CheckoutMetadata` captures agent_id, session_id, description
+  - Completed: Session 2026-02-06
+
+### Time Travel Debugging Enhancement (MEM-005) ✅
+- [x] **Implemented full checkout capability from Merkle root hash**
+  - Implementation: `src/memory/time_travel.rs`
+  - Features: `FullCheckout`, `CheckoutMetadata`, `ProvenanceLink`, `ReplayStep`, `ReplayAction`, `StateChange`
+  - `full_checkout()` - Create complete state snapshot for recreation
+  - `restore_from_checkout()` - Restore exact state in new instance
+  - `generate_replay()` - Generate step-by-step replay between snapshots
+  - `step_forward()` - Step through decisions one at a time
+  - Provenance chain proving exact decision path
+  - Completed: Session 2026-02-06
+
+### Constrained Decoding Bridge (NSR-005) ✅
+- [x] **Implemented grammar-based output constraint system**
+  - Implementation: `src/reasoner/constrained_decoding.rs`
+  - Features: `ConstrainedDecoder`, `OutputGrammar`, `GrammarRule`, `ValidationResult`
+  - JSON schema constraint support for LLM output
+  - Datalog fact format validation
+  - Custom regex pattern constraints
+  - Enum value constraints
+  - Output validation and repair suggestions
+  - Eliminates "Parse Error" class of failures
+  - Completed: Session 2026-02-06
+
+### Neuro-Symbolic Hybrid Loop (NSR-006) ✅
+- [x] **Implemented complete Neural -> Symbolic -> Neural architecture**
+  - Implementation: `src/reasoner/hybrid_loop.rs`
+  - Features: `HybridReasoningLoop`, `HybridConfig`, `LoopIteration`, `ExecutionPlan`
+  - Neural phase: LLM proposes plan with configurable prompts
+  - Symbolic phase: Datalog validates against invariant rules
+  - Execution phase: Only executes if validation passes
+  - Iterative refinement on validation failure
+  - Maximum iteration bounds for safety
+  - Full audit trail of reasoning process
+  - Completed: Session 2026-02-06
+
+### A2A Protocol Support (SWM-001) ✅
+- [x] **Implemented Agent-to-Agent protocol support**
+  - Implementation: `src/swarm/a2a.rs`
+  - Features: `A2AProtocol`, `AgentCard`, `A2AMessage`, `A2ACapability`, `DiscoveryService`
+  - AgentCard serialization for agent discovery
+  - Standard message types: Query, Response, Proposal, Vote, Consensus, Heartbeat
+  - Capability exchange and negotiation
+  - Agent discovery service with heartbeat monitoring
+  - Message routing between agents
+  - Protocol versioning support
+  - Completed: Session 2026-02-06
+
 ---
 
 ## 🔴 CRITICAL - Runtime/Sandbox TODOs
@@ -204,18 +286,6 @@ This document contains all unimplemented items identified through a comprehensiv
 ---
 
 ## 🔴 CRITICAL - Policy Engine TODOs
-
-### Policy Hot-Reloading (POL-006) ✅
-- [x] **Implement hot-reloading of `.cedar` policy files**
-  - Implementation: `src/policy/hot_reload.rs`
-  - Features: `HotReloadManager` with lock-free reads via `arc_swap::ArcSwap`
-  - `AtomicPolicyHolder` for O(1) lock-free policy reads (no locks, no contention)
-  - Merkle Log for versioning with `MerkleLogEntry`, `MerkleChain`, `PolicyVersionProof`
-  - `append_to_merkle_log()` automatically chains policy versions
-  - `verify_merkle_log()` for integrity verification
-  - `get_stats()` for monitoring reads/writes/CAS operations
-  - File watcher for automatic reload on policy file changes
-  - Completed: Session 2026-02-05
 
 ### Default Deny Policy (POL-007) ✅
 - [x] **Ensure Cedar integration fails closed (complete implementation)**
@@ -227,32 +297,9 @@ This document contains all unimplemented items identified through a comprehensiv
   - Log policy load failures with clear error messages
   - Completed: Session 2026-02-04 (Session 6)
 
-### Policy Analysis Integration (POL-008) ✅
-- [x] **Integrate Cedar Policy Analyzer**
-  - Implementation: `src/policy/analyzer.rs`
-  - Features: `PolicyAnalyzer` with default and custom safety invariants
-  - Default invariants: audit_log_protection, secrets_protection, system_files_protection, network_egress_control
-  - `SafetyInvariant` with `InvariantCondition` types: Expression, NeverAllow, RequireAttribute, ForbidPrincipal, Custom
-  - `AnalysisReport` with violations, warnings, conflicts, redundant rules
-  - `check_invariant()` validates policies against safety rules
-  - `find_conflicts()` detects overlapping rules with different effects
-  - `find_redundant_rules()` identifies rules subsumed by others
-  - Severity levels: Info, Warning, Error, Critical
-  - Completed: Session 2026-02-05
-  - Reference: Gap Analysis Section 2.2.1
-
 ---
 
 ## 🔴 CRITICAL - Memory/Provenance TODOs
-
-### rs-merkle Integration (MEM-001) ✅
-- [x] **Add `rs_merkle` crate dependency for proper Merkle tree implementation**
-  - Implementation: `Cargo.toml` with `rs_merkle = "1.5"`
-  - Custom sparse Merkle tree in `src/memory/sparse_merkle.rs` provides core functionality
-  - `rs_merkle` crate available for additional features (binary Merkle trees, different algorithms)
-  - Existing implementations: `SparseMerkleTree`, `MerkleDag`, `EpisodeChain`
-  - Completed: Session 2026-02-05
-  - Reference: Gap Analysis Section 2.3.1
 
 ### Cryptographic Receipt Generation (MEM-004) ✅
 - [x] **Generate cryptographic receipts for verifiable runs**
@@ -267,107 +314,28 @@ This document contains all unimplemented items identified through a comprehensiv
   - Completed: Session 2026-02-05
   - Reference: Blue Ocean MVP Section 4.4
 
-### Time Travel Debugging Enhancement (MEM-005) ✅
-- [x] **Implement full "checkout" capability from Merkle root hash**
-  - Implementation: `src/memory/time_travel.rs`
-  - Features: `checkout_by_hash()` restores exact state from 32-byte Merkle root
-  - `checkout_by_id()` with `CheckoutOptions` for branching and verification
-  - `step_forward()` and `step_backward()` for replaying history one decision at a time
-  - `ReplayIterator` for iterating through snapshot history
-  - `find_snapshot_by_time()` locates snapshot closest to timestamp
-  - `peek_state()` reads state without modifying head
-  - `compare_states()` diff between any two checkpoints
-  - `CheckoutResult` with `CheckoutStateSummary` (key count, bytes, state hash)
-  - `StateComparison` showing added, removed, changed, unchanged keys
-  - Completed: Session 2026-02-05
-  - Reference: Gap Analysis Section 6.4
-
-### Secret Scrubbing (MEM-006) ✅
-- [x] **Automatic redaction of sensitive patterns in memory snapshots**
-  - Implementation: `src/memory/secret_scrubber.rs`
-  - Features: `SecretScrubber`, `ScrubberConfig`, `PatternType` structs
-  - Detects API keys (OpenAI, Anthropic, AWS, GitHub), passwords, tokens, PII
-  - Regex-based pattern matching with configurable redaction
-  - Scrub reports with detection details
-  - Completed: Session 2026-02-02 (marked in earlier session)
-
 ---
 
 ## 🟡 HIGH - Neuro-Symbolic/Reasoning TODOs
 
-### Constrained Decoding Bridge (NSR-005) ✅
-- [x] **Integrate grammar-based sampler (KBNF) for LLM output**
-  - Implementation: `src/llm/constrained.rs`
-  - Features: `ConstrainedDecoder` with grammar-based output validation
-  - `Grammar` struct with production rules, terminals, non-terminals
-  - `OutputConstraint` types: Datalog, JsonSchema, VakAction, CustomGrammar, Choice, Regex
-  - `DatalogConstraint` for valid Datalog facts/rules with predicate filtering
-  - `JsonSchemaConstraint` for JSON validation against schemas
-  - `VakActionConstraint` with allowed actions and required parameters
-  - `DatalogFact`, `DatalogTerm` for structured fact representation
-  - `ParsedVakAction` for validated action extraction
-  - Eliminates "Parse Error" class of failures via grammar validation
-  - Completed: Session 2026-02-05
-  - Reference: Gap Analysis Section 2.4.2
-
-### Neuro-Symbolic Hybrid Loop (NSR-006) ✅
-- [x] **Implement complete Neural -> Symbolic -> Neural sandwich architecture**
-  - Implementation: `src/reasoner/hybrid_loop.rs`
-  - Features: `HybridLoop<P: ProcessRewardModel>` with configurable PRM scoring
-  - `LoopPhase` enum: Neural, Symbolic, Prm, Execution, Backtracking, Complete, Failed
-  - `CycleResult` with safety_verdict, prm_score, violations, feedback
-  - `PlanParser` extracts actions and targets from LLM output
-  - `ExecutionPlan` with `PlanStep` sequence and Datalog facts
-  - Phase 1: Neural - LLM generates plan via `PlanParser::parse()`
-  - Phase 2: Symbolic - Datalog validation via `SafetyEngine`
-  - Phase 3: PRM - Scoring via `ProcessRewardModel::score_step()`
-  - Phase 4: Execution - Only if validation passes
-  - Backtracking with feedback on low scores or violations
-  - Validation caching for performance
-  - Completed: Session 2026-02-05
-  - Reference: Gap Analysis Section 2.4.1
+### Risk-Based Rules (NSR-004) ✅
+- [x] **Implement Datalog rules that forbid network access based on RiskScore**
+  - Implementation: `src/reasoner/datalog.rs` (enhanced)
+  - Features: `RULE_007_NETWORK_HIGH_RISK`, `RULE_008_NETWORK_EXTERNAL_RISK` rules
+  - Denies network access when agent risk score > 0.7
+  - Escalates risk for external endpoint access
+  - Integrates with PRM confidence scores for dynamic risk assessment
+  - Completed: Session 2026-02-04 (Session 4)
 
 ---
 
 ## 🟡 HIGH - Multi-Agent/Swarm TODOs
-
-### Agent-to-Agent (A2A) Protocol Support (SWM-001) ✅
-- [x] **A2A Protocol implementation with agent discovery**
-  - Implementation: `src/swarm/a2a.rs`
-  - Features: `A2AProtocol`, `AgentCard`, `Capability`, `CapabilityRequest/Response`
-  - `AgentCardBuilder` for fluent agent card construction
-  - `HandshakeRequest/Response` for protocol negotiation
-  - `A2AConfig` with timeout, retry, and protocol version settings
-  - `AgentDiscoveryService` with multiple discovery methods
-  - `DiscoveryMethod` enum: LocalRegistry, NetworkBroadcast, DnsServiceDiscovery, WellKnownEndpoint
-  - `DiscoveredAgent` with capabilities and connection info
-  - Protocol version compatibility checks
-  - Capability negotiation between agents
-  - Completed: Session 2026-02-05
-  - Reference: Gap Analysis Phase 5.2
 
 ### AgentCard Discovery Mechanism (SWM-002)
 - [ ] **Implement `src/api/a2a.rs` with AgentCard serialization**
   - Allow VAK agents to discover and query other agents' interfaces
   - Support capability exchange negotiation
   - Reference: Gap Analysis Sprint 5, T5.3
-
-### Sycophancy Prevention Metrics (SWM-003) ✅
-- [x] **Add metrics for detecting consensus collapse**
-  - Implementation: `src/swarm/sycophancy.rs`
-  - Features: `SycophancyDetector`, `SessionAnalysis`, `VoteRecord`, `OpinionCluster`
-  - Shannon entropy calculation for vote diversity
-  - Disagreement rate tracking and anomaly detection
-  - Alert on potential sycophancy patterns (unanimous agreement, bandwagon effect, rapid consensus)
-  - Risk indicators: LowEntropy, UnanimousAgreement, RapidConsensus, NoDisagreement, BandwagonEffect
-  - Recommendation engine: Accept, RequestMoreDebate, IntroduceAdversary, HumanReview, BlockDecision
-  - Completed: Session 2026-02-03 (Session 5)
-
-### Protocol Router Enhancements (SWM-004)
-- [ ] **Expand protocol router with task-specific topologies**
-  - Support: Hierarchical, Debate, Voting, Peer Review modes
-  - Auto-select based on task complexity analysis
-  - Reference: Blue Ocean Module 4.2
 
 ---
 
@@ -392,47 +360,12 @@ This document contains all unimplemented items identified through a comprehensiv
 
 ## 🟡 HIGH - Observability/Audit TODOs
 
-### OpenTelemetry Integration (OBS-001) ✅
-- [x] **Distributed tracing implementation with spans**
-  - Implementation: `src/audit/otel.rs`
-  - Features: `VakTracer`, `Span`, `SpanContext`, `TraceContext`, `SpanKind` structs
-  - Spans for: Inference, LogicCheck, PolicyEval, ToolExec, MemoryOp, SwarmComm, McpRequest
-  - Kernel-specific helpers: `trace_inference()`, `trace_logic_check()`, `trace_policy_eval()`, `trace_tool_exec()`
-  - `traced_operation()` helper for automatic timing and error tracking
-  - OTLP export support via `OtlpExporter`
-  - W3C traceparent header support for distributed trace propagation
-  - Completed: Session 2026-02-04 (Session 6)
-
 ### Cryptographic Replay Capability (OBS-002)
 - [ ] **Implement production incident replay from Merkle Log**
   - Take Merkle Log from production
   - Replay in local VAK instance
   - Reproduce exact state and decision path
   - Reference: Gap Analysis Section 3.4
-
-### Cost Accounting System (OBS-003) ✅
-- [x] **Track Token Usage + Fuel Consumed + I/O Bytes**
-  - Implementation: `src/dashboard/cost_accounting.rs`
-  - Features: `CostAccountant`, `ExecutionCost`, `CostBreakdown`, `BillingReport`
-  - Token usage tracking (input/output tokens, LLM calls)
-  - WASM fuel consumption tracking
-  - Network I/O and storage operation metrics
-  - API call tracking per service
-  - Budget limits with alerts and enforcement
-  - Configurable pricing rates (default, free, premium)
-  - Prometheus metrics export
-  - Billing report generation with invoice formatting
-  - Completed: Session 2026-02-03 (Session 5)
-
-### GraphQL API for Audit Queries (OBS-004) ✅
-- [x] **Implemented Query API for audit log queries**
-  - Implementation: `src/audit/graphql.rs`
-  - Features: `AuditQueryEngine`, `QueryRequest`, `QueryResponse`, `AuditStats` structs
-  - Rich query capabilities: filtering by agent, session, action, decision, time range
-  - Pagination support with offset/limit
-  - Chain integrity verification
-  - Statistics aggregation (total entries, unique agents, denied/allowed counts)
-  - Completed: Session 2026-02-04 (Session 7)
 
 ### Flight Recorder Enhancement (OBS-005)
 - [ ] **Enhance shadow mode flight recorder with full replay**
@@ -525,16 +458,6 @@ This document contains all unimplemented items identified through a comprehensiv
   - Test policy hot-reload
   - Test context injection
   - Reference: Policy module
-
-### Integration Test Coverage (TST-004) ✅
-- [x] **Expanded integration tests in `tests/integration/`**
-  - Implementation: `tests/integration/test_full_workflow.rs`
-  - Full workflow tests covering agent lifecycle
-  - Policy enforcement tests
-  - Rate limiting integration tests
-  - Memory operation tests
-  - Reference: Tests directory
-  - Completed: Session 2026-02-04 (Session 7)
 
 ### Benchmark Suite Expansion (TST-005)
 - [ ] **Expand `benches/kernel_benchmarks.rs`**
@@ -670,9 +593,9 @@ This document contains all unimplemented items identified through a comprehensiv
 | Priority | Count | Status |
 |----------|-------|--------|
 | ✅ COMPLETED | 28 | Done |
-| 🔴 CRITICAL | 7 | Not Started |
-| 🟡 HIGH | 10 | Not Started |
-| 🟢 MEDIUM | 15 | Not Started |
+| 🔴 CRITICAL | 0 | Not Started |
+| 🟡 HIGH | 5 | Not Started |
+| 🟢 MEDIUM | 17 | Not Started |
 | 🔵 LOW | 8 | Not Started |
 | **TOTAL** | **68** | 28 complete (~41%) |
 

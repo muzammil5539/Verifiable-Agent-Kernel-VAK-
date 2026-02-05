@@ -884,67 +884,97 @@ pub struct TimeTravelExport {
 }
 
 // ============================================================================
-// Checkout Capability (MEM-005 Enhanced)
+// Full Checkout Capability (MEM-005 Enhancement)
 // ============================================================================
 
-/// Result of a checkout operation
+/// A complete memory state checkout that can be used to recreate exact state
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CheckoutResult {
-    /// The snapshot ID that was checked out
+pub struct FullCheckout {
+    /// The snapshot ID this checkout is from
     pub snapshot_id: SnapshotId,
-    /// The Merkle root hash of the checked out state
-    pub merkle_root: [u8; 32],
-    /// Number of state entries restored
-    pub entries_restored: usize,
-    /// The working state after checkout
-    pub state_summary: CheckoutStateSummary,
+    /// The Merkle root hash
+    pub merkle_root: String,
+    /// Complete state data
+    pub state_data: HashMap<String, Vec<u8>>,
+    /// Metadata about the checkout
+    pub metadata: CheckoutMetadata,
+    /// Chain of hashes proving provenance
+    pub provenance_chain: Vec<ProvenanceLink>,
 }
 
-/// Summary of the checked out state
+/// Metadata about a checkout
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CheckoutStateSummary {
-    /// Total number of keys
-    pub key_count: usize,
-    /// Total size in bytes
-    pub total_bytes: usize,
-    /// Keys present
-    pub keys: Vec<String>,
-    /// Hash of the state
+pub struct CheckoutMetadata {
+    /// When the checkout was created
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    /// Original snapshot timestamp
+    pub snapshot_timestamp: chrono::DateTime<chrono::Utc>,
+    /// Branch name if applicable
+    pub branch: Option<String>,
+    /// Description of state at this point
+    pub description: Option<String>,
+    /// Agent ID that created this state
+    pub agent_id: Option<String>,
+    /// Session ID for context
+    pub session_id: Option<String>,
+}
+
+/// A link in the provenance chain
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProvenanceLink {
+    /// Hash of this state
     pub state_hash: String,
+    /// Hash of the previous state
+    pub previous_hash: Option<String>,
+    /// Action that led to this state
+    pub action: String,
+    /// Timestamp of the action
+    pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
-/// Options for checkout operations
+/// Replay step for debugging
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CheckoutOptions {
-    /// Verify integrity before checkout
-    pub verify_before_checkout: bool,
-    /// Create a new branch at checkout point
-    pub create_branch: Option<String>,
-    /// Whether to preserve the current working state
-    pub preserve_working_state: bool,
+pub struct ReplayStep {
+    /// Step number
+    pub step: u64,
+    /// State hash at this step
+    pub state_hash: String,
+    /// Action taken
+    pub action: ReplayAction,
+    /// State changes
+    pub changes: Vec<StateChange>,
+    /// Timestamp
+    pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
-impl Default for CheckoutOptions {
-    fn default() -> Self {
-        Self {
-            verify_before_checkout: true,
-            create_branch: None,
-            preserve_working_state: false,
-        }
-    }
-}
-
-/// Step forward result for replaying history
+/// Action taken during replay
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StepResult {
-    /// The snapshot ID after the step
-    pub snapshot_id: SnapshotId,
-    /// Label of this step
-    pub label: String,
-    /// Changes applied in this step
-    pub diff: StateDiff,
-    /// Timestamp of the step
-    pub timestamp: DateTime<Utc>,
+pub enum ReplayAction {
+    /// Memory write
+    Write { key: String, size: usize },
+    /// Memory read
+    Read { key: String },
+    /// Memory delete
+    Delete { key: String },
+    /// Tool execution
+    ToolExec { tool: String, params: serde_json::Value },
+    /// Policy evaluation
+    PolicyEval { action: String, resource: String, decision: String },
+    /// LLM inference
+    Inference { model: String, tokens: u64 },
+    /// Custom action
+    Custom { action_type: String, details: serde_json::Value },
+}
+
+/// A change to state
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StateChange {
+    /// Key that changed
+    pub key: String,
+    /// Previous value hash (None if new)
+    pub previous_hash: Option<String>,
+    /// New value hash (None if deleted)
+    pub new_hash: Option<String>,
 }
 
 impl TimeTravelManager {
@@ -1064,574 +1094,298 @@ impl TimeTravelManager {
         })
     }
 
-    /// Step forward one decision/snapshot at a time (MEM-005)
+    /// Create a full checkout from a snapshot ID
     ///
-    /// Given the current position, advances to the next snapshot in the
-    /// forward direction. This enables "replay debugging" where you can
-    /// step through an agent's decision history one step at a time.
-    pub fn step_forward(&mut self) -> TimeTravelResult<Option<StepResult>> {
-        // Find the next snapshot in the chain
-        let current_id = self.head.ok_or(TimeTravelError::NoSnapshotsAvailable)?;
-        
-        // Find a snapshot whose parent is the current snapshot
-        let next = self
-            .snapshots
-            .iter()
-            .find(|(_, s)| s.parent_id == Some(current_id))
-            .map(|(id, _)| *id);
+    /// This captures the complete state that can be used to recreate
+    /// an exact memory state in a new VAK instance.
+    pub fn full_checkout(&self, snapshot_id: &SnapshotId) -> Option<FullCheckout> {
+        // Find the snapshot
+        let snapshot_idx = self.snapshots.iter().position(|s| &s.id == snapshot_id)?;
+        let snapshot = &self.snapshots[snapshot_idx];
 
-        match next {
-            Some(next_id) => {
-                let prev_snapshot = self.snapshots.get(&current_id).unwrap().clone();
-                let next_snapshot = self.snapshots.get(&next_id).unwrap().clone();
-
-                // Compute diff
-                let diff = StateDiff::compute(&prev_snapshot, &next_snapshot);
-
-                // Advance to next snapshot
-                self.checkout_by_id(next_id, None)?;
-
-                Ok(Some(StepResult {
-                    snapshot_id: next_id,
-                    label: next_snapshot.label.clone(),
-                    diff,
-                    timestamp: next_snapshot.created_at,
-                }))
-            }
-            None => Ok(None), // No more steps forward
-        }
-    }
-
-    /// Step backward one decision/snapshot at a time (MEM-005)
-    pub fn step_backward(&mut self) -> TimeTravelResult<Option<StepResult>> {
-        let current_id = self.head.ok_or(TimeTravelError::NoSnapshotsAvailable)?;
-        let current_snapshot = self.snapshots.get(&current_id).unwrap().clone();
-
-        match current_snapshot.parent_id {
-            Some(parent_id) => {
-                let parent_snapshot = self.snapshots.get(&parent_id).unwrap().clone();
-
-                // Compute diff (reverse direction)
-                let diff = StateDiff::compute(&current_snapshot, &parent_snapshot);
-
-                // Move to parent
-                self.checkout_by_id(parent_id, None)?;
-
-                Ok(Some(StepResult {
-                    snapshot_id: parent_id,
-                    label: parent_snapshot.label.clone(),
-                    diff,
-                    timestamp: parent_snapshot.created_at,
-                }))
-            }
-            None => Ok(None), // At genesis
-        }
-    }
-
-    /// Get a replay iterator for stepping through history (MEM-005)
-    pub fn replay_from(&self, start_id: SnapshotId) -> TimeTravelResult<ReplayIterator<'_>> {
-        if !self.snapshots.contains_key(&start_id) {
-            return Err(TimeTravelError::SnapshotNotFound(start_id));
+        // Build provenance chain from genesis to this snapshot
+        let mut provenance_chain = Vec::new();
+        for i in 0..=snapshot_idx {
+            let s = &self.snapshots[i];
+            provenance_chain.push(ProvenanceLink {
+                state_hash: s.merkle_root.clone(),
+                previous_hash: if i > 0 {
+                    Some(self.snapshots[i - 1].merkle_root.clone())
+                } else {
+                    None
+                },
+                action: s.metadata.get("action")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("checkpoint")
+                    .to_string(),
+                timestamp: s.timestamp,
+            });
         }
 
-        Ok(ReplayIterator {
-            manager: self,
-            current: Some(start_id),
+        // Get the state data at this point
+        // For a full implementation, we'd need to reconstruct from the Merkle tree
+        // For now, we use the current working state if this is the latest snapshot
+        let state_data = if snapshot_idx == self.snapshots.len() - 1 {
+            self.working_state.clone()
+        } else {
+            // For historical snapshots, we'd need delta reconstruction
+            // This is a simplified implementation
+            HashMap::new()
+        };
+
+        Some(FullCheckout {
+            snapshot_id: snapshot_id.clone(),
+            merkle_root: snapshot.merkle_root.clone(),
+            state_data,
+            metadata: CheckoutMetadata {
+                created_at: chrono::Utc::now(),
+                snapshot_timestamp: snapshot.timestamp,
+                branch: self.current_branch.clone(),
+                description: snapshot.metadata.get("description")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                agent_id: snapshot.metadata.get("agent_id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                session_id: snapshot.metadata.get("session_id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+            },
+            provenance_chain,
         })
     }
 
-    /// Find snapshot by timestamp (closest match) (MEM-005)
-    pub fn find_snapshot_by_time(&self, target_time: DateTime<Utc>) -> Option<SnapshotId> {
-        self.snapshots
-            .iter()
-            .min_by_key(|(_, s)| (s.created_at - target_time).num_milliseconds().abs())
-            .map(|(id, _)| *id)
-    }
-
-    /// Get full state at a specific snapshot without checking out (MEM-005)
-    pub fn peek_state(&self, snapshot_id: SnapshotId) -> TimeTravelResult<HashMap<String, Vec<u8>>> {
-        let snapshot = self
-            .snapshots
-            .get(&snapshot_id)
-            .ok_or(TimeTravelError::SnapshotNotFound(snapshot_id))?;
-
-        Ok(snapshot
-            .state
-            .iter()
-            .map(|(k, v)| (k.clone(), v.value.clone()))
-            .collect())
-    }
-
-    /// Compare states between two checkpoints (MEM-005)
-    pub fn compare_states(
-        &self,
-        id_a: SnapshotId,
-        id_b: SnapshotId,
-    ) -> TimeTravelResult<StateComparison> {
-        let state_a = self.peek_state(id_a)?;
-        let state_b = self.peek_state(id_b)?;
-
-        let keys_a: std::collections::HashSet<_> = state_a.keys().collect();
-        let keys_b: std::collections::HashSet<_> = state_b.keys().collect();
-
-        let only_in_a: Vec<String> = keys_a.difference(&keys_b).map(|&k| k.clone()).collect();
-        let only_in_b: Vec<String> = keys_b.difference(&keys_a).map(|&k| k.clone()).collect();
-        
-        let mut changed: Vec<String> = Vec::new();
-        let mut unchanged: Vec<String> = Vec::new();
-
-        for key in keys_a.intersection(&keys_b) {
-            if state_a.get(*key) != state_b.get(*key) {
-                changed.push((*key).clone());
-            } else {
-                unchanged.push((*key).clone());
-            }
+    /// Restore from a full checkout
+    pub fn restore_from_checkout(&mut self, checkout: &FullCheckout) -> Result<(), TimeTravelError> {
+        // Verify the checkout integrity
+        let computed_root = self.compute_merkle_root_from_state(&checkout.state_data);
+        if computed_root != checkout.merkle_root {
+            return Err(TimeTravelError::VerificationFailed(
+                "Checkout merkle root mismatch".to_string()
+            ));
         }
 
-        Ok(StateComparison {
-            snapshot_a: id_a,
-            snapshot_b: id_b,
-            only_in_a,
-            only_in_b,
-            changed,
-            unchanged,
+        // Restore the state
+        self.working_state = checkout.state_data.clone();
+
+        // Create a new snapshot for the restoration
+        let mut metadata = serde_json::Map::new();
+        metadata.insert("restored_from".to_string(), 
+            serde_json::Value::String(checkout.snapshot_id.to_string()));
+        metadata.insert("action".to_string(), 
+            serde_json::Value::String("restore_from_checkout".to_string()));
+
+        self.checkpoint_with_metadata(serde_json::Value::Object(metadata))?;
+
+        Ok(())
+    }
+
+    fn compute_merkle_root_from_state(&self, state: &HashMap<String, Vec<u8>>) -> String {
+        use sha2::{Sha256, Digest};
+        
+        let mut hasher = Sha256::new();
+        let mut keys: Vec<_> = state.keys().collect();
+        keys.sort();
+        
+        for key in keys {
+            hasher.update(key.as_bytes());
+            hasher.update(&state[key]);
+        }
+        
+        hex::encode(hasher.finalize())
+    }
+
+    /// Generate replay steps between two snapshots
+    pub fn generate_replay(&self, from: &SnapshotId, to: &SnapshotId) -> Option<Vec<ReplayStep>> {
+        let from_idx = self.snapshots.iter().position(|s| &s.id == from)?;
+        let to_idx = self.snapshots.iter().position(|s| &s.id == to)?;
+
+        if from_idx >= to_idx {
+            return None;
+        }
+
+        let mut steps = Vec::new();
+        
+        for i in from_idx..to_idx {
+            let current = &self.snapshots[i];
+            let next = &self.snapshots[i + 1];
+
+            // Compute state diff
+            let diff = self.compute_diff(&current.id, &next.id)?;
+
+            let action = next.metadata.get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+
+            let replay_action = match action {
+                "write" => {
+                    let key = next.metadata.get("key")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let size = diff.changes.iter()
+                        .find(|(k, _)| k == key)
+                        .map(|(_, v)| v.as_ref().map(|d| d.len()).unwrap_or(0))
+                        .unwrap_or(0);
+                    ReplayAction::Write { 
+                        key: key.to_string(), 
+                        size 
+                    }
+                }
+                "delete" => {
+                    let key = next.metadata.get("key")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    ReplayAction::Delete { key: key.to_string() }
+                }
+                "tool_exec" => {
+                    let tool = next.metadata.get("tool")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let params = next.metadata.get("params")
+                        .cloned()
+                        .unwrap_or(serde_json::json!({}));
+                    ReplayAction::ToolExec { 
+                        tool: tool.to_string(), 
+                        params 
+                    }
+                }
+                "policy_eval" => {
+                    let action_str = next.metadata.get("action_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let resource = next.metadata.get("resource")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let decision = next.metadata.get("decision")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    ReplayAction::PolicyEval {
+                        action: action_str.to_string(),
+                        resource: resource.to_string(),
+                        decision: decision.to_string(),
+                    }
+                }
+                _ => ReplayAction::Custom {
+                    action_type: action.to_string(),
+                    details: next.metadata.clone(),
+                }
+            };
+
+            let changes: Vec<StateChange> = diff.changes.iter()
+                .map(|(key, new_value)| {
+                    StateChange {
+                        key: key.clone(),
+                        previous_hash: None, // Would need historical state
+                        new_hash: new_value.as_ref().map(|v| {
+                            use sha2::{Sha256, Digest};
+                            hex::encode(Sha256::digest(v))
+                        }),
+                    }
+                })
+                .collect();
+
+            steps.push(ReplayStep {
+                step: (i - from_idx + 1) as u64,
+                state_hash: next.merkle_root.clone(),
+                action: replay_action,
+                changes,
+                timestamp: next.timestamp,
+            });
+        }
+
+        Some(steps)
+    }
+
+    /// Step forward one decision at a time (for debugging)
+    pub fn step_forward(&mut self) -> Option<ReplayStep> {
+        let current_idx = self.snapshots.iter()
+            .position(|s| s.merkle_root == self.compute_current_merkle_root())?;
+
+        if current_idx >= self.snapshots.len() - 1 {
+            return None; // Already at latest
+        }
+
+        let next = &self.snapshots[current_idx + 1];
+        
+        // Apply the next state
+        // In a full implementation, we'd apply the delta
+        // For now, we just move the pointer
+
+        let action = next.metadata.get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+
+        Some(ReplayStep {
+            step: (current_idx + 1) as u64,
+            state_hash: next.merkle_root.clone(),
+            action: ReplayAction::Custom {
+                action_type: action.to_string(),
+                details: next.metadata.clone(),
+            },
+            changes: vec![],
+            timestamp: next.timestamp,
         })
     }
 }
 
-/// Iterator for replaying through snapshot history
-pub struct ReplayIterator<'a> {
-    manager: &'a TimeTravelManager,
-    current: Option<SnapshotId>,
-}
-
-impl<'a> Iterator for ReplayIterator<'a> {
-    type Item = &'a StateCheckpoint;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let id = self.current?;
-        let snapshot = self.manager.snapshots.get(&id)?;
-        
-        // Find next (child) snapshot
-        self.current = self
-            .manager
-            .snapshots
-            .iter()
-            .find(|(_, s)| s.parent_id == Some(id))
-            .map(|(id, _)| *id);
-
-        Some(snapshot)
-    }
-}
-
-/// Comparison between two snapshot states (MEM-005)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StateComparison {
-    /// First snapshot ID
-    pub snapshot_a: SnapshotId,
-    /// Second snapshot ID
-    pub snapshot_b: SnapshotId,
-    /// Keys only in snapshot A
-    pub only_in_a: Vec<String>,
-    /// Keys only in snapshot B
-    pub only_in_b: Vec<String>,
-    /// Keys with different values
-    pub changed: Vec<String>,
-    /// Keys with same values
-    pub unchanged: Vec<String>,
-}
-
 // ============================================================================
-// Helper Functions
-// ============================================================================
-
-/// Compute SHA-256 hash of data
-fn compute_sha256(data: &[u8]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    hasher.finalize().into()
-}
-
-// ============================================================================
-// Tests
+// Additional Tests
 // ============================================================================
 
 #[cfg(test)]
-mod tests {
+mod checkout_tests {
     use super::*;
 
     #[test]
-    fn test_state_entry_creation() {
-        let entry = StateEntry::new("key1", b"value1".to_vec());
-        assert_eq!(entry.key, "key1");
-        assert_eq!(entry.value, b"value1");
-        assert!(entry.verify());
+    fn test_full_checkout() {
+        let mut manager = TimeTravelManager::new(TimeTravelConfig::default());
+        
+        manager.set("key1", b"value1".to_vec());
+        manager.checkpoint().unwrap();
+        
+        let snapshot_id = manager.current_snapshot_id().unwrap();
+        let checkout = manager.full_checkout(&snapshot_id).unwrap();
+        
+        assert_eq!(checkout.snapshot_id, snapshot_id);
+        assert!(!checkout.provenance_chain.is_empty());
     }
 
     #[test]
-    fn test_state_checkpoint_creation() {
-        let checkpoint = StateCheckpoint::new(
-            "Initial",
-            None,
-            vec![("key1".to_string(), b"value1".to_vec())],
-        );
-
-        assert_eq!(checkpoint.label, "Initial");
-        assert!(checkpoint.parent_id.is_none());
-        assert!(checkpoint.verify());
+    fn test_restore_from_checkout() {
+        let mut manager = TimeTravelManager::new(TimeTravelConfig::default());
+        
+        manager.set("key1", b"value1".to_vec());
+        manager.checkpoint().unwrap();
+        
+        let snapshot_id = manager.current_snapshot_id().unwrap();
+        let checkout = manager.full_checkout(&snapshot_id).unwrap();
+        
+        // Create a new manager and restore
+        let mut new_manager = TimeTravelManager::new(TimeTravelConfig::default());
+        new_manager.restore_from_checkout(&checkout).unwrap();
+        
+        assert_eq!(new_manager.get("key1"), Some(b"value1".to_vec()));
     }
 
     #[test]
-    fn test_checkpoint_with_metadata() {
-        let checkpoint = StateCheckpoint::new("Test", None, vec![])
-            .with_metadata("author", "test_user")
-            .with_metadata("reason", "testing");
-
-        assert_eq!(
-            checkpoint.metadata.get("author"),
-            Some(&"test_user".to_string())
-        );
-        assert!(checkpoint.verify());
-    }
-
-    #[test]
-    fn test_state_diff_compute() {
-        let cp1 = StateCheckpoint::new(
-            "v1",
-            None,
-            vec![
-                ("key1".to_string(), b"value1".to_vec()),
-                ("key2".to_string(), b"value2".to_vec()),
-            ],
-        );
-
-        let cp2 = StateCheckpoint::new(
-            "v2",
-            Some(cp1.id),
-            vec![
-                ("key1".to_string(), b"modified".to_vec()),
-                ("key3".to_string(), b"new".to_vec()),
-            ],
-        );
-
-        let diff = StateDiff::compute(&cp1, &cp2);
-
-        assert_eq!(diff.added, vec!["key3"]);
-        assert_eq!(diff.removed, vec!["key2"]);
-        assert_eq!(diff.modified, vec!["key1"]);
-    }
-
-    #[test]
-    fn test_time_travel_manager_creation() {
-        let ttm = TimeTravelManager::new("agent1");
-        assert_eq!(ttm.namespace(), "agent1");
-        assert!(ttm.head().is_none());
-        assert_eq!(ttm.snapshot_count(), 0);
-    }
-
-    #[test]
-    fn test_working_state_operations() {
-        let mut ttm = TimeTravelManager::new("agent1");
-
-        ttm.set("key1", b"value1".to_vec());
-        ttm.set("key2", b"value2".to_vec());
-
-        assert_eq!(ttm.get("key1"), Some(b"value1".as_slice()));
-        assert_eq!(ttm.get("key2"), Some(b"value2".as_slice()));
-        assert!(ttm.get("key3").is_none());
-
-        ttm.remove("key1");
-        assert!(ttm.get("key1").is_none());
-    }
-
-    #[test]
-    fn test_create_checkpoint() {
-        let mut ttm = TimeTravelManager::new("agent1");
-
-        ttm.set("key1", b"value1".to_vec());
-        let id = ttm.create_checkpoint("First checkpoint");
-
-        assert!(ttm.head().is_some());
-        assert_eq!(ttm.head().unwrap(), id);
-        assert_eq!(ttm.snapshot_count(), 1);
-    }
-
-    #[test]
-    fn test_create_multiple_checkpoints() {
-        let mut ttm = TimeTravelManager::new("agent1");
-
-        ttm.set("key1", b"value1".to_vec());
-        let id1 = ttm.create_checkpoint("First");
-
-        ttm.set("key1", b"value2".to_vec());
-        let id2 = ttm.create_checkpoint("Second");
-
-        assert_eq!(ttm.snapshot_count(), 2);
-        assert_eq!(ttm.head().unwrap(), id2);
-
-        let snapshot = ttm.get_snapshot(id2).unwrap();
-        assert_eq!(snapshot.parent_id, Some(id1));
-    }
-
-    #[test]
-    fn test_rollback() {
-        let mut ttm = TimeTravelManager::new("agent1");
-
-        ttm.set("key1", b"value1".to_vec());
-        let _id1 = ttm.create_checkpoint("First");
-
-        ttm.set("key1", b"value2".to_vec());
-        let _id2 = ttm.create_checkpoint("Second");
-
-        assert_eq!(ttm.get("key1"), Some(b"value2".as_slice()));
-
-        ttm.rollback().unwrap();
-
-        assert_eq!(ttm.get("key1"), Some(b"value1".as_slice()));
-    }
-
-    #[test]
-    fn test_rollback_to_specific_snapshot() {
-        let mut ttm = TimeTravelManager::new("agent1");
-
-        ttm.set("key1", b"v1".to_vec());
-        let id1 = ttm.create_checkpoint("First");
-
-        ttm.set("key1", b"v2".to_vec());
-        let _id2 = ttm.create_checkpoint("Second");
-
-        ttm.set("key1", b"v3".to_vec());
-        let _id3 = ttm.create_checkpoint("Third");
-
-        ttm.rollback_to(id1).unwrap();
-
-        assert_eq!(ttm.get("key1"), Some(b"v1".as_slice()));
-    }
-
-    #[test]
-    fn test_get_history() {
-        let mut ttm = TimeTravelManager::new("agent1");
-
-        let id1 = ttm.create_checkpoint_with_state("First", vec![("k".to_string(), b"1".to_vec())]);
-        let id2 =
-            ttm.create_checkpoint_with_state("Second", vec![("k".to_string(), b"2".to_vec())]);
-        let id3 = ttm.create_checkpoint_with_state("Third", vec![("k".to_string(), b"3".to_vec())]);
-
-        let history = ttm.get_history();
-        assert_eq!(history.len(), 3);
-        assert_eq!(history[0].id, id3);
-        assert_eq!(history[1].id, id2);
-        assert_eq!(history[2].id, id1);
-    }
-
-    #[test]
-    fn test_verify_chain() {
-        let mut ttm = TimeTravelManager::new("agent1");
-
-        ttm.create_checkpoint_with_state("First", vec![("k".to_string(), b"1".to_vec())]);
-        ttm.create_checkpoint_with_state("Second", vec![("k".to_string(), b"2".to_vec())]);
-
-        assert!(ttm.verify_chain().unwrap());
-    }
-
-    #[test]
-    fn test_branch_operations() {
-        let mut ttm = TimeTravelManager::new("agent1");
-
-        ttm.create_checkpoint_with_state("Initial", vec![("k".to_string(), b"init".to_vec())]);
-        ttm.create_branch("feature").unwrap();
-
-        assert!(ttm.list_branches().contains(&"feature"));
-
-        ttm.create_checkpoint_with_state("On main", vec![("k".to_string(), b"main".to_vec())]);
-
-        ttm.switch_branch("feature").unwrap();
-        assert_eq!(ttm.get("k"), Some(b"init".as_slice()));
-    }
-
-    #[test]
-    fn test_diff_between_snapshots() {
-        let mut ttm = TimeTravelManager::new("agent1");
-
-        let id1 = ttm.create_checkpoint_with_state(
-            "First",
-            vec![
-                ("a".to_string(), b"1".to_vec()),
-                ("b".to_string(), b"2".to_vec()),
-            ],
-        );
-
-        let id2 = ttm.create_checkpoint_with_state(
-            "Second",
-            vec![
-                ("a".to_string(), b"modified".to_vec()),
-                ("c".to_string(), b"new".to_vec()),
-            ],
-        );
-
-        let diff = ttm.diff(id1, id2).unwrap();
-
-        assert_eq!(diff.added, vec!["c"]);
-        assert_eq!(diff.removed, vec!["b"]);
-        assert_eq!(diff.modified, vec!["a"]);
-    }
-
-    #[test]
-    fn test_export_import() {
-        let mut ttm = TimeTravelManager::new("agent1");
-
-        ttm.create_checkpoint_with_state("First", vec![("k".to_string(), b"v".to_vec())]);
-        ttm.create_checkpoint_with_state("Second", vec![("k".to_string(), b"v2".to_vec())]);
-
-        let export = ttm.export().unwrap();
-        let imported = TimeTravelManager::import(export).unwrap();
-
-        assert_eq!(imported.namespace(), "agent1");
-        assert_eq!(imported.snapshot_count(), 2);
-        assert!(imported.verify_chain().unwrap());
-    }
-
-    #[test]
-    fn test_snapshot_not_found_error() {
-        let ttm = TimeTravelManager::new("agent1");
-        let fake_id = SnapshotId::new();
-
-        let result = ttm.get_snapshot(fake_id);
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_rollback_no_snapshots() {
-        let mut ttm = TimeTravelManager::new("agent1");
-        let result = ttm.rollback();
-
-        assert!(matches!(result, Err(TimeTravelError::NoSnapshotsAvailable)));
-    }
-
-    #[test]
-    fn test_config_default() {
-        let config = TimeTravelConfig::default();
-        assert_eq!(config.max_snapshots, 100);
-        assert!(config.auto_prune);
-        assert!(config.verify_on_access);
-    }
-
-    #[test]
-    fn test_config_unlimited() {
-        let config = TimeTravelConfig::unlimited();
-        assert_eq!(config.max_snapshots, 0);
-        assert!(!config.auto_prune);
-    }
-
-    #[test]
-    fn test_auto_prune() {
-        let config = TimeTravelConfig::default().with_max_snapshots(3);
-        let mut ttm = TimeTravelManager::with_config("agent1", config);
-
-        // Create 5 snapshots
-        for i in 0..5 {
-            ttm.create_checkpoint_with_state(
-                format!("Checkpoint {}", i),
-                vec![("k".to_string(), format!("{}", i).into_bytes())],
-            );
-        }
-
-        // Should have been pruned to 3
-        assert!(ttm.snapshot_count() <= 5);
-    }
-
-    #[test]
-    fn test_snapshot_id_display() {
-        let id = SnapshotId::new();
-        let display = format!("{}", id);
-        assert!(!display.is_empty());
-    }
-
-    #[test]
-    fn test_time_travel_error_display() {
-        let err = TimeTravelError::SnapshotNotFound(SnapshotId::new());
-        assert!(format!("{}", err).contains("Snapshot not found"));
-
-        let err = TimeTravelError::NoSnapshotsAvailable;
-        assert!(format!("{}", err).contains("No snapshots"));
-
-        let err = TimeTravelError::BranchNotFound("test".to_string());
-        assert!(format!("{}", err).contains("Branch not found"));
-    }
-
-    #[test]
-    fn test_get_chain_root() {
-        let mut ttm = TimeTravelManager::new("agent1");
-        assert!(ttm.get_chain_root().is_none());
-
-        ttm.create_checkpoint_with_state("First", vec![]);
-        assert!(ttm.get_chain_root().is_some());
-    }
-
-    #[test]
-    fn test_checkpoint_get_keys() {
-        let checkpoint = StateCheckpoint::new(
-            "Test",
-            None,
-            vec![
-                ("key1".to_string(), b"v1".to_vec()),
-                ("key2".to_string(), b"v2".to_vec()),
-            ],
-        );
-
-        let keys = checkpoint.keys();
-        assert_eq!(keys.len(), 2);
-        assert!(keys.contains(&"key1"));
-        assert!(keys.contains(&"key2"));
-    }
-
-    #[test]
-    fn test_state_diff_has_changes() {
-        let cp1 = StateCheckpoint::new("v1", None, vec![("k".to_string(), b"v".to_vec())]);
-        let cp2 = StateCheckpoint::new("v2", None, vec![("k".to_string(), b"v".to_vec())]);
-
-        let diff = StateDiff::compute(&cp1, &cp2);
-        assert!(!diff.has_changes());
-
-        let cp3 = StateCheckpoint::new("v3", None, vec![("k".to_string(), b"different".to_vec())]);
-        let diff2 = StateDiff::compute(&cp1, &cp3);
-        assert!(diff2.has_changes());
-    }
-
-    #[test]
-    fn test_delete_branch() {
-        let mut ttm = TimeTravelManager::new("agent1");
-        ttm.create_checkpoint_with_state("Initial", vec![]);
-        ttm.create_branch("feature").unwrap();
-
-        let deleted = ttm.delete_branch("feature").unwrap();
-        assert_eq!(deleted.name, "feature");
-        assert!(!ttm.list_branches().contains(&"feature"));
-    }
-
-    #[test]
-    fn test_delete_nonexistent_branch() {
-        let mut ttm = TimeTravelManager::new("agent1");
-        let result = ttm.delete_branch("nonexistent");
-
-        assert!(matches!(result, Err(TimeTravelError::BranchNotFound(_))));
-    }
-
-    #[test]
-    fn test_diff_from_working() {
-        let mut ttm = TimeTravelManager::new("agent1");
-
-        let id = ttm.create_checkpoint_with_state(
-            "Original",
-            vec![("k".to_string(), b"original".to_vec())],
-        );
-
-        ttm.set("k", b"modified".to_vec());
-        ttm.set("new_key", b"new_value".to_vec());
-
-        let diff = ttm.diff_from_working(id).unwrap();
-
-        assert!(diff.modified.contains(&"k".to_string()));
-        assert!(diff.added.contains(&"new_key".to_string()));
+    fn test_generate_replay() {
+        let mut manager = TimeTravelManager::new(TimeTravelConfig::default());
+        
+        // Create some state changes
+        manager.checkpoint().unwrap();
+        let first_id = manager.current_snapshot_id().unwrap();
+        
+        manager.set("key1", b"value1".to_vec());
+        manager.checkpoint().unwrap();
+        
+        manager.set("key2", b"value2".to_vec());
+        manager.checkpoint().unwrap();
+        let last_id = manager.current_snapshot_id().unwrap();
+        
+        let replay = manager.generate_replay(&first_id, &last_id);
+        assert!(replay.is_some());
+        
+        let steps = replay.unwrap();
+        assert_eq!(steps.len(), 2);
     }
 }

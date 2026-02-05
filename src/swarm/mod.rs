@@ -35,10 +35,8 @@ pub mod sycophancy;
 pub mod voting;
 
 pub use a2a::{
-    A2AConfig, A2AError, A2AProtocol, A2AResult, A2AStats, AgentCard, AgentCardBuilder,
-    Capability, CapabilityRequest, CapabilityResponse, HandshakeRequest, HandshakeResponse,
-    AgentDiscoveryService, DiscoveryConfig, DiscoveryMethod, DiscoveryResult, DiscoveredAgent,
-    DiscoveryQuery, DiscoveryHandle,
+    A2AProtocol, A2AError, A2AResult, A2AMessage, A2AMessageType,
+    AgentCard, A2ACapability, DiscoveryService,
 };
 
 pub use voting::{
