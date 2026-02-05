@@ -7,6 +7,26 @@
 //! - **Sandboxed execution**: Isolated environments for safe agent operation
 //! - **Formal verification**: Mathematical guarantees of safety properties
 //!
+//! ## Security Status
+//!
+//! ### SEC-003: Unsafe Code Audit
+//!
+//! This crate uses `#![deny(unsafe_code)]` to prevent unsafe Rust in the main
+//! codebase. However, the following locations contain reviewed unsafe code:
+//!
+//! - `skills/calculator/src/lib.rs`: WASM FFI for memory management
+//!   - `dealloc()`: Memory deallocation via `Vec::from_raw_parts`
+//!   - `execute()`: Input pointer access via `slice::from_raw_parts`
+//!   - **Status**: Reviewed, SAFETY comments documented
+//!
+//! All unsafe blocks have been annotated with `// SAFETY:` comments explaining
+//! the invariants. Run `cargo geiger` to audit dependencies for unsafe usage.
+//!
+//! ### SEC-004: Prompt Injection Protection
+//!
+//! See [`reasoner::prompt_injection`] for comprehensive prompt injection
+//! detection and mitigation. Integrate at input validation boundaries.
+//!
 //! ## Architecture
 //!
 //! The kernel is organized into several core modules:

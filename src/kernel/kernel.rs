@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn, error, instrument};
+use tracing::{debug, info, warn, error, instrument};
 use chrono::{DateTime, Utc};
 
 use crate::kernel::types::AgentId;
@@ -242,12 +242,42 @@ impl SimpleKernel {
                 }
             }
             _ => {
-                // Default handler for unknown tools
+                // Custom operation handler registry
+                //
+                // This default handler provides a placeholder for tools not built into
+                // the kernel. Future implementation should include:
+                //
+                // 1. Custom Tool Registry: Register external tool handlers at runtime
+                //    ```rust,ignore
+                //    if let Some(handler) = self.custom_handlers.get(&tool_call.tool_name) {
+                //        return handler.execute(&tool_call, &agent_id).await;
+                //    }
+                //    ```
+                //
+                // 2. WASM Skill Execution: Load and execute WASM-based skills
+                //    - Located in skills/ directory
+                //    - Sandboxed execution with policy enforcement
+                //
+                // 3. External Service Integration: Call external APIs/services
+                //    - MCP tool bridging
+                //    - LangChain/AutoGPT adapter integration
+                //
+                // Security considerations for custom handlers:
+                // - All custom tools must pass policy validation (done above)
+                // - Tool execution should be sandboxed (use WASM sandbox)
+                // - Results must be sanitized before returning
+                // - Execution time should be bounded (epoch deadline)
+                // - Audit logging required for all tool executions
+                //
+                debug!(tool = %tool_call.tool_name, "Using default handler for unregistered tool");
+                
                 ToolResult {
                     tool_name: tool_call.tool_name.clone(),
                     output: serde_json::json!({
                         "status": "executed",
-                        "message": format!("Tool '{}' executed with default handler", tool_call.tool_name)
+                        "handler": "default",
+                        "message": format!("Tool '{}' executed with default handler", tool_call.tool_name),
+                        "note": "Register custom handler for full functionality"
                     }),
                     success: true,
                 }

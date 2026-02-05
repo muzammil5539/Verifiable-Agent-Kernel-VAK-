@@ -11,6 +11,29 @@
 //! - Risk scoring for suspicious content
 //! - Automatic blocking of high-risk inputs
 //!
+//! # Security Implementation Status (SEC-004)
+//!
+//! This module implements the SEC-004 security requirement from the project roadmap:
+//!
+//! - ✅ Detects attempts to override system prompts
+//! - ✅ Pattern-based detection for 5+ injection categories
+//! - ✅ Heuristic analysis for novel attack patterns
+//! - ✅ Configurable risk thresholds and blocking behavior
+//! - ✅ Context-aware analysis with conversation history
+//! - ✅ Statistics tracking for monitoring and tuning
+//! - ⏳ Datalog sandbox rules (planned for future enhancement)
+//!
+//! # Attack Categories Detected
+//!
+//! | Category | Description | Risk Score |
+//! |----------|-------------|------------|
+//! | InstructionOverride | "Ignore previous instructions" patterns | 0.9 |
+//! | RoleImpersonation | Attempts to assume privileged roles | 0.8 |
+//! | PromptLeakage | Attempts to extract system prompts | 0.7 |
+//! | Jailbreak | DAN mode and unrestricted access attempts | 0.95 |
+//! | PayloadInjection | XSS, command injection, template injection | 0.85 |
+//! | TokenSmuggling | Zero-width chars and Unicode exploits | 0.7 |
+//!
 //! # Example
 //!
 //! ```rust
@@ -24,10 +47,18 @@
 //! }
 //! ```
 //!
+//! # Integration Points
+//!
+//! This module should be integrated at:
+//! 1. **Input validation layer** - Before any user input reaches the LLM
+//! 2. **Tool request processing** - Before executing any agent tool calls
+//! 3. **Multi-turn conversations** - With context history for better detection
+//!
 //! # References
 //!
 //! - Blue Ocean Section 1.4: Lack of Sandboxing
 //! - Gap Analysis Section 3.2: Security & Governance Gates
+//! - OWASP LLM Top 10: LLM01 - Prompt Injection
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};

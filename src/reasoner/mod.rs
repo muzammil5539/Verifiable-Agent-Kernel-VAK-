@@ -126,6 +126,22 @@ pub use verification_gateway::{
 };
 
 // Re-export prompt injection detection types (SEC-004)
+//
+// The prompt injection module provides comprehensive detection for LLM prompt
+// injection attacks. Integration points:
+//
+// 1. Input validation: Use `PromptInjectionDetector::analyze()` before processing
+// 2. Context-aware: Use `analyze_with_context()` for multi-turn conversations
+// 3. Configuration: Use `DetectorConfig::strict()` for high-security scenarios
+//
+// Example integration:
+// ```rust,ignore
+// let detector = PromptInjectionDetector::new(DetectorConfig::default());
+// let result = detector.analyze(&user_input);
+// if result.should_block() {
+//     return Err("Input blocked due to potential prompt injection");
+// }
+// ```
 pub use prompt_injection::{
     DetectionResult, DetectorConfig, DetectorStats, HeuristicFlag, InjectionError,
     InjectionResult, InjectionType, PatternMatch, PromptInjectionDetector, RecommendedAction,

@@ -575,14 +575,81 @@ impl AsyncHostContext {
             .unwrap_or_default())
     }
 
-    /// Execute custom operation
+    /// Execute custom operation handler.
+    ///
+    /// # Custom Operation Handler Integration
+    ///
+    /// This method provides a flexible extension point for custom async operations
+    /// that don't fit the predefined operation types (file I/O, HTTP, policy).
+    ///
+    /// ## Current Implementation Status
+    ///
+    /// **NOTE**: This is a placeholder implementation that echoes back the params.
+    /// In production, this should be extended to:
+    ///
+    /// 1. Register custom operation handlers via a trait-based system
+    /// 2. Dispatch to appropriate handlers based on operation name
+    /// 3. Apply policy checks specific to custom operation types
+    /// 4. Implement timeout and resource limits per handler
+    ///
+    /// ## Example Future Usage
+    ///
+    /// ```rust,ignore
+    /// // Register a custom handler
+    /// context.register_handler("database_query", |params| async {
+    ///     let query = params.get("query").and_then(|v| v.as_str())?;
+    ///     // Execute query with proper sandboxing
+    ///     Ok(result_bytes)
+    /// });
+    ///
+    /// // Execute the custom operation
+    /// let result = context.execute_async(AsyncOperation::Custom {
+    ///     name: "database_query".to_string(),
+    ///     params: json!({"query": "SELECT * FROM users LIMIT 10"}),
+    /// }).await?;
+    /// ```
+    ///
+    /// ## Security Considerations
+    ///
+    /// Custom handlers MUST:
+    /// - Validate all input parameters
+    /// - Respect resource quotas (memory, CPU, network)
+    /// - Log operations for audit purposes
+    /// - Implement proper error handling
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the custom operation (used for handler dispatch)
+    /// * `params` - JSON parameters for the operation
+    ///
+    /// # Returns
+    ///
+    /// Returns the serialized params as a placeholder. Future implementations
+    /// should return actual operation results.
+    ///
+    /// # TODO
+    ///
+    /// - [ ] Implement custom handler registry
+    /// - [ ] Add per-handler policy evaluation
+    /// - [ ] Add handler-specific timeout configuration
+    /// - [ ] Add handler metrics and tracing
     async fn execute_custom(
         &self,
         name: &str,
         params: &serde_json::Value,
     ) -> AsyncHostResult<Vec<u8>> {
         debug!(name = %name, "Executing custom operation");
-        // Return params as result for now
+        
+        // TODO: Implement custom handler registry and dispatch
+        // Current implementation echoes params for testing purposes
+        info!(
+            operation_name = %name,
+            agent_id = %self.agent_id,
+            "Custom operation executed (placeholder implementation)"
+        );
+        
+        // Return params as result for now - serves as acknowledgment
+        // that the operation was received and processed
         Ok(serde_json::to_vec(params).unwrap_or_default())
     }
 
