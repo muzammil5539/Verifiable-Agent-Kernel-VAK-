@@ -265,7 +265,7 @@ impl PermissionCache {
 }
 
 /// State passed to host functions via Store
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HostFuncState {
     /// The agent making requests
     pub agent_id: String,
@@ -389,6 +389,88 @@ where
     }
 }
 
+/// Read a string from WASM guest memory
+/// 
+/// # Arguments
+/// * `caller` - The WASM caller context
+/// * `ptr` - Pointer to the string in guest memory
+/// * `len` - Length of the string in bytes
+/// 
+/// # Returns
+/// The string read from guest memory, or an error if the read fails
+/// 
+/// # Errors
+/// - Returns error if the memory export is not found
+/// - Returns error if the pointer/length are out of bounds
+/// - Returns error if the bytes are not valid UTF-8
+pub fn read_string_from_wasm(
+    caller: &mut Caller<'_, HostFuncState>,
+    ptr: i32,
+    len: i32,
+) -> Result<String, HostFuncError> {
+    // Get the memory export
+    let memory = caller
+        .get_export("memory")
+        .and_then(|e| e.into_memory())
+        .ok_or_else(|| HostFuncError::Internal("Failed to get WASM memory export".to_string()))?;
+    
+    // Validate bounds
+    let ptr = ptr as usize;
+    let len = len as usize;
+    let data = memory.data(caller);
+    
+    if ptr + len > data.len() {
+        return Err(HostFuncError::InvalidArgument(format!(
+            "Memory access out of bounds: ptr={}, len={}, memory_size={}",
+            ptr, len, data.len()
+        )));
+    }
+    
+    // Read the bytes
+    let bytes = &data[ptr..ptr + len];
+    
+    // Convert to string
+    std::str::from_utf8(bytes)
+        .map(|s| s.to_string())
+        .map_err(|e| HostFuncError::InvalidArgument(format!("Invalid UTF-8 string: {}", e)))
+}
+
+/// Read bytes from WASM guest memory
+/// 
+/// # Arguments
+/// * `caller` - The WASM caller context  
+/// * `ptr` - Pointer to the data in guest memory
+/// * `len` - Length of the data in bytes
+/// 
+/// # Returns
+/// A vector of bytes read from guest memory
+pub fn read_bytes_from_wasm(
+    caller: &mut Caller<'_, HostFuncState>,
+    ptr: i32,
+    len: i32,
+) -> Result<Vec<u8>, HostFuncError> {
+    // Get the memory export - use get_export method
+    let memory = caller
+        .get_export("memory")
+        .and_then(|e| e.into_memory())
+        .ok_or_else(|| HostFuncError::Internal("Failed to get WASM memory export".to_string()))?;
+    
+    // Validate bounds
+    let ptr = ptr as usize;
+    let len = len as usize;
+    let data = memory.data(caller);
+    
+    if ptr + len > data.len() {
+        return Err(HostFuncError::InvalidArgument(format!(
+            "Memory access out of bounds: ptr={}, len={}, memory_size={}",
+            ptr, len, data.len()
+        )));
+    }
+    
+    // Copy and return the bytes
+    Ok(data[ptr..ptr + len].to_vec())
+}
+
 /// Async variant of panic boundary for async operations
 pub async fn with_panic_boundary_async<F, Fut, T>(f: F) -> HostFuncResult<T>
 where
@@ -502,26 +584,36 @@ impl HostFuncLinker {
         let catch_panics = config.catch_panics;
 
         // vak_fs_read: Read a file (with policy check)
+        // Arguments: path_ptr (i32), path_len (i32)
+        // Returns: i64 - 0 on success, negative on error
         linker
             .func_wrap(
                 "vak",
                 "fs_read",
-                move |caller: Caller<'_, HostFuncState>,
-                      _path_ptr: i32,
-                      _path_len: i32|
+                move |mut caller: Caller<'_, HostFuncState>,
+                      path_ptr: i32,
+                      path_len: i32|
                       -> AnyhowResult<i64> {
-                    let state = caller.data();
-                    let resource = "/placeholder"; // In practice, read from WASM memory
+                    let state = caller.data().clone();
+                    
+                    // Read the path from WASM memory
+                    let resource = match read_string_from_wasm(&mut caller, path_ptr, path_len) {
+                        Ok(path) => path,
+                        Err(e) => {
+                            warn!(error = %e, "Failed to read path from WASM memory");
+                            return Ok(-1i64); // Memory error
+                        }
+                    };
 
                     let operation = || {
-                        if enforce_policy && !permissions_read.is_allowed("fs_read", resource) {
+                        if enforce_policy && !permissions_read.is_allowed("fs_read", &resource) {
                             return Err(HostFuncError::PermissionDenied {
                                 action: "fs_read".to_string(),
-                                resource: resource.to_string(),
+                                resource: resource.clone(),
                             });
                         }
 
-                        debug!(agent_id = %state.agent_id, "fs_read executed");
+                        debug!(agent_id = %state.agent_id, resource = %resource, "fs_read executed");
                         Ok(0i64)
                     };
 
@@ -537,28 +629,38 @@ impl HostFuncLinker {
         let permissions_write = permissions.clone();
 
         // vak_fs_write: Write to a file (with policy check)
+        // Arguments: path_ptr (i32), path_len (i32), data_ptr (i32), data_len (i32)
+        // Returns: i64 - 0 on success, negative on error
         linker
             .func_wrap(
                 "vak",
                 "fs_write",
-                move |caller: Caller<'_, HostFuncState>,
-                      _path_ptr: i32,
-                      _path_len: i32,
+                move |mut caller: Caller<'_, HostFuncState>,
+                      path_ptr: i32,
+                      path_len: i32,
                       _data_ptr: i32,
                       _data_len: i32|
                       -> AnyhowResult<i64> {
-                    let state = caller.data();
-                    let resource = "/placeholder";
+                    let state = caller.data().clone();
+                    
+                    // Read the path from WASM memory
+                    let resource = match read_string_from_wasm(&mut caller, path_ptr, path_len) {
+                        Ok(path) => path,
+                        Err(e) => {
+                            warn!(error = %e, "Failed to read path from WASM memory");
+                            return Ok(-1i64); // Memory error
+                        }
+                    };
 
                     let operation = || {
-                        if enforce_policy && !permissions_write.is_allowed("fs_write", resource) {
+                        if enforce_policy && !permissions_write.is_allowed("fs_write", &resource) {
                             return Err(HostFuncError::PermissionDenied {
                                 action: "fs_write".to_string(),
-                                resource: resource.to_string(),
+                                resource: resource.clone(),
                             });
                         }
 
-                        debug!(agent_id = %state.agent_id, "fs_write executed");
+                        debug!(agent_id = %state.agent_id, resource = %resource, "fs_write executed");
                         Ok(0i64)
                     };
 

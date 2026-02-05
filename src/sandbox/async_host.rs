@@ -435,27 +435,121 @@ impl AsyncHostContext {
         .map_err(|e| AsyncHostError::Internal(e.to_string()))?
     }
 
-    /// Execute HTTP GET (placeholder - would use reqwest in production)
+    /// Execute HTTP GET request using reqwest
+    /// 
+    /// # Arguments
+    /// * `url` - The URL to request
+    /// * `headers` - Custom headers to include in the request
+    /// 
+    /// # Returns
+    /// Response body as bytes on success
+    /// 
+    /// # Errors
+    /// Returns `AsyncHostError::IoError` on network or HTTP errors
     async fn execute_http_get(
         &self,
         url: &str,
-        _headers: &HashMap<String, String>,
+        headers: &HashMap<String, String>,
     ) -> AsyncHostResult<Vec<u8>> {
         debug!(url = %url, "Executing HTTP GET");
-        // Placeholder - in production would use reqwest
-        Ok(format!("HTTP GET response from {}", url).into_bytes())
+        
+        let client = reqwest::Client::builder()
+            .timeout(self.config.default_timeout)
+            .build()
+            .map_err(|e| AsyncHostError::Internal(format!("Failed to create HTTP client: {}", e)))?;
+        
+        let mut request_builder = client.get(url);
+        
+        // Add custom headers
+        for (key, value) in headers {
+            request_builder = request_builder.header(key, value);
+        }
+        
+        // Add user-agent header to identify VAK requests
+        request_builder = request_builder.header("User-Agent", "VAK-Agent/1.0");
+        
+        let response = request_builder
+            .send()
+            .await
+            .map_err(|e| AsyncHostError::IoError(format!("HTTP GET failed: {}", e)))?;
+        
+        // Check for HTTP errors
+        let status = response.status();
+        if !status.is_success() {
+            return Err(AsyncHostError::IoError(format!(
+                "HTTP GET returned status {}: {}",
+                status.as_u16(),
+                status.canonical_reason().unwrap_or("Unknown")
+            )));
+        }
+        
+        response
+            .bytes()
+            .await
+            .map(|b| b.to_vec())
+            .map_err(|e| AsyncHostError::IoError(format!("Failed to read response body: {}", e)))
     }
 
-    /// Execute HTTP POST (placeholder - would use reqwest in production)
+    /// Execute HTTP POST request using reqwest
+    /// 
+    /// # Arguments
+    /// * `url` - The URL to send the request to
+    /// * `body` - The request body as bytes
+    /// * `headers` - Custom headers to include in the request
+    /// 
+    /// # Returns
+    /// Response body as bytes on success
+    /// 
+    /// # Errors
+    /// Returns `AsyncHostError::IoError` on network or HTTP errors
     async fn execute_http_post(
         &self,
         url: &str,
-        _body: &[u8],
-        _headers: &HashMap<String, String>,
+        body: &[u8],
+        headers: &HashMap<String, String>,
     ) -> AsyncHostResult<Vec<u8>> {
-        debug!(url = %url, "Executing HTTP POST");
-        // Placeholder - in production would use reqwest
-        Ok(format!("HTTP POST response from {}", url).into_bytes())
+        debug!(url = %url, body_len = body.len(), "Executing HTTP POST");
+        
+        let client = reqwest::Client::builder()
+            .timeout(self.config.default_timeout)
+            .build()
+            .map_err(|e| AsyncHostError::Internal(format!("Failed to create HTTP client: {}", e)))?;
+        
+        let mut request_builder = client.post(url).body(body.to_vec());
+        
+        // Add custom headers
+        for (key, value) in headers {
+            request_builder = request_builder.header(key, value);
+        }
+        
+        // Add default content-type if not specified
+        if !headers.contains_key("Content-Type") && !headers.contains_key("content-type") {
+            request_builder = request_builder.header("Content-Type", "application/octet-stream");
+        }
+        
+        // Add user-agent header to identify VAK requests
+        request_builder = request_builder.header("User-Agent", "VAK-Agent/1.0");
+        
+        let response = request_builder
+            .send()
+            .await
+            .map_err(|e| AsyncHostError::IoError(format!("HTTP POST failed: {}", e)))?;
+        
+        // Check for HTTP errors
+        let status = response.status();
+        if !status.is_success() {
+            return Err(AsyncHostError::IoError(format!(
+                "HTTP POST returned status {}: {}",
+                status.as_u16(),
+                status.canonical_reason().unwrap_or("Unknown")
+            )));
+        }
+        
+        response
+            .bytes()
+            .await
+            .map(|b| b.to_vec())
+            .map_err(|e| AsyncHostError::IoError(format!("Failed to read response body: {}", e)))
     }
 
     /// Execute policy check

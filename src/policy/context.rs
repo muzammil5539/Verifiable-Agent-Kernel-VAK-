@@ -490,14 +490,109 @@ pub trait ContextProvider: Send + Sync {
     async fn collect(&self, agent_id: &str) -> ContextResult<HashMap<String, serde_json::Value>>;
 }
 
-/// Geolocation context provider (placeholder)
+/// Geolocation context provider for location-based policy decisions
+/// 
+/// This provider can determine geographic context for policy enforcement,
+/// such as restricting operations based on region or jurisdiction.
+/// 
+/// In production deployments, this would integrate with:
+/// - IP geolocation databases (MaxMind GeoIP2, IP2Location)
+/// - Cloud provider metadata services
+/// - Network topology information
 pub struct GeolocationProvider {
+    /// Whether geolocation is enabled
     enabled: bool,
+    /// Default country code when geolocation is unavailable
+    default_country: String,
+    /// Default region code when geolocation is unavailable  
+    default_region: String,
+    /// Configured location overrides by agent ID
+    agent_locations: std::sync::RwLock<HashMap<String, GeoLocation>>,
+}
+
+/// Geographic location data
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct GeoLocation {
+    /// ISO 3166-1 alpha-2 country code (e.g., "US", "DE", "JP")
+    pub country_code: String,
+    /// Region/state code (e.g., "CA" for California)
+    pub region_code: String,
+    /// City name (optional)
+    pub city: Option<String>,
+    /// Timezone (e.g., "America/Los_Angeles")
+    pub timezone: Option<String>,
+    /// Whether this is a cloud/datacenter IP
+    pub is_datacenter: bool,
+    /// Confidence score (0.0 - 1.0)
+    pub confidence: f64,
+}
+
+impl Default for GeoLocation {
+    fn default() -> Self {
+        Self {
+            country_code: "XX".to_string(), // Unknown country
+            region_code: "XX".to_string(),
+            city: None,
+            timezone: None,
+            is_datacenter: false,
+            confidence: 0.0,
+        }
+    }
 }
 
 impl GeolocationProvider {
+    /// Create a new geolocation provider
     pub fn new(enabled: bool) -> Self {
-        Self { enabled }
+        Self { 
+            enabled,
+            default_country: "XX".to_string(),
+            default_region: "XX".to_string(),
+            agent_locations: std::sync::RwLock::new(HashMap::new()),
+        }
+    }
+    
+    /// Create with default location fallback
+    pub fn with_defaults(default_country: impl Into<String>, default_region: impl Into<String>) -> Self {
+        Self {
+            enabled: true,
+            default_country: default_country.into(),
+            default_region: default_region.into(),
+            agent_locations: std::sync::RwLock::new(HashMap::new()),
+        }
+    }
+    
+    /// Set a specific location for an agent (useful for testing or known deployments)
+    pub fn set_agent_location(&self, agent_id: &str, location: GeoLocation) {
+        if let Ok(mut locations) = self.agent_locations.write() {
+            locations.insert(agent_id.to_string(), location);
+        }
+    }
+    
+    /// Clear agent location override
+    pub fn clear_agent_location(&self, agent_id: &str) {
+        if let Ok(mut locations) = self.agent_locations.write() {
+            locations.remove(agent_id);
+        }
+    }
+    
+    /// Get location for an agent
+    fn get_location(&self, agent_id: &str) -> GeoLocation {
+        // Check for agent-specific override
+        if let Ok(locations) = self.agent_locations.read() {
+            if let Some(loc) = locations.get(agent_id) {
+                return loc.clone();
+            }
+        }
+        
+        // Return default location
+        GeoLocation {
+            country_code: self.default_country.clone(),
+            region_code: self.default_region.clone(),
+            city: None,
+            timezone: None,
+            is_datacenter: false,
+            confidence: 0.5, // Medium confidence for default
+        }
     }
 }
 
@@ -507,15 +602,27 @@ impl ContextProvider for GeolocationProvider {
         "geolocation"
     }
 
-    async fn collect(&self, _agent_id: &str) -> ContextResult<HashMap<String, serde_json::Value>> {
+    async fn collect(&self, agent_id: &str) -> ContextResult<HashMap<String, serde_json::Value>> {
         if !self.enabled {
             return Ok(HashMap::new());
         }
 
-        // Placeholder - in production, would do IP lookup
+        let location = self.get_location(agent_id);
+        
         let mut attrs = HashMap::new();
-        attrs.insert("country".to_string(), serde_json::json!("unknown"));
-        attrs.insert("region".to_string(), serde_json::json!("unknown"));
+        attrs.insert("country".to_string(), serde_json::json!(location.country_code));
+        attrs.insert("region".to_string(), serde_json::json!(location.region_code));
+        attrs.insert("is_datacenter".to_string(), serde_json::json!(location.is_datacenter));
+        attrs.insert("geo_confidence".to_string(), serde_json::json!(location.confidence));
+        
+        if let Some(city) = &location.city {
+            attrs.insert("city".to_string(), serde_json::json!(city));
+        }
+        
+        if let Some(tz) = &location.timezone {
+            attrs.insert("timezone".to_string(), serde_json::json!(tz));
+        }
+        
         Ok(attrs)
     }
 }
@@ -612,5 +719,74 @@ mod tests {
 
         assert!(metrics.is_high_load(0.7));
         assert!(!metrics.is_high_load(0.95));
+    }
+
+    #[tokio::test]
+    async fn test_geolocation_provider_disabled() {
+        let provider = GeolocationProvider::new(false);
+        let attrs = provider.collect("agent-1").await.unwrap();
+        
+        // When disabled, should return empty map
+        assert!(attrs.is_empty());
+    }
+    
+    #[tokio::test]
+    async fn test_geolocation_provider_enabled() {
+        let provider = GeolocationProvider::new(true);
+        let attrs = provider.collect("agent-1").await.unwrap();
+        
+        // Should have basic attributes
+        assert!(attrs.contains_key("country"));
+        assert!(attrs.contains_key("region"));
+        assert!(attrs.contains_key("is_datacenter"));
+        assert!(attrs.contains_key("geo_confidence"));
+    }
+    
+    #[tokio::test]
+    async fn test_geolocation_provider_with_defaults() {
+        let provider = GeolocationProvider::with_defaults("US", "CA");
+        let attrs = provider.collect("agent-1").await.unwrap();
+        
+        assert_eq!(attrs.get("country"), Some(&serde_json::json!("US")));
+        assert_eq!(attrs.get("region"), Some(&serde_json::json!("CA")));
+    }
+    
+    #[tokio::test]
+    async fn test_geolocation_provider_agent_override() {
+        let provider = GeolocationProvider::with_defaults("US", "CA");
+        
+        // Set specific location for agent
+        provider.set_agent_location("agent-special", GeoLocation {
+            country_code: "DE".to_string(),
+            region_code: "BE".to_string(),
+            city: Some("Berlin".to_string()),
+            timezone: Some("Europe/Berlin".to_string()),
+            is_datacenter: false,
+            confidence: 0.95,
+        });
+        
+        // Regular agent gets default
+        let attrs1 = provider.collect("agent-1").await.unwrap();
+        assert_eq!(attrs1.get("country"), Some(&serde_json::json!("US")));
+        
+        // Special agent gets override
+        let attrs2 = provider.collect("agent-special").await.unwrap();
+        assert_eq!(attrs2.get("country"), Some(&serde_json::json!("DE")));
+        assert_eq!(attrs2.get("city"), Some(&serde_json::json!("Berlin")));
+        assert_eq!(attrs2.get("timezone"), Some(&serde_json::json!("Europe/Berlin")));
+        
+        // Clear override
+        provider.clear_agent_location("agent-special");
+        let attrs3 = provider.collect("agent-special").await.unwrap();
+        assert_eq!(attrs3.get("country"), Some(&serde_json::json!("US")));
+    }
+    
+    #[test]
+    fn test_geo_location_default() {
+        let loc = GeoLocation::default();
+        assert_eq!(loc.country_code, "XX");
+        assert_eq!(loc.region_code, "XX");
+        assert!(loc.city.is_none());
+        assert_eq!(loc.confidence, 0.0);
     }
 }
