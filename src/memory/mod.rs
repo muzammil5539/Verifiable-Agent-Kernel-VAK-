@@ -87,9 +87,11 @@ pub use storage::{
     StorageError, StorageManager, StorageResult, StorageStats,
 };
 
+// Time Travel with full checkout capability (MEM-005)
 pub use time_travel::{
-    Branch, SnapshotId, StateCheckpoint, StateDiff, StateEntry, TimeTravelConfig, TimeTravelError,
-    TimeTravelExport, TimeTravelManager, TimeTravelResult,
+    Branch, CheckoutOptions, CheckoutResult, CheckoutStateSummary, ReplayIterator, SnapshotId,
+    StateCheckpoint, StateComparison, StateDiff, StateEntry, StepResult, TimeTravelConfig,
+    TimeTravelError, TimeTravelExport, TimeTravelManager, TimeTravelResult,
 };
 
 pub use vector_store::{

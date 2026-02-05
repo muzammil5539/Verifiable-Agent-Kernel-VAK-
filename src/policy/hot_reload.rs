@@ -34,7 +34,13 @@
 //!
 //! - Gap Analysis Phase 2.3: Policy Hot-Reloading
 //! - POL-006: Store policies in Merkle Log for versioning
+//!
+//! # ArcSwap Integration (POL-006 Enhanced)
+//!
+//! This module now uses `arc_swap::ArcSwap` for truly lock-free policy reads,
+//! enabling high-throughput policy evaluation without contention.
 
+use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -44,7 +50,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use super::enforcer::PolicySet;
 
@@ -148,35 +154,102 @@ impl PolicyVersion {
     }
 }
 
-/// Atomic policy holder using Arc for lock-free swapping
+/// Lock-free atomic policy holder using ArcSwap (POL-006 Enhanced)
 ///
-/// This uses a simple Arc<RwLock> pattern. In a truly high-performance
-/// scenario, you'd use the `arc_swap` crate for lock-free reads.
-struct AtomicPolicyHolder {
-    current: RwLock<Arc<PolicyVersion>>,
+/// This uses `arc_swap::ArcSwap` for truly lock-free reads, enabling
+/// high-throughput policy evaluation without any contention. Writers
+/// atomically swap the pointer, and readers never block.
+///
+/// # Performance Characteristics
+///
+/// - **Read**: O(1), no locks, no contention, no syscalls
+/// - **Write**: O(1), atomic swap, no locks
+/// - **Memory**: Each version is reference-counted, old versions freed when unused
+///
+/// This is critical for policy evaluation in the hot path of every
+/// agent action, where we need microsecond-level latency.
+pub struct AtomicPolicyHolder {
+    /// Lock-free policy storage
+    current: ArcSwap<PolicyVersion>,
+    /// Statistics for monitoring
+    stats: AtomicPolicyStats,
+}
+
+/// Statistics for atomic policy operations
+#[derive(Debug, Default)]
+pub struct AtomicPolicyStats {
+    /// Total number of reads
+    reads: AtomicU64,
+    /// Total number of writes/updates
+    writes: AtomicU64,
+    /// Total number of CAS (compare-and-swap) operations
+    cas_operations: AtomicU64,
 }
 
 impl AtomicPolicyHolder {
-    fn new(initial: PolicyVersion) -> Self {
+    /// Create a new lock-free policy holder
+    pub fn new(initial: PolicyVersion) -> Self {
         Self {
-            current: RwLock::new(Arc::new(initial)),
+            current: ArcSwap::from_pointee(initial),
+            stats: AtomicPolicyStats::default(),
         }
     }
 
-    async fn load(&self) -> Arc<PolicyVersion> {
-        self.current.read().await.clone()
+    /// Load the current policy (lock-free read)
+    pub fn load(&self) -> Arc<PolicyVersion> {
+        self.stats.reads.fetch_add(1, Ordering::Relaxed);
+        self.current.load_full()
     }
 
-    async fn store(&self, new: PolicyVersion) {
-        let mut current = self.current.write().await;
-        *current = Arc::new(new);
+    /// Store a new policy version (atomic swap)
+    pub fn store(&self, new: PolicyVersion) {
+        self.stats.writes.fetch_add(1, Ordering::Relaxed);
+        self.current.store(Arc::new(new));
+    }
+
+    /// Compare-and-swap: update only if current matches expected
+    ///
+    /// Returns Ok(new_arc) if swap succeeded, Err(current_arc) if it failed
+    pub fn compare_and_swap(
+        &self,
+        expected_hash: &str,
+        new: PolicyVersion,
+    ) -> Result<Arc<PolicyVersion>, Arc<PolicyVersion>> {
+        self.stats.cas_operations.fetch_add(1, Ordering::Relaxed);
+        
+        let current = self.current.load_full();
+        if current.content_hash == expected_hash {
+            let new_arc = Arc::new(new);
+            self.current.store(Arc::clone(&new_arc));
+            Ok(new_arc)
+        } else {
+            Err(current)
+        }
+    }
+
+    /// Get a lease on the current policy (for prolonged reads)
+    ///
+    /// This is useful when you need to hold a reference to the policy
+    /// across multiple operations without the policy being changed.
+    pub fn lease(&self) -> arc_swap::Guard<Arc<PolicyVersion>> {
+        self.stats.reads.fetch_add(1, Ordering::Relaxed);
+        self.current.load()
+    }
+
+    /// Get statistics
+    pub fn stats(&self) -> (u64, u64, u64) {
+        (
+            self.stats.reads.load(Ordering::Relaxed),
+            self.stats.writes.load(Ordering::Relaxed),
+            self.stats.cas_operations.load(Ordering::Relaxed),
+        )
     }
 }
 
-/// Manager for hot-reloading policies
+/// Manager for hot-reloading policies with lock-free reads (POL-006 Enhanced)
 pub struct HotReloadManager {
     config: HotReloadConfig,
-    /// Current active policy (atomic swap)
+    /// Current active policy (lock-free atomic swap)
     current: AtomicPolicyHolder,
     /// Version history for rollback
     history: RwLock<Vec<PolicyVersion>>,
@@ -184,6 +257,8 @@ pub struct HotReloadManager {
     version_counter: AtomicU64,
     /// File modification timestamps
     file_mtimes: Arc<RwLock<HashMap<PathBuf, SystemTime>>>,
+    /// Merkle log of all policy changes (POL-006 Enhanced)
+    merkle_log: RwLock<Vec<MerkleLogEntry>>,
 }
 
 impl std::fmt::Debug for HotReloadManager {
@@ -207,6 +282,7 @@ impl HotReloadManager {
             history: RwLock::new(Vec::new()),
             version_counter: AtomicU64::new(0),
             file_mtimes: Arc::new(RwLock::new(HashMap::new())),
+            merkle_log: RwLock::new(Vec::new()),
         })
     }
 
@@ -241,8 +317,11 @@ impl HotReloadManager {
         // Save current to history before swapping
         self.save_to_history().await;
 
-        // Atomic swap
-        self.current.store(policy_version.clone()).await;
+        // Atomic swap (lock-free)
+        self.current.store(policy_version.clone());
+        
+        // Append to Merkle log (POL-006)
+        self.append_to_merkle_log(&policy_version).await;
 
         // Update file mtime tracking
         if let Ok(metadata) = tokio::fs::metadata(path).await {
@@ -284,8 +363,11 @@ impl HotReloadManager {
         // Save current to history before swapping
         self.save_to_history().await;
 
-        // Atomic swap
-        self.current.store(policy_version.clone()).await;
+        // Atomic swap (lock-free)
+        self.current.store(policy_version.clone());
+        
+        // Append to Merkle log (POL-006)
+        self.append_to_merkle_log(&policy_version).await;
 
         info!(
             version = version,
@@ -296,14 +378,14 @@ impl HotReloadManager {
         Ok(policy_version)
     }
 
-    /// Get current active policies
-    pub async fn get_current(&self) -> Arc<PolicyVersion> {
-        self.current.load().await
+    /// Get current active policies (lock-free read)
+    pub fn get_current(&self) -> Arc<PolicyVersion> {
+        self.current.load()
     }
 
-    /// Get current policy set
-    pub async fn get_policies(&self) -> PolicySet {
-        self.current.load().await.policies.clone()
+    /// Get current policy set (lock-free read)
+    pub fn get_policies(&self) -> PolicySet {
+        self.current.load().policies.clone()
     }
 
     /// Rollback to previous version
@@ -317,7 +399,7 @@ impl HotReloadManager {
         }
 
         let previous = history.pop().unwrap();
-        self.current.store(previous.clone()).await;
+        self.current.store(previous.clone());
 
         info!(
             version = previous.version,
@@ -409,7 +491,7 @@ impl HotReloadManager {
 
     /// Save current policy to history
     async fn save_to_history(&self) {
-        let current = self.current.load().await;
+        let current = self.current.load();
         let mut history = self.history.write().await;
 
         // Don't save initial empty version
@@ -421,6 +503,84 @@ impl HotReloadManager {
                 history.remove(0);
             }
         }
+    }
+    
+    /// Append a policy version to the Merkle log (POL-006 Enhanced)
+    async fn append_to_merkle_log(&self, version: &PolicyVersion) {
+        let mut log = self.merkle_log.write().await;
+        
+        let prev_chain_hash = if log.is_empty() {
+            None
+        } else {
+            // Compute hash of all previous entries
+            let entries: Vec<_> = log.iter().map(|e| MerkleChainEntry {
+                version: e.version,
+                content_hash: e.content_hash.clone(),
+                loaded_at: e.timestamp,
+                source_path: e.source.clone(),
+            }).collect();
+            Some(Self::compute_chain_hash(&entries))
+        };
+        
+        let entry = MerkleLogEntry {
+            version: version.version,
+            content_hash: version.content_hash.clone(),
+            prev_chain_hash,
+            policy_count: version.policies.len(),
+            timestamp: current_timestamp(),
+            source: version.source_path.clone(),
+        };
+        
+        log.push(entry);
+        
+        info!(
+            version = version.version,
+            chain_length = log.len(),
+            "Policy version appended to Merkle log"
+        );
+    }
+    
+    /// Get the complete Merkle log (POL-006 Enhanced)
+    pub async fn get_merkle_log(&self) -> Vec<MerkleLogEntry> {
+        self.merkle_log.read().await.clone()
+    }
+    
+    /// Verify the integrity of the Merkle log (POL-006 Enhanced)
+    pub async fn verify_merkle_log(&self) -> bool {
+        let log = self.merkle_log.read().await;
+        
+        for (i, entry) in log.iter().enumerate() {
+            if i == 0 {
+                if entry.prev_chain_hash.is_some() {
+                    warn!("First entry should not have prev_chain_hash");
+                    return false;
+                }
+            } else {
+                // Verify the chain hash
+                let prev_entries: Vec<_> = log[..i].iter().map(|e| MerkleChainEntry {
+                    version: e.version,
+                    content_hash: e.content_hash.clone(),
+                    loaded_at: e.timestamp,
+                    source_path: e.source.clone(),
+                }).collect();
+                let expected_hash = Self::compute_chain_hash(&prev_entries);
+                
+                if entry.prev_chain_hash.as_ref() != Some(&expected_hash) {
+                    warn!(
+                        version = entry.version,
+                        "Merkle log chain hash mismatch"
+                    );
+                    return false;
+                }
+            }
+        }
+        
+        true
+    }
+    
+    /// Get policy holder statistics (POL-006 Enhanced)
+    pub fn get_stats(&self) -> (u64, u64, u64) {
+        self.current.stats()
     }
 
     /// Get version history
@@ -437,14 +597,14 @@ impl HotReloadManager {
     ///
     /// This provides a cryptographic commitment to the current policy state,
     /// enabling verification that policies haven't been tampered with.
-    pub async fn get_merkle_root(&self) -> String {
-        let current = self.current.load().await;
+    pub fn get_merkle_root(&self) -> String {
+        let current = self.current.load();
         current.content_hash.clone()
     }
 
     /// Verify policy integrity against expected hash (POL-006 enhanced)
-    pub async fn verify_integrity(&self, expected_hash: &str) -> bool {
-        let current = self.current.load().await;
+    pub fn verify_integrity(&self, expected_hash: &str) -> bool {
+        let current = self.current.load();
         current.content_hash == expected_hash
     }
 
@@ -454,7 +614,7 @@ impl HotReloadManager {
     /// allowing verification of the complete policy evolution.
     pub async fn get_merkle_chain(&self) -> MerkleChain {
         let history = self.history.read().await;
-        let current = self.current.load().await;
+        let current = self.current.load();
 
         let entries: Vec<MerkleChainEntry> = history
             .iter()
@@ -496,7 +656,7 @@ impl HotReloadManager {
     /// Creates a signed, timestamped entry suitable for appending to an
     /// external audit Merkle Log.
     pub async fn export_to_merkle_log(&self) -> MerkleLogEntry {
-        let current = self.current.load().await;
+        let current = self.current.load();
         let chain = self.get_merkle_chain().await;
 
         MerkleLogEntry {
@@ -535,7 +695,7 @@ impl HotReloadManager {
         }
 
         // Check current
-        let current = self.current.load().await;
+        let current = self.current.load();
         if current.version == version {
             return current.content_hash == expected_hash;
         }
@@ -743,8 +903,8 @@ rules:
         manager.load_policies_from_str(yaml1, None).await.unwrap();
         manager.load_policies_from_str(yaml2, None).await.unwrap();
 
-        // Current should be v2
-        let current = manager.get_current().await;
+        // Current should be v2 (lock-free read)
+        let current = manager.get_current();
         assert_eq!(current.policies.rules[0].id, "v2-rule");
 
         // Rollback to v1
@@ -798,5 +958,42 @@ rules:
         // History should only keep 2
         let history = manager.get_history().await;
         assert_eq!(history.len(), 2);
+    }
+    
+    #[tokio::test]
+    async fn test_merkle_log() {
+        let manager = HotReloadManager::with_defaults().unwrap();
+
+        let yaml1 = r#"rules: []"#;
+        let yaml2 = r#"
+rules:
+  - id: "rule1"
+    effect: "permit"
+    principal: "*"
+    action: "*"
+    resource: "*"
+"#;
+
+        manager.load_policies_from_str(yaml1, None).await.unwrap();
+        manager.load_policies_from_str(yaml2, None).await.unwrap();
+
+        let log = manager.get_merkle_log().await;
+        assert_eq!(log.len(), 2);
+        
+        // Verify log integrity
+        assert!(manager.verify_merkle_log().await);
+    }
+    
+    #[test]
+    fn test_lock_free_stats() {
+        let manager = HotReloadManager::with_defaults().unwrap();
+        
+        // Initial read
+        let _ = manager.get_current();
+        let _ = manager.get_policies();
+        
+        let (reads, writes, _cas) = manager.get_stats();
+        assert!(reads >= 2);
+        assert_eq!(writes, 0); // No writes yet after init
     }
 }

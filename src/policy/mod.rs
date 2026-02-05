@@ -35,9 +35,9 @@ pub use context::{
 
 // Re-export hot-reload types (POL-006)
 pub use hot_reload::{
-    HotReloadConfig, HotReloadError, HotReloadManager, HotReloadResult,
-    PolicyVersion, WatcherHandle, MerkleChain, MerkleChainEntry, MerkleLogEntry,
-    PolicyVersionProof,
+    AtomicPolicyHolder, AtomicPolicyStats, HotReloadConfig, HotReloadError, HotReloadManager,
+    HotReloadResult, MerkleChain, MerkleChainEntry, MerkleLogEntry, PolicyVersion,
+    PolicyVersionProof, WatcherHandle,
 };
 
 // Re-export context integration types (POL-005 complete)

@@ -884,6 +884,364 @@ pub struct TimeTravelExport {
 }
 
 // ============================================================================
+// Checkout Capability (MEM-005 Enhanced)
+// ============================================================================
+
+/// Result of a checkout operation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckoutResult {
+    /// The snapshot ID that was checked out
+    pub snapshot_id: SnapshotId,
+    /// The Merkle root hash of the checked out state
+    pub merkle_root: [u8; 32],
+    /// Number of state entries restored
+    pub entries_restored: usize,
+    /// The working state after checkout
+    pub state_summary: CheckoutStateSummary,
+}
+
+/// Summary of the checked out state
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckoutStateSummary {
+    /// Total number of keys
+    pub key_count: usize,
+    /// Total size in bytes
+    pub total_bytes: usize,
+    /// Keys present
+    pub keys: Vec<String>,
+    /// Hash of the state
+    pub state_hash: String,
+}
+
+/// Options for checkout operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckoutOptions {
+    /// Verify integrity before checkout
+    pub verify_before_checkout: bool,
+    /// Create a new branch at checkout point
+    pub create_branch: Option<String>,
+    /// Whether to preserve the current working state
+    pub preserve_working_state: bool,
+}
+
+impl Default for CheckoutOptions {
+    fn default() -> Self {
+        Self {
+            verify_before_checkout: true,
+            create_branch: None,
+            preserve_working_state: false,
+        }
+    }
+}
+
+/// Step forward result for replaying history
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StepResult {
+    /// The snapshot ID after the step
+    pub snapshot_id: SnapshotId,
+    /// Label of this step
+    pub label: String,
+    /// Changes applied in this step
+    pub diff: StateDiff,
+    /// Timestamp of the step
+    pub timestamp: DateTime<Utc>,
+}
+
+impl TimeTravelManager {
+    // ========================================================================
+    // Checkout Operations (MEM-005 Enhanced)
+    // ========================================================================
+
+    /// Checkout a snapshot by its Merkle root hash (MEM-005)
+    ///
+    /// This enables restoring exact memory state from a cryptographic hash,
+    /// allowing for "time travel debugging" where you can reproduce the
+    /// exact state of an agent at any point in history.
+    ///
+    /// # Arguments
+    /// * `merkle_root` - The 32-byte hash of the snapshot to checkout
+    /// * `options` - Optional checkout configuration
+    ///
+    /// # Returns
+    /// * `Ok(CheckoutResult)` - The result of the checkout operation
+    /// * `Err(TimeTravelError)` - If the snapshot wasn't found or verification failed
+    ///
+    /// # Example
+    /// ```rust
+    /// use vak::memory::time_travel::{TimeTravelManager, CheckoutOptions};
+    ///
+    /// let mut manager = TimeTravelManager::new("agent-1");
+    /// manager.set("config", b"version=1".to_vec());
+    /// let id = manager.create_checkpoint("Initial config");
+    ///
+    /// // Get the Merkle root
+    /// let root = manager.get_chain_root().unwrap();
+    ///
+    /// // Later, checkout using the root hash
+    /// let result = manager.checkout_by_hash(&root, None).unwrap();
+    /// assert_eq!(result.merkle_root, root);
+    /// ```
+    pub fn checkout_by_hash(
+        &mut self,
+        merkle_root: &[u8; 32],
+        options: Option<CheckoutOptions>,
+    ) -> TimeTravelResult<CheckoutResult> {
+        let options = options.unwrap_or_default();
+
+        // Find the snapshot with this hash
+        let snapshot_id = self
+            .snapshots
+            .iter()
+            .find(|(_, s)| &s.hash == merkle_root)
+            .map(|(id, _)| *id)
+            .ok_or_else(|| TimeTravelError::SnapshotNotFound(SnapshotId::new()))?;
+
+        self.checkout_by_id(snapshot_id, Some(options))
+    }
+
+    /// Checkout a snapshot by ID with full state restoration (MEM-005)
+    pub fn checkout_by_id(
+        &mut self,
+        snapshot_id: SnapshotId,
+        options: Option<CheckoutOptions>,
+    ) -> TimeTravelResult<CheckoutResult> {
+        let options = options.unwrap_or_default();
+
+        // Get the snapshot
+        let snapshot = self
+            .snapshots
+            .get(&snapshot_id)
+            .ok_or(TimeTravelError::SnapshotNotFound(snapshot_id))?
+            .clone();
+
+        // Verify if requested
+        if options.verify_before_checkout && !snapshot.verify() {
+            return Err(TimeTravelError::VerificationFailed {
+                snapshot_id,
+                reason: "Snapshot integrity verification failed".to_string(),
+            });
+        }
+
+        // Create branch if requested
+        if let Some(branch_name) = &options.create_branch {
+            self.branches.insert(
+                branch_name.clone(),
+                Branch {
+                    name: branch_name.clone(),
+                    head: snapshot_id,
+                    created_at: Utc::now(),
+                },
+            );
+        }
+
+        // Calculate state summary before checkout
+        let keys: Vec<String> = snapshot.state.keys().cloned().collect();
+        let total_bytes: usize = snapshot.state.values().map(|v| v.value.len()).sum();
+        let state_hash = hex::encode(&snapshot.hash);
+
+        // Restore working state
+        if !options.preserve_working_state {
+            self.working_state.clear();
+        }
+        
+        for (key, entry) in &snapshot.state {
+            self.working_state.insert(key.clone(), entry.value.clone());
+        }
+
+        // Update head
+        self.head = Some(snapshot_id);
+
+        Ok(CheckoutResult {
+            snapshot_id,
+            merkle_root: snapshot.hash,
+            entries_restored: snapshot.state.len(),
+            state_summary: CheckoutStateSummary {
+                key_count: keys.len(),
+                total_bytes,
+                keys,
+                state_hash,
+            },
+        })
+    }
+
+    /// Step forward one decision/snapshot at a time (MEM-005)
+    ///
+    /// Given the current position, advances to the next snapshot in the
+    /// forward direction. This enables "replay debugging" where you can
+    /// step through an agent's decision history one step at a time.
+    pub fn step_forward(&mut self) -> TimeTravelResult<Option<StepResult>> {
+        // Find the next snapshot in the chain
+        let current_id = self.head.ok_or(TimeTravelError::NoSnapshotsAvailable)?;
+        
+        // Find a snapshot whose parent is the current snapshot
+        let next = self
+            .snapshots
+            .iter()
+            .find(|(_, s)| s.parent_id == Some(current_id))
+            .map(|(id, _)| *id);
+
+        match next {
+            Some(next_id) => {
+                let prev_snapshot = self.snapshots.get(&current_id).unwrap().clone();
+                let next_snapshot = self.snapshots.get(&next_id).unwrap().clone();
+
+                // Compute diff
+                let diff = StateDiff::compute(&prev_snapshot, &next_snapshot);
+
+                // Advance to next snapshot
+                self.checkout_by_id(next_id, None)?;
+
+                Ok(Some(StepResult {
+                    snapshot_id: next_id,
+                    label: next_snapshot.label.clone(),
+                    diff,
+                    timestamp: next_snapshot.created_at,
+                }))
+            }
+            None => Ok(None), // No more steps forward
+        }
+    }
+
+    /// Step backward one decision/snapshot at a time (MEM-005)
+    pub fn step_backward(&mut self) -> TimeTravelResult<Option<StepResult>> {
+        let current_id = self.head.ok_or(TimeTravelError::NoSnapshotsAvailable)?;
+        let current_snapshot = self.snapshots.get(&current_id).unwrap().clone();
+
+        match current_snapshot.parent_id {
+            Some(parent_id) => {
+                let parent_snapshot = self.snapshots.get(&parent_id).unwrap().clone();
+
+                // Compute diff (reverse direction)
+                let diff = StateDiff::compute(&current_snapshot, &parent_snapshot);
+
+                // Move to parent
+                self.checkout_by_id(parent_id, None)?;
+
+                Ok(Some(StepResult {
+                    snapshot_id: parent_id,
+                    label: parent_snapshot.label.clone(),
+                    diff,
+                    timestamp: parent_snapshot.created_at,
+                }))
+            }
+            None => Ok(None), // At genesis
+        }
+    }
+
+    /// Get a replay iterator for stepping through history (MEM-005)
+    pub fn replay_from(&self, start_id: SnapshotId) -> TimeTravelResult<ReplayIterator<'_>> {
+        if !self.snapshots.contains_key(&start_id) {
+            return Err(TimeTravelError::SnapshotNotFound(start_id));
+        }
+
+        Ok(ReplayIterator {
+            manager: self,
+            current: Some(start_id),
+        })
+    }
+
+    /// Find snapshot by timestamp (closest match) (MEM-005)
+    pub fn find_snapshot_by_time(&self, target_time: DateTime<Utc>) -> Option<SnapshotId> {
+        self.snapshots
+            .iter()
+            .min_by_key(|(_, s)| (s.created_at - target_time).num_milliseconds().abs())
+            .map(|(id, _)| *id)
+    }
+
+    /// Get full state at a specific snapshot without checking out (MEM-005)
+    pub fn peek_state(&self, snapshot_id: SnapshotId) -> TimeTravelResult<HashMap<String, Vec<u8>>> {
+        let snapshot = self
+            .snapshots
+            .get(&snapshot_id)
+            .ok_or(TimeTravelError::SnapshotNotFound(snapshot_id))?;
+
+        Ok(snapshot
+            .state
+            .iter()
+            .map(|(k, v)| (k.clone(), v.value.clone()))
+            .collect())
+    }
+
+    /// Compare states between two checkpoints (MEM-005)
+    pub fn compare_states(
+        &self,
+        id_a: SnapshotId,
+        id_b: SnapshotId,
+    ) -> TimeTravelResult<StateComparison> {
+        let state_a = self.peek_state(id_a)?;
+        let state_b = self.peek_state(id_b)?;
+
+        let keys_a: std::collections::HashSet<_> = state_a.keys().collect();
+        let keys_b: std::collections::HashSet<_> = state_b.keys().collect();
+
+        let only_in_a: Vec<String> = keys_a.difference(&keys_b).map(|&k| k.clone()).collect();
+        let only_in_b: Vec<String> = keys_b.difference(&keys_a).map(|&k| k.clone()).collect();
+        
+        let mut changed: Vec<String> = Vec::new();
+        let mut unchanged: Vec<String> = Vec::new();
+
+        for key in keys_a.intersection(&keys_b) {
+            if state_a.get(*key) != state_b.get(*key) {
+                changed.push((*key).clone());
+            } else {
+                unchanged.push((*key).clone());
+            }
+        }
+
+        Ok(StateComparison {
+            snapshot_a: id_a,
+            snapshot_b: id_b,
+            only_in_a,
+            only_in_b,
+            changed,
+            unchanged,
+        })
+    }
+}
+
+/// Iterator for replaying through snapshot history
+pub struct ReplayIterator<'a> {
+    manager: &'a TimeTravelManager,
+    current: Option<SnapshotId>,
+}
+
+impl<'a> Iterator for ReplayIterator<'a> {
+    type Item = &'a StateCheckpoint;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let id = self.current?;
+        let snapshot = self.manager.snapshots.get(&id)?;
+        
+        // Find next (child) snapshot
+        self.current = self
+            .manager
+            .snapshots
+            .iter()
+            .find(|(_, s)| s.parent_id == Some(id))
+            .map(|(id, _)| *id);
+
+        Some(snapshot)
+    }
+}
+
+/// Comparison between two snapshot states (MEM-005)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StateComparison {
+    /// First snapshot ID
+    pub snapshot_a: SnapshotId,
+    /// Second snapshot ID
+    pub snapshot_b: SnapshotId,
+    /// Keys only in snapshot A
+    pub only_in_a: Vec<String>,
+    /// Keys only in snapshot B
+    pub only_in_b: Vec<String>,
+    /// Keys with different values
+    pub changed: Vec<String>,
+    /// Keys with same values
+    pub unchanged: Vec<String>,
+}
+
+// ============================================================================
 // Helper Functions
 // ============================================================================
 

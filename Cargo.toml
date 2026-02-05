@@ -54,6 +54,12 @@ base64 = "0.22"
 # Time handling
 chrono = { version = "0.4", features = ["serde"] }
 
+# Lock-free atomic pointer for policy hot-reload (POL-006)
+arc-swap = "1.7"
+
+# Merkle tree implementation (MEM-001)
+rs_merkle = "1.4"
+
 # HTTP client (using rustls for TLS to avoid system OpenSSL dependency)
 reqwest = { version = "0.11", default-features = false, features = ["json", "stream", "rustls-tls"] }
 
@@ -122,6 +128,8 @@ petgraph.workspace = true
 flate2.workspace = true
 tempfile.workspace = true
 base64.workspace = true
+arc-swap.workspace = true
+rs_merkle.workspace = true
 
 # Optional Python bindings
 pyo3 = { workspace = true, optional = true }
