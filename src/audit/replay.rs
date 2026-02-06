@@ -43,7 +43,7 @@
 //! - Gap Analysis Section 3.4: Cryptographic Replay
 //! - Gap Analysis Section 6.4: Forensic and Debugging Capabilities
 
-use super::flight_recorder::{FlightEvent, TraceReceipt};
+use super::flight_recorder::{EventType, FlightEvent, TraceReceipt};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -765,13 +765,27 @@ impl ReplayVerifier {
 
     /// Compute event hash (must match FlightEvent::compute_hash)
     fn compute_event_hash(event: &FlightEvent, prev_hash: &str) -> String {
+        // Get event type as string - must match FlightEvent::event_type_str()
+        let event_type_str = match &event.event_type {
+            EventType::Request => "request".to_string(),
+            EventType::Response => "response".to_string(),
+            EventType::PolicyEvaluation => "policy_evaluation".to_string(),
+            EventType::ToolExecution => "tool_execution".to_string(),
+            EventType::Error => "error".to_string(),
+            EventType::TraceStart => "trace_start".to_string(),
+            EventType::TraceEnd => "trace_end".to_string(),
+            EventType::SpanStart => "span_start".to_string(),
+            EventType::SpanEnd => "span_end".to_string(),
+            EventType::Custom(name) => format!("custom:{}", name),
+        };
+        
         let content = format!(
-            "{}:{}:{}:{}:{:?}:{:?}:{:?}:{:?}:{}:{}",
+            "{}:{}:{}:{}:{}:{:?}:{:?}:{:?}:{:?}:{}",
             event.event_id,
             event.trace_id,
             event.timestamp,
             event.agent_id,
-            format!("{:?}", event.event_type).to_lowercase(),
+            event_type_str,
             event.action,
             event.resource,
             event.decision,

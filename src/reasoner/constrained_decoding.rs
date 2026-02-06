@@ -153,7 +153,7 @@ impl ConstrainedDecoder {
     pub fn validate(&self, output: &str) -> ValidationResult {
         let mut errors = Vec::new();
         let mut parsed_value = None;
-        let mut confidence = 1.0;
+        let mut confidence: f64 = 1.0;
 
         for rule in &self.grammar.rules {
             match self.validate_rule(rule, output) {

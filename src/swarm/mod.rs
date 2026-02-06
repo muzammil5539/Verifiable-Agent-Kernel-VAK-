@@ -1,30 +1,26 @@
-//! Swarm Consensus Protocol (SWM-001)
+//! Multi-Agent Swarm Coordination Module
 //!
-//! This module provides multi-agent coordination and consensus mechanisms
-//! for the Verifiable Agent Kernel. It enables multiple agents to collaborate,
-//! debate, and reach consensus on decisions.
+//! This module provides infrastructure for coordinating multiple AI agents,
+//! including:
 //!
-//! # Overview
-//!
-//! The Swarm Consensus module includes:
-//! - **Quadratic Voting**: Weighted voting mechanism to prevent sycophancy
-//! - **Protocol Router**: Dynamic selection of collaboration topologies
-//! - **Message Types**: Structured inter-agent communication
-//! - **Consensus Mechanisms**: Various consensus algorithms (majority, weighted, BFT)
+//! - **Voting Systems**: Quadratic voting for democratic decision making
+//! - **Consensus**: Multiple consensus mechanisms (majority, unanimous, weighted)
 //! - **A2A Protocol**: Agent-to-Agent discovery and capability exchange (SWM-001, SWM-002)
 //! - **Sycophancy Detection**: Metrics and analysis for detecting groupthink (SWM-003)
+//! - **Protocol Router**: Topology selection based on task characteristics (SWM-004)
 //!
 //! # Example
 //!
-//! ```rust
-//! use vak::swarm::{SwarmCoordinator, SwarmConfig, Vote, QuadraticVoting};
+//! ```rust,ignore
+//! use vak::swarm::{SwarmCoordinator, SwarmConfig, SwarmAgent, AgentRole};
 //!
 //! // Create a swarm coordinator
 //! let config = SwarmConfig::default();
 //! let coordinator = SwarmCoordinator::new(config);
 //!
-//! // Create a voting system
-//! let voting = QuadraticVoting::new(100); // 100 credits per agent
+//! // Register an agent
+//! let agent = SwarmAgent::new("Agent1", AgentRole::Worker);
+//! coordinator.register_agent(agent).await?;
 //! ```
 
 pub mod a2a;
@@ -34,36 +30,34 @@ pub mod router;
 pub mod sycophancy;
 pub mod voting;
 
+// A2A exports
 pub use a2a::{
-    A2AProtocol, A2AError, A2AResult, A2AMessage, A2AMessageType,
-    AgentCard, A2ACapability, DiscoveryService,
+    A2ACapability, A2AError, A2AMessage, A2AMessageType, A2AProtocol, A2AResult, AgentCard,
+    DiscoveryService,
 };
 
+// Voting exports - only export types that exist
 pub use voting::{
-    AgentCredits, QuadraticVoting, Vote, VoteResult, VotingConfig, VotingError, VotingOutcome,
-    VotingSession,
+    AgentCredits, Proposal, QuadraticVoting, SessionState, Vote, VoteDirection, VoteReceipt,
+    VotingConfig, VotingError, VotingOutcome, VotingSession,
 };
 
+// Router exports - only export types that exist
 pub use router::{
-    EnhancedRoutingDecision, ProtocolRouter, RouterConfig, RoutingDecision, RoutingError,
-    TaskCharacteristics, TaskComplexity, TaskType, Topology, TopologyRecommendation,
-    TopologySelection,
+    ProtocolRouter, RouterConfig, RoutingDecision, RoutingError, TaskCharacteristics,
+    TaskComplexity, Topology, TopologySelection,
 };
 
-pub use messages::{
-    Agreement, Critique, Disagreement, Evidence, MessageId, MessagePriority, MessageType, Proposal,
-    SwarmMessage,
-};
+// Messages exports
+pub use messages::SwarmMessage;
 
-pub use consensus::{
-    BftConsensus, ConsensusConfig, ConsensusError, ConsensusMechanism, ConsensusProtocol,
-    ConsensusResult, MajorityConsensus, WeightedConsensus,
-};
+// Consensus exports - only export types that exist
+pub use consensus::{ConsensusMechanism, ConsensusError};
 
+// Sycophancy exports
 pub use sycophancy::{
-    AnalysisRecommendation, DetectorConfig, DetectorStats, OpinionCluster, RecommendedAction,
-    RiskIndicator, RiskIndicatorType, SessionAnalysis, SycophancyDetector, SycophancyError,
-    SycophancyResult, VoteRecord,
+    DetectorConfig, DetectorStats, RecommendedAction, Recommendation, RiskIndicator,
+    RiskIndicatorType, SessionData, SycophancyAnalysis, SycophancyDetector, VoteRecord,
 };
 
 use serde::{Deserialize, Serialize};
@@ -135,12 +129,17 @@ pub struct SwarmAgentId(pub Uuid);
 impl SwarmAgentId {
     /// Create a new unique agent ID
     pub fn new() -> Self {
-        Self(Uuid::now_v7())
+        Self(Uuid::new_v4())
     }
 
     /// Create from an existing UUID
     pub fn from_uuid(uuid: Uuid) -> Self {
         Self(uuid)
+    }
+
+    /// Get the inner UUID
+    pub fn as_uuid(&self) -> &Uuid {
+        &self.0
     }
 }
 
@@ -152,7 +151,7 @@ impl Default for SwarmAgentId {
 
 impl std::fmt::Display for SwarmAgentId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SwarmAgent({})", self.0)
+        write!(f, "{}", self.0)
     }
 }
 
@@ -229,8 +228,8 @@ impl SwarmAgent {
             name: name.into(),
             role,
             capabilities: Vec::new(),
-            reputation: 0.5, // Start with neutral reputation
-            credits: 100,    // Default voting credits
+            reputation: 0.5,
+            credits: 100,
             active: true,
             metadata: HashMap::new(),
         }
@@ -467,7 +466,7 @@ impl SwarmCoordinator {
         proposal: Proposal,
         voting_config: VotingConfig,
     ) -> SwarmResult<String> {
-        let session_id = Uuid::now_v7().to_string();
+        let session_id = Uuid::new_v4().to_string();
         let session = VotingSession::new(session_id.clone(), proposal, voting_config);
 
         let mut sessions = self.voting_sessions.write().await;

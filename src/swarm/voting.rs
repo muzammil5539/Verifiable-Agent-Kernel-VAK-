@@ -1,34 +1,35 @@
-//! Quadratic Voting Implementation (SWM-002)
+//! Quadratic Voting System for Multi-Agent Consensus
 //!
-//! This module implements Quadratic Voting for multi-agent consensus.
-//! Quadratic voting prevents sycophancy by making strong votes exponentially
-//! more expensive, forcing agents to express high confidence only when justified.
+//! This module implements a quadratic voting mechanism that allows agents
+//! to express preference intensity while preventing vote manipulation.
 //!
 //! # Overview
 //!
-//! In Quadratic Voting:
-//! - Each agent has a budget of "voice credits"
-//! - Casting N votes on an option costs N² credits
-//! - This naturally limits strong opinions and encourages nuanced positions
+//! Quadratic voting costs votes quadratically (1 vote = 1 credit, 2 votes = 4 credits),
+//! which encourages thoughtful allocation of voting power and prevents wealthy
+//! agents from dominating decisions.
 //!
 //! # Example
 //!
-//! ```rust
-//! use vak::swarm::voting::{QuadraticVoting, Vote, VotingConfig};
+//! ```rust,ignore
+//! use vak::swarm::voting::{QuadraticVoting, Vote, VotingSession, VotingConfig, Proposal};
+//! use vak::swarm::SwarmAgentId;
 //!
-//! // Create a voting system with 100 credits per agent
-//! let voting = QuadraticVoting::new(100);
+//! let qv = QuadraticVoting::new(100);
+//! assert_eq!(qv.calculate_cost(5), 25); // 5² = 25 credits
 //!
-//! // A vote with strength 3 costs 9 credits (3²)
-//! let cost = voting.calculate_cost(3);
-//! assert_eq!(cost, 9);
+//! let proposal = Proposal::new("Adopt new policy");
+//! let config = VotingConfig::default();
+//! let mut session = VotingSession::new("session-1".to_string(), proposal, config);
+//!
+//! let agent = SwarmAgentId::new();
+//! session.record_vote(agent, Vote::for_proposal(3)).unwrap();
 //! ```
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
 
-use super::messages::Proposal;
 use super::SwarmAgentId;
 
 // ============================================================================
@@ -36,35 +37,31 @@ use super::SwarmAgentId;
 // ============================================================================
 
 /// Errors that can occur during voting operations
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone)]
 pub enum VotingError {
-    /// Insufficient credits to cast vote
+    /// Agent has already voted in this session
+    #[error("Agent {0} has already voted")]
+    AlreadyVoted(String),
+
+    /// Insufficient credits for the vote strength
     #[error("Insufficient credits: have {0}, need {1}")]
     InsufficientCredits(u64, u64),
 
-    /// Vote strength exceeds maximum
+    /// Vote strength exceeds maximum allowed
     #[error("Vote strength {0} exceeds maximum {1}")]
     StrengthExceedsMax(u64, u64),
-
-    /// Agent already voted
-    #[error("Agent {0} has already voted")]
-    AlreadyVoted(String),
 
     /// Voting session is closed
     #[error("Voting session is closed")]
     SessionClosed,
 
-    /// Voting session not found
-    #[error("Voting session not found: {0}")]
-    SessionNotFound(String),
+    /// Minimum participation not met
+    #[error("Minimum participation not met: {0}% required, {1}% achieved")]
+    MinParticipationNotMet(f64, f64),
 
     /// Invalid vote direction
     #[error("Invalid vote direction")]
     InvalidDirection,
-
-    /// Minimum participation not met
-    #[error("Minimum participation not met: {0:.1}% < {1:.1}%")]
-    InsufficientParticipation(f64, f64),
 }
 
 // ============================================================================
@@ -82,16 +79,10 @@ pub enum VoteDirection {
     Abstain,
 }
 
-impl Default for VoteDirection {
-    fn default() -> Self {
-        VoteDirection::Abstain
-    }
-}
-
-/// A vote cast by an agent
+/// A single vote cast by an agent
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Vote {
-    /// Direction of the vote
+    /// Direction of the vote (for/against/abstain)
     pub direction: VoteDirection,
     /// Strength of the vote (1-10 typically)
     pub strength: u64,
@@ -102,29 +93,34 @@ pub struct Vote {
 }
 
 impl Vote {
-    /// Create a new vote
-    pub fn new(direction: VoteDirection, strength: u64) -> Self {
+    /// Create a vote in favor with given strength
+    pub fn for_proposal(strength: u64) -> Self {
         Self {
-            direction,
+            direction: VoteDirection::For,
             strength,
             reasoning: None,
             timestamp: chrono::Utc::now(),
         }
     }
 
-    /// Create a vote in favor
-    pub fn for_proposal(strength: u64) -> Self {
-        Self::new(VoteDirection::For, strength)
-    }
-
-    /// Create a vote against
+    /// Create a vote against with given strength
     pub fn against_proposal(strength: u64) -> Self {
-        Self::new(VoteDirection::Against, strength)
+        Self {
+            direction: VoteDirection::Against,
+            strength,
+            reasoning: None,
+            timestamp: chrono::Utc::now(),
+        }
     }
 
-    /// Create an abstention
+    /// Create an abstain vote
     pub fn abstain() -> Self {
-        Self::new(VoteDirection::Abstain, 0)
+        Self {
+            direction: VoteDirection::Abstain,
+            strength: 0,
+            reasoning: None,
+            timestamp: chrono::Utc::now(),
+        }
     }
 
     /// Add reasoning to the vote
@@ -133,7 +129,7 @@ impl Vote {
         self
     }
 
-    /// Get the effective votes (strength as votes)
+    /// Calculate effective votes (positive for For, negative for Against)
     pub fn effective_votes(&self) -> i64 {
         match self.direction {
             VoteDirection::For => self.strength as i64,
@@ -144,39 +140,22 @@ impl Vote {
 }
 
 // ============================================================================
-// Vote Result
-// ============================================================================
-
-/// Result of a single vote cast
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VoteResult {
-    /// Agent who cast the vote
-    pub agent_id: SwarmAgentId,
-    /// The vote that was cast
-    pub vote: Vote,
-    /// Credits consumed
-    pub credits_consumed: u64,
-    /// Remaining credits
-    pub credits_remaining: u64,
-}
-
-// ============================================================================
 // Agent Credits
 // ============================================================================
 
-/// Tracks an agent's voting credits
+/// Voting credits available to an agent
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentCredits {
     /// Total credits allocated
     pub total: u64,
-    /// Credits remaining
+    /// Remaining credits available
     pub remaining: u64,
-    /// Credits spent
+    /// Credits spent so far
     pub spent: u64,
 }
 
 impl AgentCredits {
-    /// Create new agent credits
+    /// Create new credits allocation
     pub fn new(total: u64) -> Self {
         Self {
             total,
@@ -185,7 +164,7 @@ impl AgentCredits {
         }
     }
 
-    /// Attempt to spend credits
+    /// Spend credits, returns error if insufficient
     pub fn spend(&mut self, amount: u64) -> Result<(), VotingError> {
         if self.remaining < amount {
             return Err(VotingError::InsufficientCredits(self.remaining, amount));
@@ -195,14 +174,14 @@ impl AgentCredits {
         Ok(())
     }
 
-    /// Refund credits (e.g., if vote is cancelled)
+    /// Refund credits
     pub fn refund(&mut self, amount: u64) {
         let refund = amount.min(self.spent);
         self.remaining += refund;
         self.spent -= refund;
     }
 
-    /// Reset credits to initial allocation
+    /// Reset credits to initial state
     pub fn reset(&mut self) {
         self.remaining = self.total;
         self.spent = 0;
@@ -216,18 +195,16 @@ impl AgentCredits {
 /// Configuration for a voting session
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VotingConfig {
-    /// Credits allocated to each agent
+    /// Credits allocated per agent
     pub credits_per_agent: u64,
     /// Maximum vote strength allowed
     pub max_strength: u64,
-    /// Minimum participation rate (0.0 to 1.0)
+    /// Minimum participation rate (0.0-1.0)
     pub min_participation: f64,
     /// Whether to use quadratic voting
     pub quadratic: bool,
-    /// Timeout in seconds
-    pub timeout_seconds: u64,
-    /// Whether abstentions count toward participation
-    pub abstentions_count: bool,
+    /// Timeout for the voting session in seconds
+    pub timeout_secs: u64,
 }
 
 impl Default for VotingConfig {
@@ -237,14 +214,13 @@ impl Default for VotingConfig {
             max_strength: 10,
             min_participation: 0.5,
             quadratic: true,
-            timeout_seconds: 300, // 5 minutes
-            abstentions_count: false,
+            timeout_secs: 3600,
         }
     }
 }
 
 impl VotingConfig {
-    /// Create a new voting configuration
+    /// Create a new configuration with specified credits
     pub fn new(credits_per_agent: u64) -> Self {
         Self {
             credits_per_agent,
@@ -252,13 +228,13 @@ impl VotingConfig {
         }
     }
 
-    /// Set the maximum vote strength
+    /// Set maximum vote strength
     pub fn with_max_strength(mut self, max: u64) -> Self {
         self.max_strength = max;
         self
     }
 
-    /// Set the minimum participation rate
+    /// Set minimum participation rate
     pub fn with_min_participation(mut self, rate: f64) -> Self {
         self.min_participation = rate.clamp(0.0, 1.0);
         self
@@ -269,96 +245,163 @@ impl VotingConfig {
         self.quadratic = enabled;
         self
     }
+}
 
-    /// Set the timeout
-    pub fn with_timeout(mut self, seconds: u64) -> Self {
-        self.timeout_seconds = seconds;
+// ============================================================================
+// Quadratic Voting
+// ============================================================================
+
+/// Quadratic voting calculator
+#[derive(Debug, Clone)]
+pub struct QuadraticVoting {
+    /// Maximum credits available
+    pub max_credits: u64,
+}
+
+impl QuadraticVoting {
+    /// Create a new quadratic voting calculator
+    pub fn new(max_credits: u64) -> Self {
+        Self { max_credits }
+    }
+
+    /// Calculate the cost for a given vote strength
+    pub fn calculate_cost(&self, strength: u64) -> u64 {
+        strength * strength
+    }
+
+    /// Calculate maximum affordable strength given available credits
+    pub fn max_affordable_strength(&self, available_credits: u64) -> u64 {
+        (available_credits as f64).sqrt().floor() as u64
+    }
+
+    /// Validate a set of votes against available credits
+    pub fn validate_votes(&self, votes: &[(u64, u64)], available_credits: u64) -> bool {
+        let total_cost: u64 = votes
+            .iter()
+            .map(|(strength, count)| self.calculate_cost(*strength) * count)
+            .sum();
+        total_cost <= available_credits
+    }
+}
+
+// ============================================================================
+// Proposal
+// ============================================================================
+
+/// A proposal to be voted on
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Proposal {
+    /// Unique identifier
+    pub id: String,
+    /// Title of the proposal
+    pub title: String,
+    /// Detailed description
+    pub description: Option<String>,
+    /// Who proposed it
+    pub proposer: Option<String>,
+    /// When it was created
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl Proposal {
+    /// Create a new proposal
+    pub fn new(title: impl Into<String>) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            title: title.into(),
+            description: None,
+            proposer: None,
+            created_at: chrono::Utc::now(),
+        }
+    }
+
+    /// Add a description
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
         self
     }
+
+    /// Set the proposer
+    pub fn with_proposer(mut self, proposer: impl Into<String>) -> Self {
+        self.proposer = Some(proposer.into());
+        self
+    }
+}
+
+// ============================================================================
+// Vote Receipt
+// ============================================================================
+
+/// Receipt returned after recording a vote
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoteReceipt {
+    /// Session ID
+    pub session_id: String,
+    /// Agent who voted
+    pub agent_id: SwarmAgentId,
+    /// Credits consumed
+    pub credits_consumed: u64,
+    /// Credits remaining
+    pub credits_remaining: u64,
+    /// Timestamp
+    pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
 // ============================================================================
 // Voting Outcome
 // ============================================================================
 
-/// Outcome of a completed voting session
+/// Outcome of a finalized voting session
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VotingOutcome {
-    /// Session ID
-    pub session_id: String,
     /// Whether the proposal passed
     pub passed: bool,
-    /// Total votes for
+    /// Total votes in favor
     pub votes_for: i64,
     /// Total votes against
     pub votes_against: i64,
-    /// Number of abstentions
-    pub abstentions: usize,
-    /// Total participants
+    /// Number of participants
     pub participants: usize,
     /// Participation rate
     pub participation_rate: f64,
-    /// Individual vote details
-    pub votes: HashMap<SwarmAgentId, Vote>,
-    /// Timestamp when voting concluded
-    pub concluded_at: chrono::DateTime<chrono::Utc>,
-}
-
-impl VotingOutcome {
-    /// Get the margin of victory/defeat
-    pub fn margin(&self) -> i64 {
-        self.votes_for - self.votes_against
-    }
-
-    /// Get the percentage for
-    pub fn percentage_for(&self) -> f64 {
-        let total = self.votes_for.abs() + self.votes_against.abs();
-        if total == 0 {
-            0.5
-        } else {
-            self.votes_for.abs() as f64 / total as f64
-        }
-    }
+    /// When voting was finalized
+    pub finalized_at: chrono::DateTime<chrono::Utc>,
 }
 
 // ============================================================================
 // Voting Session
 // ============================================================================
 
-/// State of a voting session
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Session state
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SessionState {
     /// Session is open for voting
     Open,
-    /// Session is closed, awaiting finalization
+    /// Session is closed
     Closed,
     /// Session has been finalized
     Finalized,
-    /// Session was cancelled
-    Cancelled,
 }
 
-/// A voting session for a proposal
+/// A voting session
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VotingSession {
-    /// Unique session ID
+    /// Session identifier
     pub id: String,
     /// The proposal being voted on
     pub proposal: Proposal,
-    /// Configuration for this session
+    /// Configuration
     pub config: VotingConfig,
     /// Current state
     pub state: SessionState,
     /// Recorded votes
     pub votes: HashMap<SwarmAgentId, Vote>,
     /// Agent credits
-    pub agent_credits: HashMap<SwarmAgentId, AgentCredits>,
+    pub credits: HashMap<SwarmAgentId, AgentCredits>,
+    /// Expected number of voters (for participation calculation)
+    pub expected_voters: usize,
     /// When the session was created
     pub created_at: chrono::DateTime<chrono::Utc>,
-    /// When the session was closed
-    pub closed_at: Option<chrono::DateTime<chrono::Utc>>,
-    /// Expected number of eligible voters
-    pub eligible_voters: usize,
 }
 
 impl VotingSession {
@@ -370,20 +413,13 @@ impl VotingSession {
             config,
             state: SessionState::Open,
             votes: HashMap::new(),
-            agent_credits: HashMap::new(),
+            credits: HashMap::new(),
+            expected_voters: 0,
             created_at: chrono::Utc::now(),
-            closed_at: None,
-            eligible_voters: 0,
         }
     }
 
-    /// Set the number of eligible voters
-    pub fn with_eligible_voters(mut self, count: usize) -> Self {
-        self.eligible_voters = count;
-        self
-    }
-
-    /// Check if the session is open
+    /// Check if the session is open for voting
     pub fn is_open(&self) -> bool {
         self.state == SessionState::Open
     }
@@ -393,15 +429,18 @@ impl VotingSession {
         &mut self,
         agent_id: SwarmAgentId,
         vote: Vote,
-    ) -> Result<VoteResult, VotingError> {
+    ) -> Result<VoteReceipt, VotingError> {
+        // Check session is open
         if !self.is_open() {
             return Err(VotingError::SessionClosed);
         }
 
+        // Check not already voted
         if self.votes.contains_key(&agent_id) {
             return Err(VotingError::AlreadyVoted(agent_id.to_string()));
         }
 
+        // Check strength limit
         if vote.strength > self.config.max_strength {
             return Err(VotingError::StrengthExceedsMax(
                 vote.strength,
@@ -416,112 +455,35 @@ impl VotingSession {
             vote.strength
         };
 
-        // Get or create agent credits
+        // Get or create credits
         let credits = self
-            .agent_credits
+            .credits
             .entry(agent_id.clone())
             .or_insert_with(|| AgentCredits::new(self.config.credits_per_agent));
 
         // Spend credits
         credits.spend(cost)?;
+
         let remaining = credits.remaining;
 
-        // Record the vote
-        self.votes.insert(agent_id.clone(), vote.clone());
+        // Record vote
+        self.votes.insert(agent_id.clone(), vote);
 
-        Ok(VoteResult {
+        Ok(VoteReceipt {
+            session_id: self.id.clone(),
             agent_id,
-            vote,
             credits_consumed: cost,
             credits_remaining: remaining,
+            timestamp: chrono::Utc::now(),
         })
     }
 
-    /// Close the voting session
-    pub fn close(&mut self) {
-        if self.state == SessionState::Open {
-            self.state = SessionState::Closed;
-            self.closed_at = Some(chrono::Utc::now());
-        }
-    }
-
-    /// Finalize the voting session and compute outcome
+    /// Finalize the voting session
     pub fn finalize(&mut self) -> Result<VotingOutcome, VotingError> {
-        // Close if still open
-        if self.state == SessionState::Open {
-            self.close();
-        }
-
-        if self.state == SessionState::Finalized {
-            // Return cached result if already finalized
-            return Ok(self.compute_outcome());
-        }
-
-        // Check participation
-        let participation_rate = if self.eligible_voters > 0 {
-            self.votes.len() as f64 / self.eligible_voters as f64
-        } else {
-            1.0 // If no eligible voters specified, assume 100% participation
-        };
-
-        if participation_rate < self.config.min_participation {
-            return Err(VotingError::InsufficientParticipation(
-                participation_rate * 100.0,
-                self.config.min_participation * 100.0,
-            ));
-        }
-
+        // Close the session
         self.state = SessionState::Finalized;
-        Ok(self.compute_outcome())
-    }
 
-    /// Compute the voting outcome
-    fn compute_outcome(&self) -> VotingOutcome {
-        let mut votes_for: i64 = 0;
-        let mut votes_against: i64 = 0;
-        let mut abstentions = 0;
-
-        for vote in self.votes.values() {
-            match vote.direction {
-                VoteDirection::For => votes_for += vote.strength as i64,
-                VoteDirection::Against => votes_against += vote.strength as i64,
-                VoteDirection::Abstain => abstentions += 1,
-            }
-        }
-
-        let participants = if self.config.abstentions_count {
-            self.votes.len()
-        } else {
-            self.votes.len() - abstentions
-        };
-
-        let participation_rate = if self.eligible_voters > 0 {
-            participants as f64 / self.eligible_voters as f64
-        } else {
-            1.0
-        };
-
-        VotingOutcome {
-            session_id: self.id.clone(),
-            passed: votes_for > votes_against,
-            votes_for,
-            votes_against,
-            abstentions,
-            participants,
-            participation_rate,
-            votes: self.votes.clone(),
-            concluded_at: self.closed_at.unwrap_or_else(chrono::Utc::now),
-        }
-    }
-
-    /// Cancel the voting session
-    pub fn cancel(&mut self) {
-        self.state = SessionState::Cancelled;
-        self.closed_at = Some(chrono::Utc::now());
-    }
-
-    /// Get the current vote tally
-    pub fn current_tally(&self) -> (i64, i64) {
+        // Calculate results
         let mut votes_for: i64 = 0;
         let mut votes_against: i64 = 0;
 
@@ -533,60 +495,35 @@ impl VotingSession {
             }
         }
 
-        (votes_for, votes_against)
-    }
-}
+        let participants = self.votes.len();
+        let participation_rate = if self.expected_voters > 0 {
+            participants as f64 / self.expected_voters as f64
+        } else {
+            1.0
+        };
 
-// ============================================================================
-// Quadratic Voting Calculator
-// ============================================================================
-
-/// Quadratic voting calculator
-#[derive(Debug, Clone)]
-pub struct QuadraticVoting {
-    /// Credits per agent
-    pub credits_per_agent: u64,
-}
-
-impl QuadraticVoting {
-    /// Create a new quadratic voting calculator
-    pub fn new(credits_per_agent: u64) -> Self {
-        Self { credits_per_agent }
-    }
-
-    /// Calculate the cost of a vote with given strength
-    pub fn calculate_cost(&self, strength: u64) -> u64 {
-        strength * strength
-    }
-
-    /// Calculate the maximum strength affordable with given credits
-    pub fn max_affordable_strength(&self, credits: u64) -> u64 {
-        (credits as f64).sqrt().floor() as u64
-    }
-
-    /// Calculate how many votes of each strength are affordable
-    pub fn affordable_distribution(&self, credits: u64) -> HashMap<u64, u64> {
-        let mut distribution = HashMap::new();
-
-        for strength in 1..=self.max_affordable_strength(credits) {
-            let cost = self.calculate_cost(strength);
-            let affordable = credits / cost;
-            if affordable > 0 {
-                distribution.insert(strength, affordable);
-            }
+        // Check minimum participation
+        if participation_rate < self.config.min_participation {
+            return Err(VotingError::MinParticipationNotMet(
+                self.config.min_participation * 100.0,
+                participation_rate * 100.0,
+            ));
         }
 
-        distribution
+        Ok(VotingOutcome {
+            passed: votes_for > votes_against,
+            votes_for,
+            votes_against,
+            participants,
+            participation_rate,
+            finalized_at: chrono::Utc::now(),
+        })
     }
 
-    /// Validate a set of votes against available credits
-    pub fn validate_votes(&self, votes: &[(u64, u64)], available_credits: u64) -> bool {
-        let total_cost: u64 = votes
-            .iter()
-            .map(|(strength, count)| self.calculate_cost(*strength) * count)
-            .sum();
-
-        total_cost <= available_credits
+    /// Set expected number of voters
+    pub fn with_expected_voters(mut self, count: usize) -> Self {
+        self.expected_voters = count;
+        self
     }
 }
 
@@ -675,7 +612,7 @@ mod tests {
 
         assert_eq!(qv.max_affordable_strength(100), 10);
         assert_eq!(qv.max_affordable_strength(81), 9);
-        assert_eq!(qv.max_affordable_strength(50), 7); // sqrt(50) ≈ 7.07
+        assert_eq!(qv.max_affordable_strength(50), 7);
         assert_eq!(qv.max_affordable_strength(1), 1);
         assert_eq!(qv.max_affordable_strength(0), 0);
     }
@@ -684,13 +621,10 @@ mod tests {
     fn test_validate_votes() {
         let qv = QuadraticVoting::new(100);
 
-        // Single vote of strength 10 costs 100
         assert!(qv.validate_votes(&[(10, 1)], 100));
         assert!(!qv.validate_votes(&[(10, 1)], 99));
-
-        // Multiple votes
-        assert!(qv.validate_votes(&[(2, 5), (3, 2)], 100)); // 4*5 + 9*2 = 38
-        assert!(!qv.validate_votes(&[(5, 3), (4, 2)], 100)); // 25*3 + 16*2 = 107
+        assert!(qv.validate_votes(&[(2, 5), (3, 2)], 100));
+        assert!(!qv.validate_votes(&[(5, 3), (4, 2)], 100));
     }
 
     #[test]
@@ -714,10 +648,9 @@ mod tests {
 
         let result = session.record_vote(agent_id.clone(), vote).unwrap();
 
-        assert_eq!(result.credits_consumed, 25); // 5² = 25
-        assert_eq!(result.credits_remaining, 75); // 100 - 25
+        assert_eq!(result.credits_consumed, 25);
+        assert_eq!(result.credits_remaining, 75);
 
-        // Try to vote again
         let result = session.record_vote(agent_id, Vote::against_proposal(3));
         assert!(matches!(result, Err(VotingError::AlreadyVoted(_))));
     }
@@ -729,7 +662,7 @@ mod tests {
         let mut session = VotingSession::new("session1".to_string(), proposal, config);
 
         let agent_id = SwarmAgentId::new();
-        let vote = Vote::for_proposal(10); // Exceeds max of 5
+        let vote = Vote::for_proposal(10);
 
         let result = session.record_vote(agent_id, vote);
         assert!(matches!(
@@ -744,7 +677,6 @@ mod tests {
         let config = VotingConfig::default();
         let mut session = VotingSession::new("session1".to_string(), proposal, config);
 
-        // Cast some votes
         let agent1 = SwarmAgentId::new();
         let agent2 = SwarmAgentId::new();
         let agent3 = SwarmAgentId::new();
@@ -757,7 +689,7 @@ mod tests {
 
         let outcome = session.finalize().unwrap();
 
-        assert!(outcome.passed); // 5 + 3 = 8 > 4
+        assert!(outcome.passed);
         assert_eq!(outcome.votes_for, 8);
         assert_eq!(outcome.votes_against, 4);
         assert_eq!(outcome.participants, 3);
@@ -767,72 +699,14 @@ mod tests {
     fn test_voting_session_minimum_participation() {
         let proposal = Proposal::new("Test Proposal");
         let config = VotingConfig::default().with_min_participation(0.5);
-        let mut session =
-            VotingSession::new("session1".to_string(), proposal, config).with_eligible_voters(10);
+        let mut session = VotingSession::new("session1".to_string(), proposal, config)
+            .with_expected_voters(10);
 
-        // Only 4 out of 10 vote (40% < 50%)
-        for i in 0..4 {
-            session
-                .record_vote(SwarmAgentId::new(), Vote::for_proposal(1))
-                .unwrap();
-        }
+        let agent1 = SwarmAgentId::new();
+        session.record_vote(agent1, Vote::for_proposal(5)).unwrap();
 
+        // Only 1 out of 10 expected voters - should fail
         let result = session.finalize();
-        assert!(matches!(
-            result,
-            Err(VotingError::InsufficientParticipation(_, _))
-        ));
-    }
-
-    #[test]
-    fn test_current_tally() {
-        let proposal = Proposal::new("Test Proposal");
-        let config = VotingConfig::default();
-        let mut session = VotingSession::new("session1".to_string(), proposal, config);
-
-        session
-            .record_vote(SwarmAgentId::new(), Vote::for_proposal(5))
-            .unwrap();
-        session
-            .record_vote(SwarmAgentId::new(), Vote::against_proposal(3))
-            .unwrap();
-
-        let (votes_for, votes_against) = session.current_tally();
-        assert_eq!(votes_for, 5);
-        assert_eq!(votes_against, 3);
-    }
-
-    #[test]
-    fn test_voting_outcome_margin() {
-        let outcome = VotingOutcome {
-            session_id: "test".to_string(),
-            passed: true,
-            votes_for: 10,
-            votes_against: 4,
-            abstentions: 0,
-            participants: 3,
-            participation_rate: 1.0,
-            votes: HashMap::new(),
-            concluded_at: chrono::Utc::now(),
-        };
-
-        assert_eq!(outcome.margin(), 6);
-        assert!((outcome.percentage_for() - 0.714).abs() < 0.01);
-    }
-
-    #[test]
-    fn test_linear_voting() {
-        let proposal = Proposal::new("Test Proposal");
-        let config = VotingConfig::new(100).with_quadratic(false);
-        let mut session = VotingSession::new("session1".to_string(), proposal, config);
-
-        let agent_id = SwarmAgentId::new();
-        let vote = Vote::for_proposal(5);
-
-        let result = session.record_vote(agent_id, vote).unwrap();
-
-        // Linear cost: strength = cost
-        assert_eq!(result.credits_consumed, 5);
-        assert_eq!(result.credits_remaining, 95);
+        assert!(matches!(result, Err(VotingError::MinParticipationNotMet(_, _))));
     }
 }

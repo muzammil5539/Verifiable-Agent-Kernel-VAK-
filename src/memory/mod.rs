@@ -93,6 +93,7 @@ pub use time_travel::{
     StateCheckpoint, StateDiff,
     // MEM-005 Enhanced exports
     FullCheckout, CheckoutMetadata, ProvenanceLink, ReplayStep, ReplayAction, StateChange,
+    CheckoutOptions, CheckoutResult, CheckoutStateSummary,
 };
 
 pub use vector_store::{

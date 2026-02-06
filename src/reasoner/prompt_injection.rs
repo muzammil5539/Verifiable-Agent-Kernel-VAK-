@@ -469,9 +469,9 @@ impl PromptInjectionDetector {
                         name: "instruction_override".to_string(),
                         matched_text: m.as_str().to_string(),
                         position: m.start(),
-                        risk_contribution: 0.3,
+                        risk_contribution: 0.55,
                     });
-                    risk_score += 0.3;
+                    risk_score += 0.55;
                     detected_type = Some(InjectionType::InstructionOverride);
                 }
             }
@@ -483,9 +483,9 @@ impl PromptInjectionDetector {
                         name: "role_impersonation".to_string(),
                         matched_text: m.as_str().to_string(),
                         position: m.start(),
-                        risk_contribution: 0.25,
+                        risk_contribution: 0.55,
                     });
-                    risk_score += 0.25;
+                    risk_score += 0.55;
                     if detected_type.is_none() {
                         detected_type = Some(InjectionType::RoleImpersonation);
                     }
@@ -515,9 +515,9 @@ impl PromptInjectionDetector {
                         name: "jailbreak".to_string(),
                         matched_text: m.as_str().to_string(),
                         position: m.start(),
-                        risk_contribution: 0.4,
+                        risk_contribution: 0.6,
                     });
-                    risk_score += 0.4;
+                    risk_score += 0.6;
                     detected_type = Some(InjectionType::Jailbreak);
                 }
             }
@@ -529,9 +529,9 @@ impl PromptInjectionDetector {
                         name: "payload_injection".to_string(),
                         matched_text: m.as_str().to_string(),
                         position: m.start(),
-                        risk_contribution: 0.35,
+                        risk_contribution: 0.55,
                     });
-                    risk_score += 0.35;
+                    risk_score += 0.55;
                     if detected_type.is_none() {
                         detected_type = Some(InjectionType::PayloadInjection);
                     }

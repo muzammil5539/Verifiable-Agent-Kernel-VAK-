@@ -36,7 +36,7 @@ pub use context::{
 // Re-export hot-reload types (POL-006)
 pub use hot_reload::{
     HotReloadablePolicyEngine, HotReloadConfig, HotReloadError, HotReloadResult,
-    HotReloadMetrics, PolicySnapshot, PolicyVersion,
+    HotReloadMetrics, PolicySnapshot, PolicyVersion, HotReloadDecision,
 };
 
 // Re-export context integration types (POL-005 complete)

@@ -300,7 +300,7 @@ impl SycophancyDetector {
 
         // Identify risk indicators
         let mut risk_indicators = Vec::new();
-        let mut total_risk: f64 = 0.0;  // Explicit type annotation
+        let mut total_risk = 0.0;
 
         // Check for unanimous agreement
         let max_votes = option_counts.values().max().copied().unwrap_or(0);

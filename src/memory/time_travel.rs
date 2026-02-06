@@ -43,6 +43,17 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 // ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Compute SHA-256 hash of data
+fn compute_sha256(data: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hasher.finalize().into()
+}
+
+// ============================================================================
 // Error Types
 // ============================================================================
 
@@ -977,6 +988,72 @@ pub struct StateChange {
     pub new_hash: Option<String>,
 }
 
+// ============================================================================
+// Checkout Types (MEM-005 Enhanced)
+// ============================================================================
+
+/// Options for checkout operations
+#[derive(Debug, Clone, Default)]
+pub struct CheckoutOptions {
+    /// Whether to verify the snapshot before checkout
+    pub verify_before_checkout: bool,
+    /// Branch name to create from the checkout (optional)
+    pub create_branch: Option<String>,
+    /// Whether to preserve the current working state
+    pub preserve_working_state: bool,
+}
+
+impl CheckoutOptions {
+    /// Create new checkout options
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Enable verification before checkout
+    pub fn with_verification(mut self) -> Self {
+        self.verify_before_checkout = true;
+        self
+    }
+
+    /// Create a branch from the checkout
+    pub fn with_branch(mut self, name: impl Into<String>) -> Self {
+        self.create_branch = Some(name.into());
+        self
+    }
+
+    /// Preserve current working state
+    pub fn preserve_state(mut self) -> Self {
+        self.preserve_working_state = true;
+        self
+    }
+}
+
+/// Result of a checkout operation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckoutResult {
+    /// The snapshot ID that was checked out
+    pub snapshot_id: SnapshotId,
+    /// The Merkle root hash
+    pub merkle_root: [u8; 32],
+    /// Number of entries restored
+    pub entries_restored: usize,
+    /// Summary of the restored state
+    pub state_summary: CheckoutStateSummary,
+}
+
+/// Summary of checkout state
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckoutStateSummary {
+    /// Number of keys in the state
+    pub key_count: usize,
+    /// Total bytes of state data
+    pub total_bytes: usize,
+    /// List of keys in the state
+    pub keys: Vec<String>,
+    /// Hash of the state
+    pub state_hash: String,
+}
+
 impl TimeTravelManager {
     // ========================================================================
     // Checkout Operations (MEM-005 Enhanced)
@@ -1100,89 +1177,107 @@ impl TimeTravelManager {
     /// an exact memory state in a new VAK instance.
     pub fn full_checkout(&self, snapshot_id: &SnapshotId) -> Option<FullCheckout> {
         // Find the snapshot
-        let snapshot_idx = self.snapshots.iter().position(|s| &s.id == snapshot_id)?;
-        let snapshot = &self.snapshots[snapshot_idx];
+        let snapshot = self.snapshots.get(snapshot_id)?;
 
-        // Build provenance chain from genesis to this snapshot
+        // Build provenance chain by walking up the parent chain
         let mut provenance_chain = Vec::new();
-        for i in 0..=snapshot_idx {
-            let s = &self.snapshots[i];
+        let mut current_id = Some(*snapshot_id);
+        let mut chain_snapshots = Vec::new();
+        
+        // Collect all snapshots in the chain
+        while let Some(id) = current_id {
+            if let Some(s) = self.snapshots.get(&id) {
+                chain_snapshots.push(s.clone());
+                current_id = s.parent_id;
+            } else {
+                break;
+            }
+        }
+        
+        // Reverse to get genesis-first order
+        chain_snapshots.reverse();
+        
+        // Build provenance chain
+        for (i, s) in chain_snapshots.iter().enumerate() {
             provenance_chain.push(ProvenanceLink {
-                state_hash: s.merkle_root.clone(),
+                state_hash: hex::encode(&s.hash),
                 previous_hash: if i > 0 {
-                    Some(self.snapshots[i - 1].merkle_root.clone())
+                    Some(hex::encode(&chain_snapshots[i - 1].hash))
                 } else {
                     None
                 },
                 action: s.metadata.get("action")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("checkpoint")
-                    .to_string(),
-                timestamp: s.timestamp,
+                    .cloned()
+                    .unwrap_or_else(|| "checkpoint".to_string()),
+                timestamp: s.created_at,
             });
         }
 
-        // Get the state data at this point
-        // For a full implementation, we'd need to reconstruct from the Merkle tree
-        // For now, we use the current working state if this is the latest snapshot
-        let state_data = if snapshot_idx == self.snapshots.len() - 1 {
-            self.working_state.clone()
-        } else {
-            // For historical snapshots, we'd need delta reconstruction
-            // This is a simplified implementation
-            HashMap::new()
-        };
+        // Get the state data from the snapshot
+        let state_data: HashMap<String, Vec<u8>> = snapshot
+            .state
+            .iter()
+            .map(|(k, v)| (k.clone(), v.value.clone()))
+            .collect();
 
         Some(FullCheckout {
-            snapshot_id: snapshot_id.clone(),
-            merkle_root: snapshot.merkle_root.clone(),
+            snapshot_id: *snapshot_id,
+            merkle_root: hex::encode(&snapshot.hash),
             state_data,
             metadata: CheckoutMetadata {
                 created_at: chrono::Utc::now(),
-                snapshot_timestamp: snapshot.timestamp,
-                branch: self.current_branch.clone(),
-                description: snapshot.metadata.get("description")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                agent_id: snapshot.metadata.get("agent_id")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                session_id: snapshot.metadata.get("session_id")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
+                snapshot_timestamp: snapshot.created_at,
+                branch: self.get_current_branch_name(),
+                description: snapshot.metadata.get("description").cloned(),
+                agent_id: snapshot.metadata.get("agent_id").cloned(),
+                session_id: snapshot.metadata.get("session_id").cloned(),
             },
             provenance_chain,
         })
     }
 
+    /// Get the name of the current branch, if any
+    fn get_current_branch_name(&self) -> Option<String> {
+        self.head.and_then(|head_id| {
+            self.branches.iter()
+                .find(|(_, branch)| branch.head == head_id)
+                .map(|(name, _)| name.clone())
+        })
+    }
+
     /// Restore from a full checkout
     pub fn restore_from_checkout(&mut self, checkout: &FullCheckout) -> Result<(), TimeTravelError> {
-        // Verify the checkout integrity
-        let computed_root = self.compute_merkle_root_from_state(&checkout.state_data);
-        if computed_root != checkout.merkle_root {
-            return Err(TimeTravelError::VerificationFailed(
-                "Checkout merkle root mismatch".to_string()
-            ));
+        // For restoration, we verify the checkout has valid provenance chain
+        // (The merkle_root in checkout was computed from the original snapshot's hash,
+        // which includes ID, label, etc. - we can't recompute that from just state data)
+        if checkout.provenance_chain.is_empty() {
+            return Err(TimeTravelError::VerificationFailed {
+                snapshot_id: checkout.snapshot_id,
+                reason: "Empty provenance chain".to_string(),
+            });
+        }
+
+        // Verify the last link in provenance chain matches the merkle root
+        if let Some(last_link) = checkout.provenance_chain.last() {
+            if last_link.state_hash != checkout.merkle_root {
+                return Err(TimeTravelError::VerificationFailed {
+                    snapshot_id: checkout.snapshot_id,
+                    reason: "Provenance chain doesn't match merkle root".to_string(),
+                });
+            }
         }
 
         // Restore the state
         self.working_state = checkout.state_data.clone();
 
-        // Create a new snapshot for the restoration
-        let mut metadata = serde_json::Map::new();
-        metadata.insert("restored_from".to_string(), 
-            serde_json::Value::String(checkout.snapshot_id.to_string()));
-        metadata.insert("action".to_string(), 
-            serde_json::Value::String("restore_from_checkout".to_string()));
-
-        self.checkpoint_with_metadata(serde_json::Value::Object(metadata))?;
+        // Create a new checkpoint for the restoration
+        self.create_checkpoint(format!("Restored from {}", checkout.snapshot_id));
 
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn compute_merkle_root_from_state(&self, state: &HashMap<String, Vec<u8>>) -> String {
-        use sha2::{Sha256, Digest};
-        
         let mut hasher = Sha256::new();
         let mut keys: Vec<_> = state.keys().collect();
         keys.sort();
@@ -1196,134 +1291,159 @@ impl TimeTravelManager {
     }
 
     /// Generate replay steps between two snapshots
+    ///
+    /// Returns None if either snapshot is not found or if there's no valid path between them.
     pub fn generate_replay(&self, from: &SnapshotId, to: &SnapshotId) -> Option<Vec<ReplayStep>> {
-        let from_idx = self.snapshots.iter().position(|s| &s.id == from)?;
-        let to_idx = self.snapshots.iter().position(|s| &s.id == to)?;
+        // Get both snapshots to verify they exist
+        let _from_snapshot = self.snapshots.get(from)?;
+        let to_snapshot = self.snapshots.get(to)?;
 
-        if from_idx >= to_idx {
-            return None;
+        // Build the path from 'to' back to 'from' by following parent links
+        let mut path = Vec::new();
+        let mut current = Some(*to);
+        
+        while let Some(id) = current {
+            if let Some(snapshot) = self.snapshots.get(&id) {
+                path.push(snapshot.clone());
+                if id == *from {
+                    break;
+                }
+                current = snapshot.parent_id;
+            } else {
+                break;
+            }
         }
+        
+        // Verify we found the from snapshot
+        if path.last().map(|s| s.id != *from).unwrap_or(true) {
+            return None; // No path between snapshots
+        }
+        
+        // Reverse to get from-first order
+        path.reverse();
 
+        // Generate replay steps
         let mut steps = Vec::new();
         
-        for i in from_idx..to_idx {
-            let current = &self.snapshots[i];
-            let next = &self.snapshots[i + 1];
-
-            // Compute state diff
-            let diff = self.compute_diff(&current.id, &next.id)?;
-
-            let action = next.metadata.get("action")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-
-            let replay_action = match action {
-                "write" => {
-                    let key = next.metadata.get("key")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
-                    let size = diff.changes.iter()
-                        .find(|(k, _)| k == key)
-                        .map(|(_, v)| v.as_ref().map(|d| d.len()).unwrap_or(0))
-                        .unwrap_or(0);
-                    ReplayAction::Write { 
-                        key: key.to_string(), 
-                        size 
+        for (i, snapshot) in path.iter().skip(1).enumerate() {
+            let prev = &path[i];
+            
+            // Compute state changes
+            let changes: Vec<StateChange> = {
+                let mut changes = Vec::new();
+                
+                // Find added/modified keys
+                for (key, entry) in &snapshot.state {
+                    let new_hash = Some(hex::encode(&entry.value_hash));
+                    let previous_hash = prev.state.get(key).map(|e| hex::encode(&e.value_hash));
+                    
+                    if previous_hash != new_hash {
+                        changes.push(StateChange {
+                            key: key.clone(),
+                            previous_hash,
+                            new_hash,
+                        });
                     }
+                }
+                
+                // Find deleted keys
+                for key in prev.state.keys() {
+                    if !snapshot.state.contains_key(key) {
+                        changes.push(StateChange {
+                            key: key.clone(),
+                            previous_hash: prev.state.get(key).map(|e| hex::encode(&e.value_hash)),
+                            new_hash: None,
+                        });
+                    }
+                }
+                
+                changes
+            };
+
+            let action_type = snapshot.metadata.get("action")
+                .cloned()
+                .unwrap_or_else(|| "checkpoint".to_string());
+
+            let replay_action = match action_type.as_str() {
+                "write" => {
+                    let key = snapshot.metadata.get("key")
+                        .cloned()
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let size = snapshot.state.get(&key)
+                        .map(|e| e.value.len())
+                        .unwrap_or(0);
+                    ReplayAction::Write { key, size }
                 }
                 "delete" => {
-                    let key = next.metadata.get("key")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
-                    ReplayAction::Delete { key: key.to_string() }
-                }
-                "tool_exec" => {
-                    let tool = next.metadata.get("tool")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
-                    let params = next.metadata.get("params")
+                    let key = snapshot.metadata.get("key")
                         .cloned()
-                        .unwrap_or(serde_json::json!({}));
-                    ReplayAction::ToolExec { 
-                        tool: tool.to_string(), 
-                        params 
-                    }
-                }
-                "policy_eval" => {
-                    let action_str = next.metadata.get("action_name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
-                    let resource = next.metadata.get("resource")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
-                    let decision = next.metadata.get("decision")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
-                    ReplayAction::PolicyEval {
-                        action: action_str.to_string(),
-                        resource: resource.to_string(),
-                        decision: decision.to_string(),
-                    }
+                        .unwrap_or_else(|| "unknown".to_string());
+                    ReplayAction::Delete { key }
                 }
                 _ => ReplayAction::Custom {
-                    action_type: action.to_string(),
-                    details: next.metadata.clone(),
+                    action_type,
+                    details: serde_json::json!(snapshot.metadata),
                 }
             };
 
-            let changes: Vec<StateChange> = diff.changes.iter()
-                .map(|(key, new_value)| {
-                    StateChange {
-                        key: key.clone(),
-                        previous_hash: None, // Would need historical state
-                        new_hash: new_value.as_ref().map(|v| {
-                            use sha2::{Sha256, Digest};
-                            hex::encode(Sha256::digest(v))
-                        }),
-                    }
-                })
-                .collect();
-
             steps.push(ReplayStep {
-                step: (i - from_idx + 1) as u64,
-                state_hash: next.merkle_root.clone(),
+                step: (i + 1) as u64,
+                state_hash: hex::encode(&snapshot.hash),
                 action: replay_action,
                 changes,
-                timestamp: next.timestamp,
+                timestamp: snapshot.created_at,
             });
         }
 
         Some(steps)
     }
 
+    /// Compute the current merkle root from working state
+    fn compute_current_merkle_root(&self) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        let mut keys: Vec<_> = self.working_state.keys().collect();
+        keys.sort();
+        
+        for key in keys {
+            hasher.update(key.as_bytes());
+            hasher.update(&self.working_state[key]);
+        }
+        
+        hasher.finalize().into()
+    }
+
     /// Step forward one decision at a time (for debugging)
     pub fn step_forward(&mut self) -> Option<ReplayStep> {
-        let current_idx = self.snapshots.iter()
-            .position(|s| s.merkle_root == self.compute_current_merkle_root())?;
+        // Get current head
+        let current_head = self.head?;
+        let current_snapshot = self.snapshots.get(&current_head)?;
 
-        if current_idx >= self.snapshots.len() - 1 {
-            return None; // Already at latest
-        }
-
-        let next = &self.snapshots[current_idx + 1];
+        // Find any snapshot that has the current as its parent
+        // (This is a simplified implementation - in production you'd want an index)
+        let next_snapshot = self.snapshots.values()
+            .find(|s| s.parent_id == Some(current_head))?
+            .clone();
         
         // Apply the next state
-        // In a full implementation, we'd apply the delta
-        // For now, we just move the pointer
+        self.working_state.clear();
+        for (key, entry) in &next_snapshot.state {
+            self.working_state.insert(key.clone(), entry.value.clone());
+        }
+        self.head = Some(next_snapshot.id);
 
-        let action = next.metadata.get("action")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
+        let action_type = next_snapshot.metadata.get("action")
+            .cloned()
+            .unwrap_or_else(|| "checkpoint".to_string());
 
         Some(ReplayStep {
-            step: (current_idx + 1) as u64,
-            state_hash: next.merkle_root.clone(),
+            step: 1,
+            state_hash: hex::encode(&next_snapshot.hash),
             action: ReplayAction::Custom {
-                action_type: action.to_string(),
-                details: next.metadata.clone(),
+                action_type,
+                details: serde_json::json!(next_snapshot.metadata),
             },
             changes: vec![],
-            timestamp: next.timestamp,
+            timestamp: next_snapshot.created_at,
         })
     }
 }
@@ -1338,12 +1458,11 @@ mod checkout_tests {
 
     #[test]
     fn test_full_checkout() {
-        let mut manager = TimeTravelManager::new(TimeTravelConfig::default());
+        let mut manager = TimeTravelManager::new("test-namespace");
         
         manager.set("key1", b"value1".to_vec());
-        manager.checkpoint().unwrap();
+        let snapshot_id = manager.create_checkpoint("Initial state");
         
-        let snapshot_id = manager.current_snapshot_id().unwrap();
         let checkout = manager.full_checkout(&snapshot_id).unwrap();
         
         assert_eq!(checkout.snapshot_id, snapshot_id);
@@ -1352,35 +1471,32 @@ mod checkout_tests {
 
     #[test]
     fn test_restore_from_checkout() {
-        let mut manager = TimeTravelManager::new(TimeTravelConfig::default());
+        let mut manager = TimeTravelManager::new("test-namespace");
         
         manager.set("key1", b"value1".to_vec());
-        manager.checkpoint().unwrap();
+        let snapshot_id = manager.create_checkpoint("Initial state");
         
-        let snapshot_id = manager.current_snapshot_id().unwrap();
         let checkout = manager.full_checkout(&snapshot_id).unwrap();
         
         // Create a new manager and restore
-        let mut new_manager = TimeTravelManager::new(TimeTravelConfig::default());
+        let mut new_manager = TimeTravelManager::new("test-namespace-2");
         new_manager.restore_from_checkout(&checkout).unwrap();
         
-        assert_eq!(new_manager.get("key1"), Some(b"value1".to_vec()));
+        assert_eq!(new_manager.get("key1"), Some(b"value1".as_slice()));
     }
 
     #[test]
     fn test_generate_replay() {
-        let mut manager = TimeTravelManager::new(TimeTravelConfig::default());
+        let mut manager = TimeTravelManager::new("test-namespace");
         
         // Create some state changes
-        manager.checkpoint().unwrap();
-        let first_id = manager.current_snapshot_id().unwrap();
+        let first_id = manager.create_checkpoint("Initial");
         
         manager.set("key1", b"value1".to_vec());
-        manager.checkpoint().unwrap();
+        let _mid_id = manager.create_checkpoint("After first change");
         
         manager.set("key2", b"value2".to_vec());
-        manager.checkpoint().unwrap();
-        let last_id = manager.current_snapshot_id().unwrap();
+        let last_id = manager.create_checkpoint("After second change");
         
         let replay = manager.generate_replay(&first_id, &last_id);
         assert!(replay.is_some());

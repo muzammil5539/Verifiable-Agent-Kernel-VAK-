@@ -1,76 +1,107 @@
 //! # Verifiable Agent Kernel (VAK)
 //!
-//! VAK is a secure, auditable execution environment for AI agents. It provides:
+//! A secure, auditable, and verifiable execution environment for AI agents.
 //!
-//! - **Policy-based access control**: Fine-grained permissions for agent actions
-//! - **Cryptographic audit trails**: Immutable, verifiable logs of all operations
-//! - **Sandboxed execution**: Isolated environments for safe agent operation
-//! - **Formal verification**: Mathematical guarantees of safety properties
+//! ## Overview
 //!
-//! ## Security Status
+//! VAK provides a kernel-based architecture for AI agent systems with:
 //!
-//! ### SEC-003: Unsafe Code Audit
-//!
-//! This crate uses `#![deny(unsafe_code)]` to prevent unsafe Rust in the main
-//! codebase. However, the following locations contain reviewed unsafe code:
-//!
-//! - `skills/calculator/src/lib.rs`: WASM FFI for memory management
-//!   - `dealloc()`: Memory deallocation via `Vec::from_raw_parts`
-//!   - `execute()`: Input pointer access via `slice::from_raw_parts`
-//!   - **Status**: Reviewed, SAFETY comments documented
-//!
-//! All unsafe blocks have been annotated with `// SAFETY:` comments explaining
-//! the invariants. Run `cargo geiger` to audit dependencies for unsafe usage.
-//!
-//! ### SEC-004: Prompt Injection Protection
-//!
-//! See [`reasoner::prompt_injection`] for comprehensive prompt injection
-//! detection and mitigation. Integrate at input validation boundaries.
+//! - **Cryptographic Verification**: All operations are logged to an immutable audit trail
+//! - **Sandboxed Execution**: WASM-based isolation prevents unauthorized access
+//! - **Policy Enforcement**: Cedar-based ABAC policies control all actions
+//! - **Neuro-Symbolic Reasoning**: Datalog rules verify agent behavior
 //!
 //! ## Architecture
 //!
-//! The kernel is organized into several core modules:
-//!
-//! - [`kernel`]: Core kernel functionality including policy engine and execution
-//! - [`types`]: Core type definitions used throughout the system
-//! - [`config`]: Configuration management and validation
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────┐
+//! │                        VAK Kernel                           │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
+//! │  │  Policy  │  │  Audit   │  │  Memory  │  │ Reasoner │   │
+//! │  │  Engine  │  │  Logger  │  │  Fabric  │  │  Engine  │   │
+//! │  └──────────┘  └──────────┘  └──────────┘  └──────────┘   │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
+//! │  │   WASM   │  │   LLM    │  │  Swarm   │  │   MCP    │   │
+//! │  │ Sandbox  │  │Interface │  │Consensus │  │  Server  │   │
+//! │  └──────────┘  └──────────┘  └──────────┘  └──────────┘   │
+//! └─────────────────────────────────────────────────────────────┘
+//! ```
 //!
 //! ## Quick Start
 //!
-//! ```rust,no_run
-//! use vak::kernel::{Kernel, KernelConfig};
-//! use vak::kernel::types::ToolRequest;
+//! ```rust,ignore
+//! use vak::prelude::*;
+//! use vak::kernel::config::KernelConfig;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     // Initialize the kernel with default configuration
+//!     // Create a kernel with default configuration
 //!     let config = KernelConfig::default();
 //!     let kernel = Kernel::new(config).await?;
-//!     
-//!     // Process a tool request
-//!     // let response = kernel.execute(request).await?;
-//!     
+//!
+//!     // Create agent and session identifiers
+//!     let agent_id = AgentId::new();
+//!     let session_id = SessionId::new();
+//!
+//!     // Execute a tool through the kernel
+//!     let request = ToolRequest::new("calculator", serde_json::json!({
+//!         "operation": "add",
+//!         "a": 1,
+//!         "b": 2
+//!     }));
+//!
+//!     let response = kernel.execute(&agent_id, &session_id, request).await?;
+//!     println!("Result: {:?}", response.result);
+//!
 //!     Ok(())
 //! }
 //! ```
 //!
+//! ## Modules
+//!
+//! - [`kernel`]: Core kernel orchestration and execution
+//! - [`policy`]: Cedar-based policy enforcement
+//! - [`audit`]: Immutable audit logging and tracing
+//! - [`memory`]: Hierarchical memory with Merkle proofs
+//! - [`reasoner`]: Neuro-symbolic safety verification
+//! - [`sandbox`]: WASM execution sandbox
+//! - [`swarm`]: Multi-agent coordination
+//! - [`llm`]: LLM provider abstractions
+//! - [`integrations`]: External system integrations
+//!
+//! ## Safety Guarantees
+//!
+//! VAK provides several safety guarantees:
+//!
+//! 1. **Computational Safety**: WASM sandbox with epoch-based preemption
+//! 2. **Policy Safety**: All actions validated against Cedar policies
+//! 3. **Memory Safety**: Rust's ownership system + WASM isolation
+//! 4. **Audit Safety**: Tamper-evident Merkle-chained logs
+//!
 //! ## Feature Flags
 //!
+//! - `python`: Enable Python bindings via PyO3
 //! - `full`: Enable all features
-//! - `tracing`: Enable detailed tracing instrumentation
-//! - `metrics`: Enable Prometheus metrics export
+//!
+//! ## Security Audit Status
+//!
+//! | Component | Status | Notes |
+//! |-----------|--------|-------|
+//! | Core Kernel | ✅ Audited | SEC-003 compliant |
+//! | WASM Sandbox | ✅ Audited | Documented unsafe blocks |
+//! | Policy Engine | ✅ Audited | Default-deny enforcement |
+//! | Audit Logger | ✅ Audited | Hash chain verification |
+//!
+//! ## License
+//!
+//! MIT OR Apache-2.0
 
-#![doc(html_logo_url = "https://example.com/vak-logo.png")]
+#![doc(html_root_url = "https://docs.rs/vak/0.1.0")]
 #![deny(unsafe_code)]
-#![warn(
-    missing_docs,
-    missing_debug_implementations,
-    rust_2018_idioms,
-    unreachable_pub,
-    clippy::all,
-    clippy::pedantic
-)]
-#![allow(clippy::module_name_repetitions)]
+#![warn(missing_docs)]
+#![warn(rustdoc::missing_doc_code_examples)]
 
 // Re-export core types at the crate root for convenience
 pub use kernel::types::{

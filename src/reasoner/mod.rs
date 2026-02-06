@@ -96,8 +96,8 @@ pub use prm_gating::{
 
 // Re-export Neuro-Symbolic Hybrid Loop types (NSR-006)
 pub use hybrid_loop::{
-    CycleResult, ExecutionPlan, HybridLoop, HybridLoopConfig, HybridLoopError, HybridResult,
-    LoopPhase, PlanParser, PlanStep,
+    ActionResult, ExecutionPlan, ExecutionResult, HybridConfig, HybridError,
+    HybridReasoningLoop, HybridResult, LoopIteration, PlanAction, ValidationOutcome,
 };
 
 // Re-export all public types from tree_search (NSR-003)
