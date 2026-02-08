@@ -193,7 +193,7 @@ fn py_to_json(obj: Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
         let mut map = serde_json::Map::new();
         for (k, v) in dict.iter() {
             // Mirror Python's json.dumps behavior: coerce dict keys via str(k)
-            let key = k.str()?.to_string_lossy().into_owned();
+            let key = k.str()?.to_str()?.to_owned();
             let value = py_to_json(v)?;
             map.insert(key, value);
         }
@@ -234,6 +234,11 @@ fn py_to_json(obj: Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
         if f.is_finite() {
             if let Some(n) = serde_json::Number::from_f64(f) {
                 return Ok(serde_json::Value::Number(n));
+            } else {
+                return Err(PyValueError::new_err(format!(
+                    "Failed to convert finite float ({}) to JSON number",
+                    f
+                )));
             }
         }
         // Raise error for non-finite floats instead of silently converting to null
@@ -928,7 +933,7 @@ mod tests {
     #[test]
     fn test_py_kernel_agent_registration() {
         pyo3::prepare_freethreaded_python();
-        
+
         Python::with_gil(|py| {
             let mut kernel = PyKernel::default().unwrap();
             let empty_dict = PyDict::new(py);
