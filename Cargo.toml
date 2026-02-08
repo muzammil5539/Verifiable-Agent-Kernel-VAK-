@@ -40,7 +40,7 @@ rand = "0.8"
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 # WASM runtime
-wasmtime = "28.0"
+wasmtime = "41.0"
 
 # Identifiers
 uuid = { version = "1.6", features = ["v4", "v7", "serde"] }
