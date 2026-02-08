@@ -779,21 +779,9 @@ impl SkillRegistry {
 
             if let Ok(entries) = glob::glob(&pattern) {
                 for entry in entries.flatten() {
-                    // Skip non-manifest files (e.g., test files, config files)
-                    if entry.file_name().map_or(false, |n| {
-                        let name = n.to_string_lossy();
-                        name.starts_with('_') || name.contains("test")
-                    }) {
-                        continue;
-                    }
-
-                    match self.load_skill(&entry) {
-                        Ok(id) => {
-                            tracing::info!("Loaded skill from {}", entry.display());
+                    if Self::is_manifest_file(&entry) {
+                        if let Some(id) = self.load_manifest_entry(&entry) {
                             loaded_ids.push(id);
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to load skill from {}: {}", entry.display(), e);
                         }
                     }
                 }
@@ -801,6 +789,28 @@ impl SkillRegistry {
         }
 
         Ok(loaded_ids)
+    }
+
+    /// Check if a file is a valid manifest file (not a test or hidden file)
+    fn is_manifest_file(entry: &Path) -> bool {
+        entry.file_name().map_or(true, |n| {
+            let name = n.to_string_lossy();
+            !name.starts_with('_') && !name.contains("test")
+        })
+    }
+
+    /// Load a single manifest entry, logging any errors
+    fn load_manifest_entry(&mut self, entry: &Path) -> Option<SkillId> {
+        match self.load_skill(entry) {
+            Ok(id) => {
+                tracing::info!("Loaded skill from {}", entry.display());
+                Some(id)
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load skill from {}: {}", entry.display(), e);
+                None
+            }
+        }
     }
 
     /// Get a skill manifest by its ID
