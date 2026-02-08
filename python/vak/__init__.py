@@ -251,7 +251,7 @@ class VakKernel:
             self._native_kernel.register_agent(
                 config.agent_id,
                 config.name,
-                json.dumps({
+                {
                     "description": config.description,
                     "capabilities": config.capabilities,
                     "allowed_tools": config.allowed_tools,
@@ -260,7 +260,7 @@ class VakKernel:
                     "max_concurrent_requests": config.max_concurrent_requests,
                     "trusted": config.trusted,
                     "metadata": config.metadata,
-                }),
+                },
             )
 
         self._registered_agents[config.agent_id] = config
@@ -344,7 +344,7 @@ class VakKernel:
         # Evaluate via native kernel
         if self._native_kernel and hasattr(self._native_kernel, "evaluate_policy"):
             result = self._native_kernel.evaluate_policy(
-                agent_id, action, json.dumps(context)
+                agent_id, action, context
             )
             return PolicyDecision(
                 effect=PolicyEffect(result.get("effect", "deny")),
@@ -467,7 +467,7 @@ class VakKernel:
                     tool_id,
                     agent_id,
                     action,
-                    json.dumps(parameters),
+                    parameters,
                     timeout_ms,
                     memory_limit,
                 )
@@ -567,7 +567,7 @@ class VakKernel:
         }
 
         if self._native_kernel and hasattr(self._native_kernel, "get_audit_logs"):
-            results = self._native_kernel.get_audit_logs(json.dumps(filters))
+            results = self._native_kernel.get_audit_logs(filters)
             return [self._parse_audit_entry(entry) for entry in results]
 
         return []
@@ -627,7 +627,7 @@ class VakKernel:
         }
 
         if self._native_kernel and hasattr(self._native_kernel, "create_audit_entry"):
-            return self._native_kernel.create_audit_entry(json.dumps(entry_data))
+            return self._native_kernel.create_audit_entry(entry_data)
 
         return f"stub-audit-{datetime.now().timestamp()}"
 
