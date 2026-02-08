@@ -810,7 +810,10 @@ impl MarketplaceClient {
             tracing::warn!(
                 "Installing deprecated skill {}: {}",
                 name,
-                skill.deprecation_message.as_deref().unwrap_or("No reason given")
+                skill
+                    .deprecation_message
+                    .as_deref()
+                    .unwrap_or("No reason given")
             );
         }
 
@@ -826,12 +829,14 @@ impl MarketplaceClient {
         }
 
         // Check cache for WASM binary
-        let cache_path = self.config.cache_dir.join(format!("{}-{}.wasm", name, version));
+        let cache_path = self
+            .config
+            .cache_dir
+            .join(format!("{}-{}.wasm", name, version));
         let from_cache = cache_path.exists();
 
         let wasm_bytes = if from_cache {
-            std::fs::read(&cache_path)
-                .map_err(|e| MarketplaceError::CacheError(e.to_string()))?
+            std::fs::read(&cache_path).map_err(|e| MarketplaceError::CacheError(e.to_string()))?
         } else {
             // Download WASM binary
             let wasm_url = format!(
@@ -881,7 +886,10 @@ impl MarketplaceClient {
         };
 
         // Install to skills directory
-        let install_dir = self.config.cache_dir.parent()
+        let install_dir = self
+            .config
+            .cache_dir
+            .parent()
             .map(|p| p.join("installed").join(name))
             .unwrap_or_else(|| PathBuf::from(format!("skills/{}", name)));
 
@@ -943,10 +951,13 @@ wasm_path: {}.wasm
 
     /// Uninstall a skill
     pub async fn uninstall(&self, name: &str) -> Result<UninstallResult, MarketplaceError> {
-        let installed = self.installed.read()
+        let installed = self
+            .installed
+            .read()
             .map_err(|e| MarketplaceError::IoError(e.to_string()))?;
 
-        let install_info = installed.get(name)
+        let install_info = installed
+            .get(name)
             .ok_or_else(|| MarketplaceError::SkillNotFound {
                 name: name.to_string(),
             })?;
@@ -1103,7 +1114,10 @@ wasm_path: {}.wasm
     }
 
     /// Get popular skills
-    pub async fn get_popular(&self, limit: usize) -> Result<Vec<MarketplaceSkill>, MarketplaceError> {
+    pub async fn get_popular(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<MarketplaceSkill>, MarketplaceError> {
         let query = SkillQuery {
             sort: SortOrder::Downloads,
             page_size: limit,
@@ -1114,7 +1128,10 @@ wasm_path: {}.wasm
     }
 
     /// Get recently updated skills
-    pub async fn get_recent(&self, limit: usize) -> Result<Vec<MarketplaceSkill>, MarketplaceError> {
+    pub async fn get_recent(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<MarketplaceSkill>, MarketplaceError> {
         let query = SkillQuery {
             sort: SortOrder::Updated,
             page_size: limit,
@@ -1376,8 +1393,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_creation() {
-        let config = MarketplaceConfig::local("http://localhost:8080")
-            .with_cache_dir("/tmp/vak-test-cache");
+        let config =
+            MarketplaceConfig::local("http://localhost:8080").with_cache_dir("/tmp/vak-test-cache");
 
         // Clean up any existing cache
         let _ = std::fs::remove_dir_all("/tmp/vak-test-cache");

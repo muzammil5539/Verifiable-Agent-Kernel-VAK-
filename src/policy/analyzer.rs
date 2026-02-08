@@ -525,8 +525,8 @@ impl PolicyAnalyzer {
         }
 
         // Determine if analysis passed
-        report.passed = !report.has_critical_violations()
-            && (!self.config.strict_mode || !report.has_errors());
+        report.passed =
+            !report.has_critical_violations() && (!self.config.strict_mode || !report.has_errors());
 
         report.duration_ms = start.elapsed().as_millis() as u64;
 
@@ -603,7 +603,10 @@ impl PolicyAnalyzer {
                 }
                 Ok(())
             }
-            InvariantCondition::Custom { validator, params } => {
+            InvariantCondition::Custom {
+                validator,
+                params: _,
+            } => {
                 // Custom validators would be implemented here
                 warn!(
                     validator = %validator,
@@ -775,14 +778,10 @@ fn rule_matches_action(rule: &super::enforcer::CedarRule, action: &str) -> bool 
 }
 
 /// Check if two rules have overlapping conditions
-fn rules_overlap(
-    rule_a: &super::enforcer::CedarRule,
-    rule_b: &super::enforcer::CedarRule,
-) -> bool {
+fn rules_overlap(rule_a: &super::enforcer::CedarRule, rule_b: &super::enforcer::CedarRule) -> bool {
     // Check for principal overlap
-    let principal_overlap = rule_a.principal == rule_b.principal
-        || rule_a.principal == "*"
-        || rule_b.principal == "*";
+    let principal_overlap =
+        rule_a.principal == rule_b.principal || rule_a.principal == "*" || rule_b.principal == "*";
 
     // Check for action overlap
     let action_overlap =
@@ -798,10 +797,7 @@ fn rules_overlap(
 }
 
 /// Check if rule_a subsumes rule_b (rule_a is more general)
-fn rule_subsumes(
-    rule_a: &super::enforcer::CedarRule,
-    rule_b: &super::enforcer::CedarRule,
-) -> bool {
+fn rule_subsumes(rule_a: &super::enforcer::CedarRule, rule_b: &super::enforcer::CedarRule) -> bool {
     // rule_a subsumes rule_b if rule_a covers all cases that rule_b covers
 
     // Check principals: rule_a must cover rule_b's principal

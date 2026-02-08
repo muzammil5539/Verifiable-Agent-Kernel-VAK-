@@ -437,7 +437,7 @@ impl Kernel {
     ) -> Result<serde_json::Value, KernelError> {
         // Check if skill exists in registry
         let registry = self.skill_registry.read().await;
-        
+
         if let Some(manifest) = registry.get_skill_by_name(&request.tool_name) {
             // Skill found - try to execute in sandbox
             info!(
@@ -447,11 +447,12 @@ impl Kernel {
             );
 
             // Create sandbox with configured limits
-            let mut sandbox = WasmSandbox::new(self.sandbox_config.clone())
-                .map_err(|e| KernelError::ToolExecutionFailed {
+            let mut sandbox = WasmSandbox::new(self.sandbox_config.clone()).map_err(|e| {
+                KernelError::ToolExecutionFailed {
                     tool_name: request.tool_name.clone(),
                     reason: format!("Failed to create sandbox: {}", e),
-                })?;
+                }
+            })?;
 
             // Load the WASM module
             sandbox

@@ -340,11 +340,9 @@ impl DynamicContextCollector {
         violation: bool,
     ) {
         let mut store = self.reputation_store.write().await;
-        let reputation = store
-            .entry(agent_id.to_string())
-            .or_insert_with(|| {
-                AgentReputation::new_agent(agent_id, self.config.default_trust_score)
-            });
+        let reputation = store.entry(agent_id.to_string()).or_insert_with(|| {
+            AgentReputation::new_agent(agent_id, self.config.default_trust_score)
+        });
 
         // Update counters
         if success {
@@ -491,10 +489,10 @@ pub trait ContextProvider: Send + Sync {
 }
 
 /// Geolocation context provider for location-based policy decisions
-/// 
+///
 /// This provider can determine geographic context for policy enforcement,
 /// such as restricting operations based on region or jurisdiction.
-/// 
+///
 /// In production deployments, this would integrate with:
 /// - IP geolocation databases (MaxMind GeoIP2, IP2Location)
 /// - Cloud provider metadata services
@@ -543,16 +541,19 @@ impl Default for GeoLocation {
 impl GeolocationProvider {
     /// Create a new geolocation provider
     pub fn new(enabled: bool) -> Self {
-        Self { 
+        Self {
             enabled,
             default_country: "XX".to_string(),
             default_region: "XX".to_string(),
             agent_locations: std::sync::RwLock::new(HashMap::new()),
         }
     }
-    
+
     /// Create with default location fallback
-    pub fn with_defaults(default_country: impl Into<String>, default_region: impl Into<String>) -> Self {
+    pub fn with_defaults(
+        default_country: impl Into<String>,
+        default_region: impl Into<String>,
+    ) -> Self {
         Self {
             enabled: true,
             default_country: default_country.into(),
@@ -560,21 +561,21 @@ impl GeolocationProvider {
             agent_locations: std::sync::RwLock::new(HashMap::new()),
         }
     }
-    
+
     /// Set a specific location for an agent (useful for testing or known deployments)
     pub fn set_agent_location(&self, agent_id: &str, location: GeoLocation) {
         if let Ok(mut locations) = self.agent_locations.write() {
             locations.insert(agent_id.to_string(), location);
         }
     }
-    
+
     /// Clear agent location override
     pub fn clear_agent_location(&self, agent_id: &str) {
         if let Ok(mut locations) = self.agent_locations.write() {
             locations.remove(agent_id);
         }
     }
-    
+
     /// Get location for an agent
     fn get_location(&self, agent_id: &str) -> GeoLocation {
         // Check for agent-specific override
@@ -583,7 +584,7 @@ impl GeolocationProvider {
                 return loc.clone();
             }
         }
-        
+
         // Return default location
         GeoLocation {
             country_code: self.default_country.clone(),
@@ -608,21 +609,33 @@ impl ContextProvider for GeolocationProvider {
         }
 
         let location = self.get_location(agent_id);
-        
+
         let mut attrs = HashMap::new();
-        attrs.insert("country".to_string(), serde_json::json!(location.country_code));
-        attrs.insert("region".to_string(), serde_json::json!(location.region_code));
-        attrs.insert("is_datacenter".to_string(), serde_json::json!(location.is_datacenter));
-        attrs.insert("geo_confidence".to_string(), serde_json::json!(location.confidence));
-        
+        attrs.insert(
+            "country".to_string(),
+            serde_json::json!(location.country_code),
+        );
+        attrs.insert(
+            "region".to_string(),
+            serde_json::json!(location.region_code),
+        );
+        attrs.insert(
+            "is_datacenter".to_string(),
+            serde_json::json!(location.is_datacenter),
+        );
+        attrs.insert(
+            "geo_confidence".to_string(),
+            serde_json::json!(location.confidence),
+        );
+
         if let Some(city) = &location.city {
             attrs.insert("city".to_string(), serde_json::json!(city));
         }
-        
+
         if let Some(tz) = &location.timezone {
             attrs.insert("timezone".to_string(), serde_json::json!(tz));
         }
-        
+
         Ok(attrs)
     }
 }
@@ -644,9 +657,15 @@ mod tests {
         let collector = DynamicContextCollector::with_defaults();
 
         // Simulate some actions
-        collector.update_reputation("agent-1", "read", true, false).await;
-        collector.update_reputation("agent-1", "write", true, false).await;
-        collector.update_reputation("agent-1", "delete", false, true).await;
+        collector
+            .update_reputation("agent-1", "read", true, false)
+            .await;
+        collector
+            .update_reputation("agent-1", "write", true, false)
+            .await;
+        collector
+            .update_reputation("agent-1", "delete", false, true)
+            .await;
 
         let rep = collector.get_reputation("agent-1").await.unwrap();
         assert_eq!(rep.successful_actions, 2);
@@ -725,62 +744,68 @@ mod tests {
     async fn test_geolocation_provider_disabled() {
         let provider = GeolocationProvider::new(false);
         let attrs = provider.collect("agent-1").await.unwrap();
-        
+
         // When disabled, should return empty map
         assert!(attrs.is_empty());
     }
-    
+
     #[tokio::test]
     async fn test_geolocation_provider_enabled() {
         let provider = GeolocationProvider::new(true);
         let attrs = provider.collect("agent-1").await.unwrap();
-        
+
         // Should have basic attributes
         assert!(attrs.contains_key("country"));
         assert!(attrs.contains_key("region"));
         assert!(attrs.contains_key("is_datacenter"));
         assert!(attrs.contains_key("geo_confidence"));
     }
-    
+
     #[tokio::test]
     async fn test_geolocation_provider_with_defaults() {
         let provider = GeolocationProvider::with_defaults("US", "CA");
         let attrs = provider.collect("agent-1").await.unwrap();
-        
+
         assert_eq!(attrs.get("country"), Some(&serde_json::json!("US")));
         assert_eq!(attrs.get("region"), Some(&serde_json::json!("CA")));
     }
-    
+
     #[tokio::test]
     async fn test_geolocation_provider_agent_override() {
         let provider = GeolocationProvider::with_defaults("US", "CA");
-        
+
         // Set specific location for agent
-        provider.set_agent_location("agent-special", GeoLocation {
-            country_code: "DE".to_string(),
-            region_code: "BE".to_string(),
-            city: Some("Berlin".to_string()),
-            timezone: Some("Europe/Berlin".to_string()),
-            is_datacenter: false,
-            confidence: 0.95,
-        });
-        
+        provider.set_agent_location(
+            "agent-special",
+            GeoLocation {
+                country_code: "DE".to_string(),
+                region_code: "BE".to_string(),
+                city: Some("Berlin".to_string()),
+                timezone: Some("Europe/Berlin".to_string()),
+                is_datacenter: false,
+                confidence: 0.95,
+            },
+        );
+
         // Regular agent gets default
         let attrs1 = provider.collect("agent-1").await.unwrap();
         assert_eq!(attrs1.get("country"), Some(&serde_json::json!("US")));
-        
+
         // Special agent gets override
         let attrs2 = provider.collect("agent-special").await.unwrap();
         assert_eq!(attrs2.get("country"), Some(&serde_json::json!("DE")));
         assert_eq!(attrs2.get("city"), Some(&serde_json::json!("Berlin")));
-        assert_eq!(attrs2.get("timezone"), Some(&serde_json::json!("Europe/Berlin")));
-        
+        assert_eq!(
+            attrs2.get("timezone"),
+            Some(&serde_json::json!("Europe/Berlin"))
+        );
+
         // Clear override
         provider.clear_agent_location("agent-special");
         let attrs3 = provider.collect("agent-special").await.unwrap();
         assert_eq!(attrs3.get("country"), Some(&serde_json::json!("US")));
     }
-    
+
     #[test]
     fn test_geo_location_default() {
         let loc = GeoLocation::default();

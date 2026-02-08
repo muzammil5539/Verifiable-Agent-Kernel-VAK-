@@ -65,27 +65,27 @@
 //! assert!(result.is_satisfied());
 //! ```
 
-mod prm;
+pub mod constrained_decoding;
 pub mod datalog;
 pub mod hybrid_loop;
+mod prm;
 pub mod prm_gating;
 pub mod prompt_injection;
 pub mod tree_search;
 pub mod verification_gateway;
 pub mod verifier;
 pub mod z3_verifier;
-pub mod constrained_decoding;
 
 // Re-export all public types from PRM
 pub use prm::{
-    LlmPrm, MockPrm, PrmConfig, PrmError, ProcessRewardModel, ReasoningStep, ThoughtScore,
-    PrmScorer, TrajectoryScore,
+    LlmPrm, MockPrm, PrmConfig, PrmError, PrmScorer, ProcessRewardModel, ReasoningStep,
+    ThoughtScore, TrajectoryScore,
 };
 
 // Re-export Datalog safety engine types (NSR-001, NSR-002)
 pub use datalog::{
-    DatalogError, DatalogResult, Fact, SafetyConfig, SafetyEngine, SafetyEngineBuilder,
-    SafetyRule, SafetyStats, SafetyVerdict, Violation,
+    DatalogError, DatalogResult, Fact, SafetyConfig, SafetyEngine, SafetyEngineBuilder, SafetyRule,
+    SafetyStats, SafetyVerdict, Violation,
 };
 
 // Re-export PRM gating types (Issue #47)
@@ -96,8 +96,8 @@ pub use prm_gating::{
 
 // Re-export Neuro-Symbolic Hybrid Loop types (NSR-006)
 pub use hybrid_loop::{
-    ActionResult, ExecutionPlan, ExecutionResult, HybridConfig, HybridError,
-    HybridReasoningLoop, HybridResult, LoopIteration, PlanAction, ValidationOutcome,
+    ActionResult, ExecutionPlan, ExecutionResult, HybridConfig, HybridError, HybridReasoningLoop,
+    HybridResult, LoopIteration, PlanAction, ValidationOutcome,
 };
 
 // Re-export all public types from tree_search (NSR-003)
@@ -121,9 +121,9 @@ pub use z3_verifier::{
 
 // Re-export verification gateway types (Issue #48)
 pub use verification_gateway::{
-    ActionCategory, ConditionResult, ForbiddenPattern, GatewayConfig, GatewayError,
-    GatewayResult, GatewayVerificationResult, HighStakesAction, RiskLevel,
-    VerificationGateway, VerificationStats, ViolationDetail,
+    ActionCategory, ConditionResult, ForbiddenPattern, GatewayConfig, GatewayError, GatewayResult,
+    GatewayVerificationResult, HighStakesAction, RiskLevel, VerificationGateway, VerificationStats,
+    ViolationDetail,
 };
 
 // Re-export prompt injection detection types (SEC-004)
@@ -144,12 +144,11 @@ pub use verification_gateway::{
 // }
 // ```
 pub use prompt_injection::{
-    DetectionResult, DetectorConfig, DetectorStats, HeuristicFlag, InjectionError,
-    InjectionResult, InjectionType, PatternMatch, PromptInjectionDetector, RecommendedAction,
+    DetectionResult, DetectorConfig, DetectorStats, HeuristicFlag, InjectionError, InjectionResult,
+    InjectionType, PatternMatch, PromptInjectionDetector, RecommendedAction,
 };
 
 pub use constrained_decoding::{
-    ConstrainedDecoder, ConstraintError, ConstraintResult,
-    OutputGrammar, GrammarRule, GrammarType, ValidationResult,
-    ValidationError, ErrorSeverity, RepairSuggestion, RepairType,
+    ConstrainedDecoder, ConstraintError, ConstraintResult, ErrorSeverity, GrammarRule, GrammarType,
+    OutputGrammar, RepairSuggestion, RepairType, ValidationError, ValidationResult,
 };

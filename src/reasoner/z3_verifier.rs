@@ -416,7 +416,10 @@ impl Z3FormalVerifier {
                 let sub = self.translate_constraint(constraint, context, builder)?;
                 format!("(not {})", sub)
             }
-            ConstraintKind::Implies { condition, consequence } => {
+            ConstraintKind::Implies {
+                condition,
+                consequence,
+            } => {
                 let cond = self.translate_constraint(condition, context, builder)?;
                 let cons = self.translate_constraint(consequence, context, builder)?;
                 format!("(=> {} {})", cond, cons)
@@ -571,7 +574,7 @@ impl FormalVerifier for Z3FormalVerifier {
     ) -> Result<VerificationResult, VerificationError> {
         use std::time::Instant;
         let start = Instant::now();
-        
+
         let mut builder = SmtLibBuilder::new();
 
         // Translate constraint
@@ -589,19 +592,28 @@ impl FormalVerifier for Z3FormalVerifier {
         let explanation = self.generate_explanation(constraint, &output, context);
 
         let time_us = start.elapsed().as_micros() as u64;
-        
+
         // Determine status and build result
         if output.satisfiable {
-            Ok(VerificationResult::satisfied(constraint.name.clone(), time_us))
+            Ok(VerificationResult::satisfied(
+                constraint.name.clone(),
+                time_us,
+            ))
         } else if output.unsatisfiable {
-            let counterexample = output.model.map(|model| {
-                Counterexample::new(model, explanation.clone())
-            }).unwrap_or_else(|| {
-                Counterexample::new(HashMap::new(), explanation)
-            });
-            Ok(VerificationResult::violated(constraint.name.clone(), counterexample, time_us))
+            let counterexample = output
+                .model
+                .map(|model| Counterexample::new(model, explanation.clone()))
+                .unwrap_or_else(|| Counterexample::new(HashMap::new(), explanation));
+            Ok(VerificationResult::violated(
+                constraint.name.clone(),
+                counterexample,
+                time_us,
+            ))
         } else {
-            Ok(VerificationResult::unknown(constraint.name.clone(), time_us))
+            Ok(VerificationResult::unknown(
+                constraint.name.clone(),
+                time_us,
+            ))
         }
     }
 
@@ -612,14 +624,14 @@ impl FormalVerifier for Z3FormalVerifier {
     ) -> Result<BatchVerificationResult, VerificationError> {
         use std::time::Instant;
         let start = Instant::now();
-        
+
         let mut results = Vec::new();
         for constraint in constraints {
             results.push(self.verify(constraint, context)?);
         }
-        
+
         let total_time_us = start.elapsed().as_micros() as u64;
-            
+
         Ok(BatchVerificationResult::new(results, total_time_us))
     }
 
@@ -643,13 +655,13 @@ impl FormalVerifier for Z3FormalVerifier {
         // Basic validation
         if constraint.name.is_empty() {
             return Err(VerificationError::InvalidConstraint(
-                "Constraint name cannot be empty".to_string()
+                "Constraint name cannot be empty".to_string(),
             ));
         }
-        
+
         // Validate constraint kind
         match &constraint.kind {
-            ConstraintKind::LessThan { field, .. } 
+            ConstraintKind::LessThan { field, .. }
             | ConstraintKind::LessThanOrEqual { field, .. }
             | ConstraintKind::GreaterThan { field, .. }
             | ConstraintKind::GreaterThanOrEqual { field, .. }
@@ -661,16 +673,18 @@ impl FormalVerifier for Z3FormalVerifier {
             | ConstraintKind::In { field, .. }
             | ConstraintKind::NotIn { field, .. } => {
                 if field.is_empty() {
-                    return Err(VerificationError::InvalidConstraint(
-                        format!("Constraint '{}': field name cannot be empty", constraint.name)
-                    ));
+                    return Err(VerificationError::InvalidConstraint(format!(
+                        "Constraint '{}': field name cannot be empty",
+                        constraint.name
+                    )));
                 }
             }
             ConstraintKind::And { constraints } | ConstraintKind::Or { constraints } => {
                 if constraints.is_empty() {
-                    return Err(VerificationError::InvalidConstraint(
-                        format!("Constraint '{}': compound constraint cannot be empty", constraint.name)
-                    ));
+                    return Err(VerificationError::InvalidConstraint(format!(
+                        "Constraint '{}': compound constraint cannot be empty",
+                        constraint.name
+                    )));
                 }
                 for c in constraints {
                     self.validate_constraint(c)?;
@@ -679,19 +693,23 @@ impl FormalVerifier for Z3FormalVerifier {
             ConstraintKind::Not { constraint: inner } => {
                 self.validate_constraint(inner)?;
             }
-            ConstraintKind::Implies { condition, consequence } => {
+            ConstraintKind::Implies {
+                condition,
+                consequence,
+            } => {
                 self.validate_constraint(condition)?;
                 self.validate_constraint(consequence)?;
             }
             ConstraintKind::Forbidden { resources } => {
                 if resources.is_empty() {
-                    return Err(VerificationError::InvalidConstraint(
-                        format!("Constraint '{}': forbidden resources list cannot be empty", constraint.name)
-                    ));
+                    return Err(VerificationError::InvalidConstraint(format!(
+                        "Constraint '{}': forbidden resources list cannot be empty",
+                        constraint.name
+                    )));
                 }
             }
         }
-        
+
         Ok(())
     }
 }
@@ -804,7 +822,7 @@ mod tests {
     #[ignore = "Requires Z3 installation"]
     async fn test_z3_simple_verification() {
         let verifier = create_test_verifier();
-        
+
         if !verifier.is_available() {
             println!("Z3 not available, skipping test");
             return;
@@ -829,7 +847,7 @@ mod tests {
     #[ignore = "Requires Z3 installation"]
     async fn test_z3_failing_constraint() {
         let verifier = create_test_verifier();
-        
+
         if !verifier.is_available() {
             println!("Z3 not available, skipping test");
             return;

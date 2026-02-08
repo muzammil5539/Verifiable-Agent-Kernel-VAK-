@@ -33,9 +33,9 @@ pub use registry::{
 
 // Re-export marketplace types
 pub use marketplace::{
-    MarketplaceClient, MarketplaceConfig, MarketplaceError, MarketplaceSkill,
-    SkillCategory, SkillLicense, SkillQuery, SkillReview, SearchResults,
-    InstallResult, UninstallResult, Publisher, SortOrder,
+    InstallResult, MarketplaceClient, MarketplaceConfig, MarketplaceError, MarketplaceSkill,
+    Publisher, SearchResults, SkillCategory, SkillLicense, SkillQuery, SkillReview, SortOrder,
+    UninstallResult,
 };
 
 // Re-export epoch ticker types (RT-001)
@@ -45,34 +45,32 @@ pub use epoch_ticker::{
 
 // Re-export pooling types (RT-003)
 pub use pooling::{
-    PoolingConfig, PoolingError, PoolingStats, PoolManager,
-    create_pooling_engine, create_standard_engine,
+    create_pooling_engine, create_standard_engine, PoolManager, PoolingConfig, PoolingError,
+    PoolingStats,
 };
 
 // Re-export epoch config types (RT-002)
 pub use epoch_config::{
-    EpochConfig, EpochConfigError, EpochDeadlineManager, EpochExecutionBuilder,
-    ExecutionLimits, PreemptionBudget, BudgetStats,
+    BudgetStats, EpochConfig, EpochConfigError, EpochDeadlineManager, EpochExecutionBuilder,
+    ExecutionLimits, PreemptionBudget,
 };
 
 // Re-export host function types (RT-005, POL-004)
 pub use host_funcs::{
-    HostFuncConfig, HostFuncError, HostFuncLinker, HostFuncState,
-    AuditLogEntry, PermissionCache, with_panic_boundary, with_safe_permission_check,
-    check_permission,
+    check_permission, with_panic_boundary, with_safe_permission_check, AuditLogEntry,
+    HostFuncConfig, HostFuncError, HostFuncLinker, HostFuncState, PermissionCache,
 };
 
 // Re-export reasoning host types (NSR-003)
 pub use reasoning_host::{
-    ReasoningConfig, ReasoningHost, ReasoningHostError, ReasoningHostState,
-    PlanVerification, VerificationResult, ViolationInfo,
-    register_reasoning_functions,
+    register_reasoning_functions, PlanVerification, ReasoningConfig, ReasoningHost,
+    ReasoningHostError, ReasoningHostState, VerificationResult, ViolationInfo,
 };
 
 // Re-export async host types (RT-004)
 pub use async_host::{
-    AsyncHostConfig, AsyncHostContext, AsyncHostError, AsyncHostResult,
-    AsyncOperation, AsyncOperationExecutor, OperationResult,
+    AsyncHostConfig, AsyncHostContext, AsyncHostError, AsyncHostResult, AsyncOperation,
+    AsyncOperationExecutor, OperationResult,
 };
 
 use std::time::{Duration, Instant};

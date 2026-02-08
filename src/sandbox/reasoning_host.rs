@@ -160,10 +160,7 @@ impl VerificationResult {
         let verdict = if violations.is_empty() {
             "Plan denied: high risk".to_string()
         } else {
-            format!(
-                "Plan denied: {} violation(s)",
-                violations.len()
-            )
+            format!("Plan denied: {} violation(s)", violations.len())
         };
         Self {
             allowed: false,
@@ -393,9 +390,9 @@ impl ReasoningHost {
     pub fn safety_engine_mut(&mut self) -> &mut SafetyEngine {
         &mut self.engine
     }
-    
+
     /// Set agent risk score (non-mutable version using interior mutability)
-    /// 
+    ///
     /// Note: This adds a new fact to track the risk score. Call this when an
     /// agent's risk level changes based on their actions or external factors.
     pub fn set_agent_risk_score(&self, agent_id: &str, score: f64) {
@@ -407,9 +404,9 @@ impl ReasoningHost {
             "Agent risk score update requested"
         );
     }
-    
+
     /// Get the count of violations for an agent
-    /// 
+    ///
     /// Returns the number of rule violations recorded for the given agent.
     pub fn get_violation_count(&self, agent_id: &str) -> usize {
         // Query the engine for violations related to this agent
@@ -417,9 +414,9 @@ impl ReasoningHost {
         debug!(agent_id = %agent_id, "Checking violation count");
         0
     }
-    
+
     /// Check if an agent is in a high-risk state
-    /// 
+    ///
     /// Returns true if the agent has exceeded the risk threshold based on
     /// their recent actions or accumulated violations.
     pub fn is_high_risk_agent(&self, agent_id: &str) -> bool {
@@ -427,17 +424,17 @@ impl ReasoningHost {
         debug!(agent_id = %agent_id, threshold = self.config.high_risk_threshold, "Checking high risk status");
         false // Default to not high-risk until we have more data
     }
-    
+
     /// Check if a file is marked as critical
     pub fn is_critical_file(&self, path: &str) -> bool {
         self.critical_files.contains(path)
     }
-    
+
     /// Check if a tool is restricted
     pub fn is_restricted_tool(&self, tool: &str) -> bool {
         self.restricted_tools.contains(tool)
     }
-    
+
     /// Get the current config
     pub fn config(&self) -> &ReasoningConfig {
         &self.config
@@ -461,12 +458,12 @@ impl ReasoningHostState {
             agent_id: agent_id.into(),
         }
     }
-    
+
     /// Create with default config
     pub fn with_defaults(agent_id: impl Into<String>) -> Self {
         Self::new(agent_id, ReasoningConfig::default())
     }
-    
+
     /// Create with permissive config for testing
     pub fn permissive(agent_id: impl Into<String>) -> Self {
         Self::new(agent_id, ReasoningConfig::permissive())
@@ -486,9 +483,7 @@ impl AsMut<ReasoningHostState> for ReasoningHostState {
 }
 
 /// Register reasoning host functions with a Wasmtime linker
-pub fn register_reasoning_functions<T>(
-    linker: &mut Linker<T>,
-) -> Result<(), ReasoningHostError>
+pub fn register_reasoning_functions<T>(linker: &mut Linker<T>) -> Result<(), ReasoningHostError>
 where
     T: 'static,
 {
@@ -499,17 +494,16 @@ where
         .func_wrap(
             "vak",
             "verify_plan",
-            |_caller: Caller<'_, T>,
-             _plan_ptr: i32,
-             _plan_len: i32|
-             -> AnyhowResult<i64> {
+            |_caller: Caller<'_, T>, _plan_ptr: i32, _plan_len: i32| -> AnyhowResult<i64> {
                 // Note: Full WASM memory reading requires typed state with Memory access.
                 // This basic implementation returns success for now.
                 // Use register_reasoning_functions_with_state for full functionality.
                 Ok(0i64)
             },
         )
-        .map_err(|e| ReasoningHostError::DatalogError(DatalogError::EvaluationError(e.to_string())))?;
+        .map_err(|e| {
+            ReasoningHostError::DatalogError(DatalogError::EvaluationError(e.to_string()))
+        })?;
 
     // vak_add_critical_file: Mark a file as critical
     linker
@@ -521,7 +515,9 @@ where
                 Ok(())
             },
         )
-        .map_err(|e| ReasoningHostError::DatalogError(DatalogError::EvaluationError(e.to_string())))?;
+        .map_err(|e| {
+            ReasoningHostError::DatalogError(DatalogError::EvaluationError(e.to_string()))
+        })?;
 
     // vak_set_risk_score: Set agent risk score
     linker
@@ -533,30 +529,32 @@ where
                 Ok(())
             },
         )
-        .map_err(|e| ReasoningHostError::DatalogError(DatalogError::EvaluationError(e.to_string())))?;
+        .map_err(|e| {
+            ReasoningHostError::DatalogError(DatalogError::EvaluationError(e.to_string()))
+        })?;
 
     Ok(())
 }
 
 /// Register reasoning host functions with full state access
-/// 
+///
 /// This version provides complete WASM memory reading and state management.
 /// Use this when you need full reasoning capabilities with the sandbox.
-/// 
+///
 /// # Type Parameters
-/// 
+///
 /// * `T` - State type that implements `AsRef<ReasoningHostState>`
-/// 
+///
 /// # Example
-/// 
+///
 /// ```rust,ignore
 /// use vak::sandbox::reasoning_host::{ReasoningHostState, register_reasoning_functions_with_state};
-/// 
+///
 /// struct MyState {
 ///     reasoning: ReasoningHostState,
 ///     // other fields...
 /// }
-/// 
+///
 /// impl AsRef<ReasoningHostState> for MyState {
 ///     fn as_ref(&self) -> &ReasoningHostState {
 ///         &self.reasoning
@@ -576,50 +574,52 @@ where
         .func_wrap(
             "vak",
             "verify_plan",
-            |mut caller: Caller<'_, T>,
-             plan_ptr: i32,
-             plan_len: i32|
-             -> AnyhowResult<i64> {
+            |mut caller: Caller<'_, T>, plan_ptr: i32, plan_len: i32| -> AnyhowResult<i64> {
                 // Get memory from the WASM instance
                 let memory = caller
                     .get_export("memory")
                     .and_then(|e| e.into_memory())
                     .ok_or_else(|| anyhow::anyhow!("Failed to get WASM memory"))?;
-                
+
                 // Validate bounds and read the plan first
                 let ptr = plan_ptr as usize;
                 let len = plan_len as usize;
-                
+
                 // Read data in this scope before borrowing caller mutably
                 let plan: PlanVerification = {
                     let data = memory.data(&caller);
-                    
+
                     if ptr + len > data.len() {
-                        warn!(ptr = ptr, len = len, data_len = data.len(), "Memory bounds exceeded");
+                        warn!(
+                            ptr = ptr,
+                            len = len,
+                            data_len = data.len(),
+                            "Memory bounds exceeded"
+                        );
                         return Ok(-1i64); // Memory error
                     }
-                    
+
                     // Read the plan JSON from WASM memory
                     let plan_bytes = &data[ptr..ptr + len];
                     let plan_json = std::str::from_utf8(plan_bytes)
                         .map_err(|e| anyhow::anyhow!("Invalid UTF-8 in plan: {}", e))?;
-                    
+
                     // Deserialize to PlanVerification
                     serde_json::from_str(plan_json)
                         .map_err(|e| anyhow::anyhow!("Failed to parse plan JSON: {}", e))?
                 };
-                
+
                 debug!(
                     agent_id = %plan.agent_id,
                     action = %plan.action_type,
                     target = %plan.target,
                     "Verifying plan from WASM"
                 );
-                
+
                 // Verify the plan using the reasoning host (mutable borrow)
                 let state = caller.data_mut().as_mut();
                 let result = state.host.verify_plan(&plan);
-                
+
                 // Return violation count (0 = allowed)
                 let violation_count = result.violations.len() as i64;
                 if violation_count > 0 {
@@ -629,11 +629,13 @@ where
                         "Plan verification failed"
                     );
                 }
-                
+
                 Ok(violation_count)
             },
         )
-        .map_err(|e| ReasoningHostError::DatalogError(DatalogError::EvaluationError(e.to_string())))?;
+        .map_err(|e| {
+            ReasoningHostError::DatalogError(DatalogError::EvaluationError(e.to_string()))
+        })?;
 
     // vak_add_critical_file: Mark a file as critical
     linker
@@ -646,32 +648,34 @@ where
                     .get_export("memory")
                     .and_then(|e| e.into_memory())
                     .ok_or_else(|| anyhow::anyhow!("Failed to get WASM memory"))?;
-                
+
                 // Read path from WASM memory before mutable borrow
                 let path: String = {
                     let ptr = path_ptr as usize;
                     let len = path_len as usize;
                     let data = memory.data(&caller);
-                    
+
                     if ptr + len > data.len() {
                         return Err(anyhow::anyhow!("Memory bounds exceeded"));
                     }
-                    
+
                     let path_bytes = &data[ptr..ptr + len];
                     std::str::from_utf8(path_bytes)
                         .map_err(|e| anyhow::anyhow!("Invalid UTF-8 in path: {}", e))?
                         .to_string()
                 };
-                
+
                 // Add to critical files
                 let state = caller.data_mut().as_mut();
                 state.host.add_critical_file(&path);
-                
+
                 debug!(path = %path, "Added critical file via WASM");
                 Ok(())
             },
         )
-        .map_err(|e| ReasoningHostError::DatalogError(DatalogError::EvaluationError(e.to_string())))?;
+        .map_err(|e| {
+            ReasoningHostError::DatalogError(DatalogError::EvaluationError(e.to_string()))
+        })?;
 
     // vak_set_risk_score: Set agent risk score
     linker
@@ -681,18 +685,22 @@ where
             |mut caller: Caller<'_, T>, score_x1000: i32| -> AnyhowResult<()> {
                 // Convert from integer representation (score * 1000) to f64
                 let score = (score_x1000 as f64) / 1000.0;
-                
+
                 // Clamp to valid range
                 let score = score.clamp(0.0, 1.0);
-                
+
                 let state = caller.data_mut().as_mut();
-                state.host.set_agent_risk_score(&state.agent_id.clone(), score);
-                
+                state
+                    .host
+                    .set_agent_risk_score(&state.agent_id.clone(), score);
+
                 debug!(agent_id = %state.agent_id, score = score, "Set agent risk score via WASM");
                 Ok(())
             },
         )
-        .map_err(|e| ReasoningHostError::DatalogError(DatalogError::EvaluationError(e.to_string())))?;
+        .map_err(|e| {
+            ReasoningHostError::DatalogError(DatalogError::EvaluationError(e.to_string()))
+        })?;
 
     // vak_get_violation_count: Get number of violations for current agent
     linker
@@ -705,7 +713,9 @@ where
                 Ok(count as i32)
             },
         )
-        .map_err(|e| ReasoningHostError::DatalogError(DatalogError::EvaluationError(e.to_string())))?;
+        .map_err(|e| {
+            ReasoningHostError::DatalogError(DatalogError::EvaluationError(e.to_string()))
+        })?;
 
     // vak_is_high_risk: Check if agent is in high-risk state
     linker
@@ -718,7 +728,9 @@ where
                 Ok(if is_high_risk { 1 } else { 0 })
             },
         )
-        .map_err(|e| ReasoningHostError::DatalogError(DatalogError::EvaluationError(e.to_string())))?;
+        .map_err(|e| {
+            ReasoningHostError::DatalogError(DatalogError::EvaluationError(e.to_string()))
+        })?;
 
     Ok(())
 }
@@ -791,7 +803,7 @@ mod tests {
         let plan = PlanVerification {
             agent_id: "agent-1".to_string(),
             action_type: "delete_file".to_string(), // Must match rule action
-            target: "/etc/shadow".to_string(), // Critical file in system path
+            target: "/etc/shadow".to_string(),      // Critical file in system path
             confidence: 0.5,
             params: Default::default(),
         };
@@ -799,7 +811,11 @@ mod tests {
         let result = host.verify_plan(&plan);
         // Should be denied and have a risk score > 0
         assert!(!result.allowed, "Expected plan to be denied");
-        assert!(result.risk_score > 0.0, "Expected positive risk score, got {}", result.risk_score);
+        assert!(
+            result.risk_score > 0.0,
+            "Expected positive risk score, got {}",
+            result.risk_score
+        );
     }
 
     #[test]
@@ -844,7 +860,7 @@ mod tests {
     #[test]
     fn test_reasoning_host_critical_file_check() {
         let host = ReasoningHost::new(ReasoningConfig::default());
-        
+
         // Default critical files should be present
         assert!(host.is_critical_file("/etc/shadow"));
         assert!(host.is_critical_file("/etc/passwd"));
@@ -854,10 +870,10 @@ mod tests {
     #[test]
     fn test_reasoning_host_restricted_tool_check() {
         let mut host = ReasoningHost::new(ReasoningConfig::default());
-        
+
         // No restricted tools by default
         assert!(!host.is_restricted_tool("calculator"));
-        
+
         // Add a restricted tool
         host.add_restricted_tool("dangerous_tool");
         assert!(host.is_restricted_tool("dangerous_tool"));

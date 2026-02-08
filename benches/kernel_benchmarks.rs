@@ -417,12 +417,16 @@ fn bench_concurrent_policy_evaluation(c: &mut Criterion) {
 /// Benchmark policy validation (Issue #19).
 fn bench_policy_validation(c: &mut Criterion) {
     let mut engine = PolicyEngine::new_unlimited();
-    
+
     // Add various rules
     for i in 0..100 {
         engine.add_rule(PolicyRule {
             id: format!("rule-{}", i),
-            effect: if i % 2 == 0 { PolicyEffect::Allow } else { PolicyEffect::Deny },
+            effect: if i % 2 == 0 {
+                PolicyEffect::Allow
+            } else {
+                PolicyEffect::Deny
+            },
             resource_pattern: format!("resource-{}/*", i),
             action_pattern: "*".to_string(),
             conditions: vec![],

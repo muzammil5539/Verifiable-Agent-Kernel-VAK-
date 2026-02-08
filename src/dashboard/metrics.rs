@@ -99,7 +99,12 @@ impl Counter {
         let labels = self.format_labels(global_labels);
         format!(
             "# HELP {} {}\n# TYPE {} counter\n{}{} {}\n",
-            self.name, self.help, self.name, self.name, labels, self.get()
+            self.name,
+            self.help,
+            self.name,
+            self.name,
+            labels,
+            self.get()
         )
     }
 
@@ -162,7 +167,12 @@ impl Gauge {
         let labels = self.format_labels(global_labels);
         format!(
             "# HELP {} {}\n# TYPE {} gauge\n{}{} {}\n",
-            self.name, self.help, self.name, self.name, labels, self.get()
+            self.name,
+            self.help,
+            self.name,
+            self.name,
+            labels,
+            self.get()
         )
     }
 
@@ -194,11 +204,7 @@ pub struct Histogram {
 }
 
 impl Histogram {
-    pub fn new(
-        name: impl Into<String>,
-        help: impl Into<String>,
-        buckets: Vec<f64>,
-    ) -> Self {
+    pub fn new(name: impl Into<String>, help: impl Into<String>, buckets: Vec<f64>) -> Self {
         let bucket_counts = buckets.iter().map(|_| AtomicU64::new(0)).collect();
         Self {
             name: name.into(),
@@ -276,7 +282,9 @@ impl Histogram {
 
         output.push_str(&format!(
             "{}_sum{} {}\n",
-            self.name, base_labels, self.get_sum()
+            self.name,
+            base_labels,
+            self.get_sum()
         ));
         output.push_str(&format!(
             "{}_count{} {}\n",
@@ -417,26 +425,14 @@ impl MetricsCollector {
             ),
 
             // Gauges
-            active_agents: Gauge::new(
-                "vak_active_agents",
-                "Number of currently active agents",
-            ),
+            active_agents: Gauge::new("vak_active_agents", "Number of currently active agents"),
             active_sessions: Gauge::new(
                 "vak_active_sessions",
                 "Number of currently active sessions",
             ),
-            audit_log_size: Gauge::new(
-                "vak_audit_log_size",
-                "Current size of the audit log",
-            ),
-            memory_usage_bytes: Gauge::new(
-                "vak_memory_usage_bytes",
-                "Memory usage in bytes",
-            ),
-            skills_loaded: Gauge::new(
-                "vak_skills_loaded",
-                "Number of loaded WASM skills",
-            ),
+            audit_log_size: Gauge::new("vak_audit_log_size", "Current size of the audit log"),
+            memory_usage_bytes: Gauge::new("vak_memory_usage_bytes", "Memory usage in bytes"),
+            skills_loaded: Gauge::new("vak_skills_loaded", "Number of loaded WASM skills"),
 
             // Histograms
             policy_evaluation_duration: Histogram::new(
@@ -651,7 +647,7 @@ mod tests {
     #[test]
     fn test_metrics_collector() {
         let collector = MetricsCollector::default();
-        
+
         collector.policy_evaluations_total.inc();
         collector.policy_evaluations_allowed.inc();
         collector.active_agents.set(5.0);
@@ -681,9 +677,8 @@ mod tests {
     fn test_counter_with_labels() {
         let mut labels = HashMap::new();
         labels.insert("agent".to_string(), "test-agent".to_string());
-        
-        let counter = Counter::new("labeled_counter", "Counter with labels")
-            .with_labels(labels);
+
+        let counter = Counter::new("labeled_counter", "Counter with labels").with_labels(labels);
         counter.inc();
 
         let output = counter.to_prometheus(&HashMap::new());

@@ -211,12 +211,12 @@ impl Default for CASConfig {
         Self {
             backend: CASBackendType::Memory,
             base_path: None,
-            max_size: 0,                      // Unlimited
+            max_size: 0, // Unlimited
             compression: true,
-            compression_threshold: 1024,      // Compress blobs > 1KB
+            compression_threshold: 1024, // Compress blobs > 1KB
             verify_on_read: true,
-            shard_depth: 2,                   // 2 levels of sharding
-            cache_size: 1000,                 // Cache 1000 items
+            shard_depth: 2,   // 2 levels of sharding
+            cache_size: 1000, // Cache 1000 items
         }
     }
 }
@@ -407,7 +407,10 @@ impl ContentAddressableStore {
 
         // Check storage limits
         if self.config.max_size > 0 {
-            let stats = self.stats.read().map_err(|e| CASError::LockError(e.to_string()))?;
+            let stats = self
+                .stats
+                .read()
+                .map_err(|e| CASError::LockError(e.to_string()))?;
             if stats.stored_size + data.len() as u64 > self.config.max_size {
                 return Err(CASError::StorageFull(format!(
                     "Would exceed max size of {} bytes",
@@ -417,25 +420,27 @@ impl ContentAddressableStore {
         }
 
         // Optionally compress
-        let (stored_data, compressed) = if self.config.compression
-            && data.len() > self.config.compression_threshold
-        {
-            match Self::compress(data) {
-                Ok(compressed_data) if compressed_data.len() < data.len() => {
-                    (compressed_data, true)
+        let (stored_data, compressed) =
+            if self.config.compression && data.len() > self.config.compression_threshold {
+                match Self::compress(data) {
+                    Ok(compressed_data) if compressed_data.len() < data.len() => {
+                        (compressed_data, true)
+                    }
+                    _ => (data.to_vec(), false),
                 }
-                _ => (data.to_vec(), false),
-            }
-        } else {
-            (data.to_vec(), false)
-        };
+            } else {
+                (data.to_vec(), false)
+            };
 
         let stored_size = stored_data.len() as u64;
 
         // Store based on backend type
         match self.config.backend {
             CASBackendType::Memory => {
-                let mut mem = self.memory.write().map_err(|e| CASError::LockError(e.to_string()))?;
+                let mut mem = self
+                    .memory
+                    .write()
+                    .map_err(|e| CASError::LockError(e.to_string()))?;
                 mem.insert(hex_key.clone(), stored_data);
             }
             CASBackendType::File => {
@@ -454,7 +459,10 @@ impl ContentAddressableStore {
         meta.stored_size = stored_size;
         meta.compressed = compressed;
 
-        let mut meta_store = self.metadata.write().map_err(|e| CASError::LockError(e.to_string()))?;
+        let mut meta_store = self
+            .metadata
+            .write()
+            .map_err(|e| CASError::LockError(e.to_string()))?;
         meta_store.insert(hex_key, meta);
 
         // Update stats
@@ -476,13 +484,21 @@ impl ContentAddressableStore {
         // Try memory/cache first
         let stored_data = match self.config.backend {
             CASBackendType::Memory => {
-                let mem = self.memory.read().map_err(|e| CASError::LockError(e.to_string()))?;
-                mem.get(&hex_key).cloned().ok_or_else(|| CASError::NotFound(cid.to_hex()))?
+                let mem = self
+                    .memory
+                    .read()
+                    .map_err(|e| CASError::LockError(e.to_string()))?;
+                mem.get(&hex_key)
+                    .cloned()
+                    .ok_or_else(|| CASError::NotFound(cid.to_hex()))?
             }
             CASBackendType::File => {
                 // Check memory cache
                 {
-                    let mem = self.memory.read().map_err(|e| CASError::LockError(e.to_string()))?;
+                    let mem = self
+                        .memory
+                        .read()
+                        .map_err(|e| CASError::LockError(e.to_string()))?;
                     if let Some(data) = mem.get(&hex_key) {
                         if let Ok(mut stats) = self.stats.write() {
                             stats.cache_hits += 1;
@@ -520,7 +536,10 @@ impl ContentAddressableStore {
 
         match self.config.backend {
             CASBackendType::Memory => {
-                let mem = self.memory.read().map_err(|e| CASError::LockError(e.to_string()))?;
+                let mem = self
+                    .memory
+                    .read()
+                    .map_err(|e| CASError::LockError(e.to_string()))?;
                 Ok(mem.contains_key(&hex_key))
             }
             CASBackendType::File => {
@@ -536,13 +555,19 @@ impl ContentAddressableStore {
 
         // Get metadata for stats update
         let meta = {
-            let meta_store = self.metadata.read().map_err(|e| CASError::LockError(e.to_string()))?;
+            let meta_store = self
+                .metadata
+                .read()
+                .map_err(|e| CASError::LockError(e.to_string()))?;
             meta_store.get(&hex_key).cloned()
         };
 
         match self.config.backend {
             CASBackendType::Memory => {
-                let mut mem = self.memory.write().map_err(|e| CASError::LockError(e.to_string()))?;
+                let mut mem = self
+                    .memory
+                    .write()
+                    .map_err(|e| CASError::LockError(e.to_string()))?;
                 mem.remove(&hex_key);
             }
             CASBackendType::File => {
@@ -579,7 +604,10 @@ impl ContentAddressableStore {
     /// Get metadata for content
     pub fn get_metadata(&self, cid: &ContentId) -> CASResult<ContentMetadata> {
         let hex_key = cid.to_hex();
-        let meta_store = self.metadata.read().map_err(|e| CASError::LockError(e.to_string()))?;
+        let meta_store = self
+            .metadata
+            .read()
+            .map_err(|e| CASError::LockError(e.to_string()))?;
         meta_store
             .get(&hex_key)
             .cloned()
@@ -588,17 +616,20 @@ impl ContentAddressableStore {
 
     /// Get storage statistics
     pub fn stats(&self) -> CASResult<CASStats> {
-        let stats = self.stats.read().map_err(|e| CASError::LockError(e.to_string()))?;
+        let stats = self
+            .stats
+            .read()
+            .map_err(|e| CASError::LockError(e.to_string()))?;
         Ok(stats.clone())
     }
 
     /// List all stored CIDs
     pub fn list(&self) -> CASResult<Vec<ContentId>> {
-        let meta_store = self.metadata.read().map_err(|e| CASError::LockError(e.to_string()))?;
-        let cids: Vec<ContentId> = meta_store
-            .values()
-            .map(|m| m.cid.clone())
-            .collect();
+        let meta_store = self
+            .metadata
+            .read()
+            .map_err(|e| CASError::LockError(e.to_string()))?;
+        let cids: Vec<ContentId> = meta_store.values().map(|m| m.cid.clone()).collect();
         Ok(cids)
     }
 
@@ -665,13 +696,23 @@ impl ContentAddressableStore {
     }
 
     /// Decompress if needed and verify hash
-    fn maybe_decompress_and_verify(&self, cid: &ContentId, stored_data: Vec<u8>) -> CASResult<Vec<u8>> {
+    fn maybe_decompress_and_verify(
+        &self,
+        cid: &ContentId,
+        stored_data: Vec<u8>,
+    ) -> CASResult<Vec<u8>> {
         let hex_key = cid.to_hex();
 
         // Check if compressed
         let compressed = {
-            let meta_store = self.metadata.read().map_err(|e| CASError::LockError(e.to_string()))?;
-            meta_store.get(&hex_key).map(|m| m.compressed).unwrap_or(false)
+            let meta_store = self
+                .metadata
+                .read()
+                .map_err(|e| CASError::LockError(e.to_string()))?;
+            meta_store
+                .get(&hex_key)
+                .map(|m| m.compressed)
+                .unwrap_or(false)
         };
 
         let data = if compressed {

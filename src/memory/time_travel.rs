@@ -968,13 +968,23 @@ pub enum ReplayAction {
     /// Memory delete
     Delete { key: String },
     /// Tool execution
-    ToolExec { tool: String, params: serde_json::Value },
+    ToolExec {
+        tool: String,
+        params: serde_json::Value,
+    },
     /// Policy evaluation
-    PolicyEval { action: String, resource: String, decision: String },
+    PolicyEval {
+        action: String,
+        resource: String,
+        decision: String,
+    },
     /// LLM inference
     Inference { model: String, tokens: u64 },
     /// Custom action
-    Custom { action_type: String, details: serde_json::Value },
+    Custom {
+        action_type: String,
+        details: serde_json::Value,
+    },
 }
 
 /// A change to state
@@ -1150,7 +1160,7 @@ impl TimeTravelManager {
         if !options.preserve_working_state {
             self.working_state.clear();
         }
-        
+
         for (key, entry) in &snapshot.state {
             self.working_state.insert(key.clone(), entry.value.clone());
         }
@@ -1183,7 +1193,7 @@ impl TimeTravelManager {
         let mut provenance_chain = Vec::new();
         let mut current_id = Some(*snapshot_id);
         let mut chain_snapshots = Vec::new();
-        
+
         // Collect all snapshots in the chain
         while let Some(id) = current_id {
             if let Some(s) = self.snapshots.get(&id) {
@@ -1193,10 +1203,10 @@ impl TimeTravelManager {
                 break;
             }
         }
-        
+
         // Reverse to get genesis-first order
         chain_snapshots.reverse();
-        
+
         // Build provenance chain
         for (i, s) in chain_snapshots.iter().enumerate() {
             provenance_chain.push(ProvenanceLink {
@@ -1206,7 +1216,9 @@ impl TimeTravelManager {
                 } else {
                     None
                 },
-                action: s.metadata.get("action")
+                action: s
+                    .metadata
+                    .get("action")
                     .cloned()
                     .unwrap_or_else(|| "checkpoint".to_string()),
                 timestamp: s.created_at,
@@ -1239,14 +1251,18 @@ impl TimeTravelManager {
     /// Get the name of the current branch, if any
     fn get_current_branch_name(&self) -> Option<String> {
         self.head.and_then(|head_id| {
-            self.branches.iter()
+            self.branches
+                .iter()
                 .find(|(_, branch)| branch.head == head_id)
                 .map(|(name, _)| name.clone())
         })
     }
 
     /// Restore from a full checkout
-    pub fn restore_from_checkout(&mut self, checkout: &FullCheckout) -> Result<(), TimeTravelError> {
+    pub fn restore_from_checkout(
+        &mut self,
+        checkout: &FullCheckout,
+    ) -> Result<(), TimeTravelError> {
         // For restoration, we verify the checkout has valid provenance chain
         // (The merkle_root in checkout was computed from the original snapshot's hash,
         // which includes ID, label, etc. - we can't recompute that from just state data)
@@ -1281,12 +1297,12 @@ impl TimeTravelManager {
         let mut hasher = Sha256::new();
         let mut keys: Vec<_> = state.keys().collect();
         keys.sort();
-        
+
         for key in keys {
             hasher.update(key.as_bytes());
             hasher.update(&state[key]);
         }
-        
+
         hex::encode(hasher.finalize())
     }
 
@@ -1296,12 +1312,12 @@ impl TimeTravelManager {
     pub fn generate_replay(&self, from: &SnapshotId, to: &SnapshotId) -> Option<Vec<ReplayStep>> {
         // Get both snapshots to verify they exist
         let _from_snapshot = self.snapshots.get(from)?;
-        let to_snapshot = self.snapshots.get(to)?;
+        let _to_snapshot = self.snapshots.get(to)?;
 
         // Build the path from 'to' back to 'from' by following parent links
         let mut path = Vec::new();
         let mut current = Some(*to);
-        
+
         while let Some(id) = current {
             if let Some(snapshot) = self.snapshots.get(&id) {
                 path.push(snapshot.clone());
@@ -1313,30 +1329,30 @@ impl TimeTravelManager {
                 break;
             }
         }
-        
+
         // Verify we found the from snapshot
         if path.last().map(|s| s.id != *from).unwrap_or(true) {
             return None; // No path between snapshots
         }
-        
+
         // Reverse to get from-first order
         path.reverse();
 
         // Generate replay steps
         let mut steps = Vec::new();
-        
+
         for (i, snapshot) in path.iter().skip(1).enumerate() {
             let prev = &path[i];
-            
+
             // Compute state changes
             let changes: Vec<StateChange> = {
                 let mut changes = Vec::new();
-                
+
                 // Find added/modified keys
                 for (key, entry) in &snapshot.state {
                     let new_hash = Some(hex::encode(&entry.value_hash));
                     let previous_hash = prev.state.get(key).map(|e| hex::encode(&e.value_hash));
-                    
+
                     if previous_hash != new_hash {
                         changes.push(StateChange {
                             key: key.clone(),
@@ -1345,7 +1361,7 @@ impl TimeTravelManager {
                         });
                     }
                 }
-                
+
                 // Find deleted keys
                 for key in prev.state.keys() {
                     if !snapshot.state.contains_key(key) {
@@ -1356,26 +1372,30 @@ impl TimeTravelManager {
                         });
                     }
                 }
-                
+
                 changes
             };
 
-            let action_type = snapshot.metadata.get("action")
+            let action_type = snapshot
+                .metadata
+                .get("action")
                 .cloned()
                 .unwrap_or_else(|| "checkpoint".to_string());
 
             let replay_action = match action_type.as_str() {
                 "write" => {
-                    let key = snapshot.metadata.get("key")
+                    let key = snapshot
+                        .metadata
+                        .get("key")
                         .cloned()
                         .unwrap_or_else(|| "unknown".to_string());
-                    let size = snapshot.state.get(&key)
-                        .map(|e| e.value.len())
-                        .unwrap_or(0);
+                    let size = snapshot.state.get(&key).map(|e| e.value.len()).unwrap_or(0);
                     ReplayAction::Write { key, size }
                 }
                 "delete" => {
-                    let key = snapshot.metadata.get("key")
+                    let key = snapshot
+                        .metadata
+                        .get("key")
                         .cloned()
                         .unwrap_or_else(|| "unknown".to_string());
                     ReplayAction::Delete { key }
@@ -1383,7 +1403,7 @@ impl TimeTravelManager {
                 _ => ReplayAction::Custom {
                     action_type,
                     details: serde_json::json!(snapshot.metadata),
-                }
+                },
             };
 
             steps.push(ReplayStep {
@@ -1403,12 +1423,12 @@ impl TimeTravelManager {
         let mut hasher = Sha256::new();
         let mut keys: Vec<_> = self.working_state.keys().collect();
         keys.sort();
-        
+
         for key in keys {
             hasher.update(key.as_bytes());
             hasher.update(&self.working_state[key]);
         }
-        
+
         hasher.finalize().into()
     }
 
@@ -1416,14 +1436,16 @@ impl TimeTravelManager {
     pub fn step_forward(&mut self) -> Option<ReplayStep> {
         // Get current head
         let current_head = self.head?;
-        let current_snapshot = self.snapshots.get(&current_head)?;
+        let _current_snapshot = self.snapshots.get(&current_head)?;
 
         // Find any snapshot that has the current as its parent
         // (This is a simplified implementation - in production you'd want an index)
-        let next_snapshot = self.snapshots.values()
+        let next_snapshot = self
+            .snapshots
+            .values()
             .find(|s| s.parent_id == Some(current_head))?
             .clone();
-        
+
         // Apply the next state
         self.working_state.clear();
         for (key, entry) in &next_snapshot.state {
@@ -1431,7 +1453,9 @@ impl TimeTravelManager {
         }
         self.head = Some(next_snapshot.id);
 
-        let action_type = next_snapshot.metadata.get("action")
+        let action_type = next_snapshot
+            .metadata
+            .get("action")
             .cloned()
             .unwrap_or_else(|| "checkpoint".to_string());
 
@@ -1459,12 +1483,12 @@ mod checkout_tests {
     #[test]
     fn test_full_checkout() {
         let mut manager = TimeTravelManager::new("test-namespace");
-        
+
         manager.set("key1", b"value1".to_vec());
         let snapshot_id = manager.create_checkpoint("Initial state");
-        
+
         let checkout = manager.full_checkout(&snapshot_id).unwrap();
-        
+
         assert_eq!(checkout.snapshot_id, snapshot_id);
         assert!(!checkout.provenance_chain.is_empty());
     }
@@ -1472,35 +1496,35 @@ mod checkout_tests {
     #[test]
     fn test_restore_from_checkout() {
         let mut manager = TimeTravelManager::new("test-namespace");
-        
+
         manager.set("key1", b"value1".to_vec());
         let snapshot_id = manager.create_checkpoint("Initial state");
-        
+
         let checkout = manager.full_checkout(&snapshot_id).unwrap();
-        
+
         // Create a new manager and restore
         let mut new_manager = TimeTravelManager::new("test-namespace-2");
         new_manager.restore_from_checkout(&checkout).unwrap();
-        
+
         assert_eq!(new_manager.get("key1"), Some(b"value1".as_slice()));
     }
 
     #[test]
     fn test_generate_replay() {
         let mut manager = TimeTravelManager::new("test-namespace");
-        
+
         // Create some state changes
         let first_id = manager.create_checkpoint("Initial");
-        
+
         manager.set("key1", b"value1".to_vec());
         let _mid_id = manager.create_checkpoint("After first change");
-        
+
         manager.set("key2", b"value2".to_vec());
         let last_id = manager.create_checkpoint("After second change");
-        
+
         let replay = manager.generate_replay(&first_id, &last_id);
         assert!(replay.is_some());
-        
+
         let steps = replay.unwrap();
         assert_eq!(steps.len(), 2);
     }

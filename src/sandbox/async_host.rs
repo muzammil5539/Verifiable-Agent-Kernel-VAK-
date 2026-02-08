@@ -49,8 +49,8 @@ use thiserror::Error;
 use tokio::sync::{RwLock, Semaphore};
 use tracing::{debug, info};
 
-use crate::policy::context::{DynamicContextCollector, ContextConfig};
-use crate::policy::enforcer::{CedarEnforcer, Principal, Action, Resource, EnforcerConfig};
+use crate::policy::context::{ContextConfig, DynamicContextCollector};
+use crate::policy::enforcer::{Action, CedarEnforcer, EnforcerConfig, Principal, Resource};
 
 /// Errors that can occur in async host operations
 #[derive(Debug, Error)]
@@ -137,13 +137,27 @@ pub enum AsyncOperation {
     /// File write operation
     FileWrite { path: String, data: Vec<u8> },
     /// HTTP GET request
-    HttpGet { url: String, headers: HashMap<String, String> },
+    HttpGet {
+        url: String,
+        headers: HashMap<String, String>,
+    },
     /// HTTP POST request
-    HttpPost { url: String, body: Vec<u8>, headers: HashMap<String, String> },
+    HttpPost {
+        url: String,
+        body: Vec<u8>,
+        headers: HashMap<String, String>,
+    },
     /// Policy evaluation
-    PolicyCheck { principal: String, action: String, resource: String },
+    PolicyCheck {
+        principal: String,
+        action: String,
+        resource: String,
+    },
     /// Custom async operation
-    Custom { name: String, params: serde_json::Value },
+    Custom {
+        name: String,
+        params: serde_json::Value,
+    },
 }
 
 impl AsyncOperation {
@@ -167,9 +181,11 @@ impl AsyncOperation {
             AsyncOperation::HttpGet { url, .. } => url.clone(),
             AsyncOperation::HttpPost { url, .. } => url.clone(),
             AsyncOperation::PolicyCheck { resource, .. } => resource.clone(),
-            AsyncOperation::Custom { params, .. } => {
-                params.get("resource").and_then(|v| v.as_str()).unwrap_or("unknown").to_string()
-            }
+            AsyncOperation::Custom { params, .. } => params
+                .get("resource")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string(),
         }
     }
 }
@@ -247,8 +263,10 @@ impl AsyncHostContext {
         config: AsyncHostConfig,
     ) -> Self {
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent_ops));
-        let enforcer = Arc::new(CedarEnforcer::new(EnforcerConfig::default())
-            .unwrap_or_else(|_| CedarEnforcer::new_permissive()));
+        let enforcer = Arc::new(
+            CedarEnforcer::new(EnforcerConfig::default())
+                .unwrap_or_else(|_| CedarEnforcer::new_permissive()),
+        );
         let context_collector = Arc::new(DynamicContextCollector::new(ContextConfig::default()));
 
         Self {
@@ -264,12 +282,16 @@ impl AsyncHostContext {
     }
 
     /// Execute an async operation with policy check
-    pub async fn execute_async(&self, operation: AsyncOperation) -> AsyncHostResult<OperationResult> {
+    pub async fn execute_async(
+        &self,
+        operation: AsyncOperation,
+    ) -> AsyncHostResult<OperationResult> {
         let start = Instant::now();
         let operation_id = self.next_operation_id();
 
         // Acquire semaphore permit
-        let _permit = self.semaphore
+        let _permit = self
+            .semaphore
             .clone()
             .acquire_owned()
             .await
@@ -357,7 +379,8 @@ impl AsyncHostContext {
         }
 
         // Collect dynamic context
-        let context = self.context_collector
+        let context = self
+            .context_collector
             .collect_context(&self.agent_id)
             .await
             .ok();
@@ -367,16 +390,22 @@ impl AsyncHostContext {
         let action = Action::new("Agent", operation.action_name());
         let resource = Resource::new("Resource", &operation.resource_name());
 
-        let decision = self.enforcer.authorize(&principal, &action, &resource, context.as_ref()).await;
+        let decision = self
+            .enforcer
+            .authorize(&principal, &action, &resource, context.as_ref())
+            .await;
         let allowed = decision.map(|d| d.is_allowed()).unwrap_or(false);
 
         // Update cache
         if self.config.cache_authorizations {
             let mut cache = self.auth_cache.write().await;
-            cache.insert(cache_key, CachedAuth {
-                allowed,
-                cached_at: Instant::now(),
-            });
+            cache.insert(
+                cache_key,
+                CachedAuth {
+                    allowed,
+                    cached_at: Instant::now(),
+                },
+            );
         }
 
         if allowed {
@@ -392,24 +421,18 @@ impl AsyncHostContext {
     /// Execute the actual operation
     async fn execute_operation(&self, operation: &AsyncOperation) -> AsyncHostResult<Vec<u8>> {
         match operation {
-            AsyncOperation::FileRead { path } => {
-                self.execute_file_read(path).await
-            }
-            AsyncOperation::FileWrite { path, data } => {
-                self.execute_file_write(path, data).await
-            }
-            AsyncOperation::HttpGet { url, headers } => {
-                self.execute_http_get(url, headers).await
-            }
+            AsyncOperation::FileRead { path } => self.execute_file_read(path).await,
+            AsyncOperation::FileWrite { path, data } => self.execute_file_write(path, data).await,
+            AsyncOperation::HttpGet { url, headers } => self.execute_http_get(url, headers).await,
             AsyncOperation::HttpPost { url, body, headers } => {
                 self.execute_http_post(url, body, headers).await
             }
-            AsyncOperation::PolicyCheck { principal, action, resource } => {
-                self.execute_policy_check(principal, action, resource).await
-            }
-            AsyncOperation::Custom { name, params } => {
-                self.execute_custom(name, params).await
-            }
+            AsyncOperation::PolicyCheck {
+                principal,
+                action,
+                resource,
+            } => self.execute_policy_check(principal, action, resource).await,
+            AsyncOperation::Custom { name, params } => self.execute_custom(name, params).await,
         }
     }
 
@@ -436,14 +459,14 @@ impl AsyncHostContext {
     }
 
     /// Execute HTTP GET request using reqwest
-    /// 
+    ///
     /// # Arguments
     /// * `url` - The URL to request
     /// * `headers` - Custom headers to include in the request
-    /// 
+    ///
     /// # Returns
     /// Response body as bytes on success
-    /// 
+    ///
     /// # Errors
     /// Returns `AsyncHostError::IoError` on network or HTTP errors
     async fn execute_http_get(
@@ -452,27 +475,29 @@ impl AsyncHostContext {
         headers: &HashMap<String, String>,
     ) -> AsyncHostResult<Vec<u8>> {
         debug!(url = %url, "Executing HTTP GET");
-        
+
         let client = reqwest::Client::builder()
             .timeout(self.config.default_timeout)
             .build()
-            .map_err(|e| AsyncHostError::Internal(format!("Failed to create HTTP client: {}", e)))?;
-        
+            .map_err(|e| {
+                AsyncHostError::Internal(format!("Failed to create HTTP client: {}", e))
+            })?;
+
         let mut request_builder = client.get(url);
-        
+
         // Add custom headers
         for (key, value) in headers {
             request_builder = request_builder.header(key, value);
         }
-        
+
         // Add user-agent header to identify VAK requests
         request_builder = request_builder.header("User-Agent", "VAK-Agent/1.0");
-        
+
         let response = request_builder
             .send()
             .await
             .map_err(|e| AsyncHostError::IoError(format!("HTTP GET failed: {}", e)))?;
-        
+
         // Check for HTTP errors
         let status = response.status();
         if !status.is_success() {
@@ -482,7 +507,7 @@ impl AsyncHostContext {
                 status.canonical_reason().unwrap_or("Unknown")
             )));
         }
-        
+
         response
             .bytes()
             .await
@@ -491,15 +516,15 @@ impl AsyncHostContext {
     }
 
     /// Execute HTTP POST request using reqwest
-    /// 
+    ///
     /// # Arguments
     /// * `url` - The URL to send the request to
     /// * `body` - The request body as bytes
     /// * `headers` - Custom headers to include in the request
-    /// 
+    ///
     /// # Returns
     /// Response body as bytes on success
-    /// 
+    ///
     /// # Errors
     /// Returns `AsyncHostError::IoError` on network or HTTP errors
     async fn execute_http_post(
@@ -509,32 +534,34 @@ impl AsyncHostContext {
         headers: &HashMap<String, String>,
     ) -> AsyncHostResult<Vec<u8>> {
         debug!(url = %url, body_len = body.len(), "Executing HTTP POST");
-        
+
         let client = reqwest::Client::builder()
             .timeout(self.config.default_timeout)
             .build()
-            .map_err(|e| AsyncHostError::Internal(format!("Failed to create HTTP client: {}", e)))?;
-        
+            .map_err(|e| {
+                AsyncHostError::Internal(format!("Failed to create HTTP client: {}", e))
+            })?;
+
         let mut request_builder = client.post(url).body(body.to_vec());
-        
+
         // Add custom headers
         for (key, value) in headers {
             request_builder = request_builder.header(key, value);
         }
-        
+
         // Add default content-type if not specified
         if !headers.contains_key("Content-Type") && !headers.contains_key("content-type") {
             request_builder = request_builder.header("Content-Type", "application/octet-stream");
         }
-        
+
         // Add user-agent header to identify VAK requests
         request_builder = request_builder.header("User-Agent", "VAK-Agent/1.0");
-        
+
         let response = request_builder
             .send()
             .await
             .map_err(|e| AsyncHostError::IoError(format!("HTTP POST failed: {}", e)))?;
-        
+
         // Check for HTTP errors
         let status = response.status();
         if !status.is_success() {
@@ -544,7 +571,7 @@ impl AsyncHostContext {
                 status.canonical_reason().unwrap_or("Unknown")
             )));
         }
-        
+
         response
             .bytes()
             .await
@@ -563,16 +590,19 @@ impl AsyncHostContext {
         let action = Action::new("Agent", action_name);
         let resource = Resource::new("Resource", resource_id);
 
-        let context = self.context_collector
+        let context = self
+            .context_collector
             .collect_context(principal_id)
             .await
             .ok();
 
-        let decision = self.enforcer.authorize(&principal, &action, &resource, context.as_ref()).await;
+        let decision = self
+            .enforcer
+            .authorize(&principal, &action, &resource, context.as_ref())
+            .await;
         let allowed = decision.map(|d| d.is_allowed()).unwrap_or(false);
 
-        Ok(serde_json::to_vec(&serde_json::json!({ "allowed": allowed }))
-            .unwrap_or_default())
+        Ok(serde_json::to_vec(&serde_json::json!({ "allowed": allowed })).unwrap_or_default())
     }
 
     /// Execute custom operation handler.
@@ -639,7 +669,7 @@ impl AsyncHostContext {
         params: &serde_json::Value,
     ) -> AsyncHostResult<Vec<u8>> {
         debug!(name = %name, "Executing custom operation");
-        
+
         // TODO: Implement custom handler registry and dispatch
         // Current implementation echoes params for testing purposes
         info!(
@@ -647,7 +677,7 @@ impl AsyncHostContext {
             agent_id = %self.agent_id,
             "Custom operation executed (placeholder implementation)"
         );
-        
+
         // Return params as result for now - serves as acknowledgment
         // that the operation was received and processed
         Ok(serde_json::to_vec(params).unwrap_or_default())
@@ -655,7 +685,9 @@ impl AsyncHostContext {
 
     /// Generate next operation ID
     fn next_operation_id(&self) -> String {
-        let id = self.operation_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let id = self
+            .operation_counter
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         format!("{}-{}-{}", self.agent_id, self.session_id, id)
     }
 
@@ -691,7 +723,7 @@ impl AsyncOperationExecutor {
     /// Get or create context for an agent
     pub async fn get_context(&self, agent_id: &str, session_id: &str) -> Arc<AsyncHostContext> {
         let key = format!("{}:{}", agent_id, session_id);
-        
+
         {
             let contexts = self.contexts.read().await;
             if let Some(ctx) = contexts.get(&key) {
@@ -773,7 +805,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_async_operation_action_names() {
-        let file_read = AsyncOperation::FileRead { path: "/test".to_string() };
+        let file_read = AsyncOperation::FileRead {
+            path: "/test".to_string(),
+        };
         assert_eq!(file_read.action_name(), "fs_read");
         assert_eq!(file_read.resource_name(), "/test");
 
@@ -793,13 +827,15 @@ mod tests {
     #[tokio::test]
     async fn test_executor_batch() {
         let executor = AsyncOperationExecutor::new(AsyncHostConfig::default());
-        
-        let operations = vec![
-            ("agent-1".to_string(), "session-1".to_string(), AsyncOperation::Custom {
+
+        let operations = vec![(
+            "agent-1".to_string(),
+            "session-1".to_string(),
+            AsyncOperation::Custom {
                 name: "test".to_string(),
                 params: serde_json::json!({"key": "value"}),
-            }),
-        ];
+            },
+        )];
 
         let results = executor.execute_batch(operations).await;
         assert_eq!(results.len(), 1);

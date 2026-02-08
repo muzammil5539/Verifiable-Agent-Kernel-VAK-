@@ -169,11 +169,19 @@ pub mod python;
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use vak::prelude::*;
 /// ```
 pub mod prelude {
     //! Convenient re-exports for common VAK usage patterns.
+    //!
+    //! This module provides quick access to the most commonly used types.
+    //!
+    //! # Example
+    //!
+    //! ```rust,ignore
+    //! use vak::prelude::*;
+    //! ```
 
     pub use crate::kernel::config::KernelConfig;
     pub use crate::kernel::types::{

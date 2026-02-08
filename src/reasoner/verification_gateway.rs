@@ -178,8 +178,6 @@ pub enum ActionCategory {
     /// Database operations
     Database,
     /// Financial transactions
-    Financial,
-    /// Authentication/Authorization
     Auth,
     /// System administration
     System,
@@ -578,10 +576,9 @@ impl VerificationGateway {
                 violations.push(ViolationDetail {
                     constraint_name: pattern.name.clone(),
                     violation_type: "forbidden_pattern".to_string(),
-                    description: pattern
-                        .description
-                        .clone()
-                        .unwrap_or_else(|| format!("Forbidden pattern '{}' detected", pattern.name)),
+                    description: pattern.description.clone().unwrap_or_else(|| {
+                        format!("Forbidden pattern '{}' detected", pattern.name)
+                    }),
                     severity: pattern.severity,
                     remediation: Some("Review and modify the action parameters".to_string()),
                 });
@@ -672,9 +669,7 @@ impl VerificationGateway {
                 name: constraint.name.clone(),
                 satisfied: result.is_satisfied(),
                 explanation: Some(format!("Status: {:?}", result.status)),
-                counterexample: result
-                    .counterexample
-                    .map(|c| format!("{:?}", c)),
+                counterexample: result.counterexample.map(|c| format!("{:?}", c)),
             },
             Err(e) => {
                 warn!(constraint = %constraint.name, error = %e, "Constraint verification error");
@@ -870,15 +865,16 @@ impl VerificationGateway {
             .map_err(|e| GatewayError::ConstraintLoadError(e.to_string()))?;
 
         // Parse based on extension
-        let actions: Vec<HighStakesAction> = if path.extension().map(|e| e == "yaml").unwrap_or(false)
-            || path.extension().map(|e| e == "yml").unwrap_or(false)
-        {
-            serde_yaml::from_str(&content)
-                .map_err(|e| GatewayError::ConstraintLoadError(e.to_string()))?
-        } else {
-            serde_json::from_str(&content)
-                .map_err(|e| GatewayError::ConstraintLoadError(e.to_string()))?
-        };
+        let actions: Vec<HighStakesAction> =
+            if path.extension().map(|e| e == "yaml").unwrap_or(false)
+                || path.extension().map(|e| e == "yml").unwrap_or(false)
+            {
+                serde_yaml::from_str(&content)
+                    .map_err(|e| GatewayError::ConstraintLoadError(e.to_string()))?
+            } else {
+                serde_json::from_str(&content)
+                    .map_err(|e| GatewayError::ConstraintLoadError(e.to_string()))?
+            };
 
         for action in actions {
             self.register_action(action).await;
@@ -969,7 +965,10 @@ mod tests {
             .unwrap();
 
         let mut context = HashMap::new();
-        context.insert("path".to_string(), ConstraintValue::String("/workspace/test.txt".to_string()));
+        context.insert(
+            "path".to_string(),
+            ConstraintValue::String("/workspace/test.txt".to_string()),
+        );
 
         let result = gateway.verify_action("file_write", &context).await;
         assert!(result.is_ok());
@@ -995,7 +994,9 @@ mod tests {
         let result = gateway.verify_action("file_write", &context).await.unwrap();
 
         assert!(result.is_safe);
-        assert!(result.warnings.contains(&"Verification is disabled".to_string()));
+        assert!(result
+            .warnings
+            .contains(&"Verification is disabled".to_string()));
     }
 
     #[tokio::test]

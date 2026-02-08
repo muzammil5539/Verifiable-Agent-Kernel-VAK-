@@ -49,9 +49,9 @@ pub use replay::{
 
 // Re-export OpenTelemetry tracing types (OBS-001)
 pub use otel::{
-    AttributeValue, OtlpExporter, Span as OtelSpan, SpanContext as OtelSpanContext,
-    SpanEvent, SpanKind, SpanLink, SpanStatus, TraceContext, TracerStats, TracingConfig,
-    TracingError, TracingResult, VakTracer, traced_operation,
+    traced_operation, AttributeValue, OtlpExporter, Span as OtelSpan,
+    SpanContext as OtelSpanContext, SpanEvent, SpanKind, SpanLink, SpanStatus, TraceContext,
+    TracerStats, TracingConfig, TracingError, TracingResult, VakTracer,
 };
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
@@ -453,7 +453,7 @@ impl SqliteAuditBackend {
     /// * New backend instance or error if database cannot be opened
     pub fn new(db_path: impl AsRef<Path>) -> Result<Self, AuditError> {
         let db_path = db_path.as_ref();
-        
+
         // Create parent directory if needed
         if let Some(parent) = db_path.parent() {
             if !parent.exists() {
@@ -463,7 +463,7 @@ impl SqliteAuditBackend {
 
         let conn = Connection::open(db_path)
             .map_err(|e| AuditError::BackendNotAvailable(format!("SQLite: {}", e)))?;
-        
+
         // Initialize schema
         conn.execute_batch(Self::SCHEMA)
             .map_err(|e| AuditError::BackendNotAvailable(format!("Schema init: {}", e)))?;
@@ -483,7 +483,7 @@ impl SqliteAuditBackend {
     pub fn in_memory() -> Result<Self, AuditError> {
         let conn = Connection::open_in_memory()
             .map_err(|e| AuditError::BackendNotAvailable(format!("SQLite in-memory: {}", e)))?;
-        
+
         conn.execute_batch(Self::SCHEMA)
             .map_err(|e| AuditError::BackendNotAvailable(format!("Schema init: {}", e)))?;
 
@@ -495,9 +495,10 @@ impl SqliteAuditBackend {
 
     /// Get entries by action type
     pub fn get_by_action(&self, action: &str) -> Result<Vec<AuditEntry>, AuditError> {
-        let conn = self.conn.lock().map_err(|e| {
-            AuditError::BackendNotAvailable(format!("Lock error: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
 
         let mut stmt = conn
             .prepare("SELECT id, timestamp, agent_id, action, resource, decision, hash, prev_hash, signature, metadata FROM audit_logs WHERE action = ? ORDER BY id")
@@ -514,9 +515,10 @@ impl SqliteAuditBackend {
 
     /// Get entries by decision type
     pub fn get_by_decision(&self, decision: &AuditDecision) -> Result<Vec<AuditEntry>, AuditError> {
-        let conn = self.conn.lock().map_err(|e| {
-            AuditError::BackendNotAvailable(format!("Lock error: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
 
         let decision_str = decision.to_string();
         let mut stmt = conn
@@ -543,8 +545,7 @@ impl SqliteAuditBackend {
         };
 
         let metadata_str: Option<String> = row.get(9)?;
-        let metadata = metadata_str
-            .and_then(|s| serde_json::from_str(&s).ok());
+        let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
 
         Ok(AuditEntry {
             id: row.get(0)?,
@@ -563,9 +564,10 @@ impl SqliteAuditBackend {
 
 impl AuditBackend for SqliteAuditBackend {
     fn append(&mut self, entry: &AuditEntry) -> Result<(), AuditError> {
-        let conn = self.conn.lock().map_err(|e| {
-            AuditError::BackendNotAvailable(format!("Lock error: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
 
         let metadata_str = entry
             .metadata
@@ -593,9 +595,10 @@ impl AuditBackend for SqliteAuditBackend {
     }
 
     fn load_all(&self) -> Result<Vec<AuditEntry>, AuditError> {
-        let conn = self.conn.lock().map_err(|e| {
-            AuditError::BackendNotAvailable(format!("Lock error: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
 
         let mut stmt = conn
             .prepare("SELECT id, timestamp, agent_id, action, resource, decision, hash, prev_hash, signature, metadata FROM audit_logs ORDER BY id")
@@ -611,9 +614,10 @@ impl AuditBackend for SqliteAuditBackend {
     }
 
     fn get_last(&self) -> Result<Option<AuditEntry>, AuditError> {
-        let conn = self.conn.lock().map_err(|e| {
-            AuditError::BackendNotAvailable(format!("Lock error: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
 
         let mut stmt = conn
             .prepare("SELECT id, timestamp, agent_id, action, resource, decision, hash, prev_hash, signature, metadata FROM audit_logs ORDER BY id DESC LIMIT 1")
@@ -623,7 +627,10 @@ impl AuditBackend for SqliteAuditBackend {
             .query([])
             .map_err(|e| AuditError::BackendNotAvailable(format!("Query: {}", e)))?;
 
-        match rows.next().map_err(|e| AuditError::BackendNotAvailable(format!("Row fetch: {}", e)))? {
+        match rows
+            .next()
+            .map_err(|e| AuditError::BackendNotAvailable(format!("Row fetch: {}", e)))?
+        {
             Some(row) => Ok(Some(Self::row_to_entry(row).map_err(|e| {
                 AuditError::BackendNotAvailable(format!("Row mapping: {}", e))
             })?)),
@@ -637,9 +644,10 @@ impl AuditBackend for SqliteAuditBackend {
 
     fn flush(&mut self) -> Result<(), AuditError> {
         // SQLite auto-commits, but we can force a checkpoint for WAL mode
-        let conn = self.conn.lock().map_err(|e| {
-            AuditError::BackendNotAvailable(format!("Lock error: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
 
         conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
             .map_err(|e| AuditError::BackendNotAvailable(format!("Checkpoint: {}", e)))?;
@@ -648,9 +656,10 @@ impl AuditBackend for SqliteAuditBackend {
     }
 
     fn get_by_agent(&self, agent_id: &str) -> Result<Vec<AuditEntry>, AuditError> {
-        let conn = self.conn.lock().map_err(|e| {
-            AuditError::BackendNotAvailable(format!("Lock error: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
 
         let mut stmt = conn
             .prepare("SELECT id, timestamp, agent_id, action, resource, decision, hash, prev_hash, signature, metadata FROM audit_logs WHERE agent_id = ? ORDER BY id")
@@ -666,9 +675,10 @@ impl AuditBackend for SqliteAuditBackend {
     }
 
     fn get_by_time_range(&self, start: u64, end: u64) -> Result<Vec<AuditEntry>, AuditError> {
-        let conn = self.conn.lock().map_err(|e| {
-            AuditError::BackendNotAvailable(format!("Lock error: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
 
         let mut stmt = conn
             .prepare("SELECT id, timestamp, agent_id, action, resource, decision, hash, prev_hash, signature, metadata FROM audit_logs WHERE timestamp >= ? AND timestamp <= ? ORDER BY id")
@@ -740,13 +750,18 @@ impl AuditSigner {
     pub fn verify(&self, entry_hash: &str, signature_hex: &str) -> Result<bool, AuditError> {
         let sig_bytes = hex::decode(signature_hex)
             .map_err(|e| AuditError::SerializationError(format!("Invalid signature hex: {}", e)))?;
-        
-        let sig_array: [u8; 64] = sig_bytes.try_into()
+
+        let sig_array: [u8; 64] = sig_bytes
+            .try_into()
             .map_err(|_| AuditError::SerializationError("Signature wrong length".to_string()))?;
-        
+
         let signature = Signature::from_bytes(&sig_array);
 
-        Ok(self.signing_key.verifying_key().verify(entry_hash.as_bytes(), &signature).is_ok())
+        Ok(self
+            .signing_key
+            .verifying_key()
+            .verify(entry_hash.as_bytes(), &signature)
+            .is_ok())
     }
 
     /// Verify a signature using a public key
@@ -755,24 +770,29 @@ impl AuditSigner {
         entry_hash: &str,
         signature_hex: &str,
     ) -> Result<bool, AuditError> {
-        let pk_bytes = hex::decode(public_key_hex)
-            .map_err(|e| AuditError::SerializationError(format!("Invalid public key hex: {}", e)))?;
-        
-        let pk_array: [u8; 32] = pk_bytes.try_into()
+        let pk_bytes = hex::decode(public_key_hex).map_err(|e| {
+            AuditError::SerializationError(format!("Invalid public key hex: {}", e))
+        })?;
+
+        let pk_array: [u8; 32] = pk_bytes
+            .try_into()
             .map_err(|_| AuditError::SerializationError("Public key wrong length".to_string()))?;
-        
+
         let verifying_key = VerifyingKey::from_bytes(&pk_array)
             .map_err(|e| AuditError::SerializationError(format!("Invalid public key: {}", e)))?;
 
         let sig_bytes = hex::decode(signature_hex)
             .map_err(|e| AuditError::SerializationError(format!("Invalid signature hex: {}", e)))?;
-        
-        let sig_array: [u8; 64] = sig_bytes.try_into()
+
+        let sig_array: [u8; 64] = sig_bytes
+            .try_into()
             .map_err(|_| AuditError::SerializationError("Signature wrong length".to_string()))?;
-        
+
         let signature = Signature::from_bytes(&sig_array);
 
-        Ok(verifying_key.verify(entry_hash.as_bytes(), &signature).is_ok())
+        Ok(verifying_key
+            .verify(entry_hash.as_bytes(), &signature)
+            .is_ok())
     }
 }
 
@@ -1198,11 +1218,7 @@ impl std::fmt::Display for AuditVerificationError {
                 )
             }
             Self::InvalidSignature { entry_id, reason } => {
-                write!(
-                    f,
-                    "Invalid signature at entry {}: {}",
-                    entry_id, reason
-                )
+                write!(f, "Invalid signature at entry {}: {}", entry_id, reason)
             }
         }
     }
@@ -1276,7 +1292,7 @@ mod tests {
     #[test]
     fn test_memory_backend() {
         let mut backend = MemoryAuditBackend::new();
-        
+
         let entry = AuditEntry {
             id: 1,
             timestamp: 1234567890,
@@ -1408,7 +1424,10 @@ mod tests {
 
         let entry = &logger.entries()[0];
         assert!(entry.metadata.is_some());
-        assert_eq!(entry.metadata.as_ref().unwrap()["ip_address"], "192.168.1.1");
+        assert_eq!(
+            entry.metadata.as_ref().unwrap()["ip_address"],
+            "192.168.1.1"
+        );
     }
 
     // ========================================================================
@@ -1504,7 +1523,11 @@ mod tests {
                 resource: format!("/file-{}", i),
                 decision: AuditDecision::Allowed,
                 hash: format!("h{}", i),
-                prev_hash: if i == 1 { "0".repeat(64) } else { format!("h{}", i - 1) },
+                prev_hash: if i == 1 {
+                    "0".repeat(64)
+                } else {
+                    format!("h{}", i - 1)
+                },
                 signature: None,
                 metadata: None,
             };
@@ -1541,7 +1564,7 @@ mod tests {
     fn test_signer_sign_and_verify() {
         let signer = AuditSigner::new();
         let hash = "abc123def456";
-        
+
         let signature = signer.sign(hash);
         assert!(!signature.is_empty());
         assert_eq!(signature.len(), 128); // 64 bytes = 128 hex chars
@@ -1557,9 +1580,9 @@ mod tests {
     fn test_signer_key_export_import() {
         let signer1 = AuditSigner::new();
         let key_bytes = signer1.export_key_bytes();
-        
+
         let signer2 = AuditSigner::from_key_bytes(&key_bytes).unwrap();
-        
+
         // Both should have same public key
         assert_eq!(signer1.public_key_hex, signer2.public_key_hex);
 
@@ -1576,18 +1599,15 @@ mod tests {
         let signature = signer.sign(hash);
 
         // Verify using static method with public key
-        let result = AuditSigner::verify_with_public_key(
-            &signer.public_key_hex,
-            hash,
-            &signature,
-        ).unwrap();
+        let result =
+            AuditSigner::verify_with_public_key(&signer.public_key_hex, hash, &signature).unwrap();
         assert!(result);
     }
 
     #[test]
     fn test_logger_with_signing() {
         let mut logger = AuditLogger::new_with_signing();
-        
+
         logger.log("agent-1", "read", "/data/a.txt", AuditDecision::Allowed);
         logger.log("agent-2", "write", "/data/b.txt", AuditDecision::Denied);
 
@@ -1604,16 +1624,16 @@ mod tests {
     #[test]
     fn test_logger_verify_all() {
         let mut logger = AuditLogger::new_with_signing();
-        
+
         logger.log("agent-1", "action1", "/res1", AuditDecision::Allowed);
         logger.log("agent-1", "action2", "/res2", AuditDecision::Denied);
         logger.log("agent-2", "action3", "/res3", AuditDecision::Allowed);
 
         let pk = logger.public_key().unwrap().to_string();
-        
+
         // Verify both chain and signatures
         assert!(logger.verify_all(Some(&pk)).is_ok());
-        
+
         // Also verify with just chain
         assert!(logger.verify_all(None).is_ok());
     }
@@ -1640,7 +1660,7 @@ mod tests {
         };
 
         backend.append(&entry).unwrap();
-        
+
         let loaded = backend.load_all().unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].signature, Some(signature));
@@ -1650,7 +1670,8 @@ mod tests {
             &signer.public_key_hex,
             &loaded[0].hash,
             loaded[0].signature.as_ref().unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
         assert!(result);
     }
 }

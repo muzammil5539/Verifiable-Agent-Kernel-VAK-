@@ -45,9 +45,7 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::warn;
 
-use super::context::{
-    AgentReputation, ContextConfig, DynamicContextCollector, SystemMetrics,
-};
+use super::context::{AgentReputation, ContextConfig, DynamicContextCollector, SystemMetrics};
 use super::enforcer::{
     Action, CedarEnforcer, Decision as PolicyDecision, EnforcerConfig, EnforcerError,
     PolicyContext, Principal, Resource,
@@ -330,7 +328,10 @@ impl IntegratedPolicyEngine {
         let cedar_action = Action::new("Agent", action);
         let cedar_resource = Resource::new("Resource", resource);
 
-        Ok(self.enforcer.authorize(&principal, &cedar_action, &cedar_resource, None).await?)
+        Ok(self
+            .enforcer
+            .authorize(&principal, &cedar_action, &cedar_resource, None)
+            .await?)
     }
 
     /// Batch authorization with context
@@ -428,7 +429,10 @@ impl IntegratedPolicyEngine {
             "/etc/",
             ".env",
         ];
-        if sensitive_patterns.iter().any(|p| resource.to_lowercase().contains(p)) {
+        if sensitive_patterns
+            .iter()
+            .any(|p| resource.to_lowercase().contains(p))
+        {
             risk_factors.push(RiskFactor {
                 name: "sensitive_resource".to_string(),
                 weight: 0.3,
@@ -439,7 +443,10 @@ impl IntegratedPolicyEngine {
 
         // Factor 4: Destructive action
         let destructive_actions = vec!["delete", "drop", "remove", "truncate", "destroy"];
-        if destructive_actions.iter().any(|a| action.to_lowercase().contains(a)) {
+        if destructive_actions
+            .iter()
+            .any(|a| action.to_lowercase().contains(a))
+        {
             risk_factors.push(RiskFactor {
                 name: "destructive_action".to_string(),
                 weight: 0.4,
@@ -459,8 +466,8 @@ impl IntegratedPolicyEngine {
         }
 
         let risk_score = total_risk.min(1.0);
-        let blocked_by_risk = self.config.enable_reputation
-            && risk_score > self.config.high_risk_threshold;
+        let blocked_by_risk =
+            self.config.enable_reputation && risk_score > self.config.high_risk_threshold;
 
         let mut mitigations = Vec::new();
         if risk_score > 0.5 {
@@ -555,7 +562,10 @@ mod tests {
     #[tokio::test]
     async fn test_simple_authorization() {
         let engine = IntegratedPolicyEngine::permissive();
-        let decision = engine.authorize_simple("agent-1", "read", "/data/file.txt").await.unwrap();
+        let decision = engine
+            .authorize_simple("agent-1", "read", "/data/file.txt")
+            .await
+            .unwrap();
         assert!(decision.is_allowed());
     }
 

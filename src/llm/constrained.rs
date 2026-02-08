@@ -126,9 +126,8 @@ impl Grammar {
 
     /// Set validation regex
     pub fn with_validation_regex(mut self, pattern: &str) -> ConstraintResult<Self> {
-        self.validation_regex = Some(
-            Regex::new(pattern).map_err(|e| ConstraintError::InvalidGrammar(e.to_string()))?,
-        );
+        self.validation_regex =
+            Some(Regex::new(pattern).map_err(|e| ConstraintError::InvalidGrammar(e.to_string()))?);
         Ok(self)
     }
 
@@ -148,7 +147,7 @@ impl Grammar {
     }
 
     /// Get allowed next tokens given current state
-    pub fn allowed_next_tokens(&self, current_state: &str) -> Vec<String> {
+    pub fn allowed_next_tokens(&self, _current_state: &str) -> Vec<String> {
         // Simplified implementation - returns all terminals
         // A full implementation would do proper grammar state tracking
         self.terminals.iter().cloned().collect()
@@ -286,10 +285,7 @@ impl JsonSchemaConstraint {
         let mut required = Vec::new();
 
         for (name, type_name) in fields {
-            properties.insert(
-                name.to_string(),
-                serde_json::json!({ "type": type_name }),
-            );
+            properties.insert(name.to_string(), serde_json::json!({ "type": type_name }));
             required.push(name.to_string());
         }
 
@@ -328,7 +324,10 @@ impl Default for VakActionConstraint {
             ],
             required_params: HashMap::from([
                 ("read_file".to_string(), vec!["path".to_string()]),
-                ("write_file".to_string(), vec!["path".to_string(), "content".to_string()]),
+                (
+                    "write_file".to_string(),
+                    vec!["path".to_string(), "content".to_string()],
+                ),
                 ("execute_tool".to_string(), vec!["tool_name".to_string()]),
                 ("query".to_string(), vec!["query".to_string()]),
                 ("api_call".to_string(), vec!["endpoint".to_string()]),
@@ -458,7 +457,10 @@ pub enum DatalogTerm {
     /// Variable (starts with uppercase)
     Variable(String),
     /// Compound term
-    Compound { functor: String, args: Vec<DatalogTerm> },
+    Compound {
+        functor: String,
+        args: Vec<DatalogTerm>,
+    },
 }
 
 impl DatalogTerm {
@@ -519,13 +521,12 @@ impl ConstrainedDecoder {
         Self {
             grammar_cache: HashMap::new(),
             // Match patterns like: Predicate(arg1, arg2, ...)
-            datalog_fact_regex: Regex::new(
-                r#"^([A-Z][a-zA-Z0-9_]*)\s*\(\s*(.+)\s*\)$"#
-            ).unwrap(),
+            datalog_fact_regex: Regex::new(r#"^([A-Z][a-zA-Z0-9_]*)\s*\(\s*(.+)\s*\)$"#).unwrap(),
             // Match patterns like: {"action": "...", "target": "...", ...}
             vak_action_regex: Regex::new(
-                r#"\{\s*"action"\s*:\s*"([^"]+)"\s*,\s*"target"\s*:\s*"([^"]+)".*\}"#
-            ).unwrap(),
+                r#"\{\s*"action"\s*:\s*"([^"]+)"\s*,\s*"target"\s*:\s*"([^"]+)".*\}"#,
+            )
+            .unwrap(),
         }
     }
 
@@ -570,7 +571,7 @@ impl ConstrainedDecoder {
                 let predicate = caps.get(1).unwrap().as_str().to_string();
                 let args_str = caps.get(2).unwrap().as_str();
                 let arguments = self.parse_datalog_args(args_str)?;
-                
+
                 facts.push(DatalogFact {
                     predicate,
                     arguments,
@@ -596,7 +597,9 @@ impl ConstrainedDecoder {
                     .get("action")
                     .or_else(|| obj.get("action_type"))
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| ConstraintError::ParseFailed("Missing action field".to_string()))?
+                    .ok_or_else(|| {
+                        ConstraintError::ParseFailed("Missing action field".to_string())
+                    })?
                     .to_string();
 
                 let target = obj
@@ -613,9 +616,7 @@ impl ConstrainedDecoder {
                     .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
                     .unwrap_or_default();
 
-                let confidence = obj
-                    .get("confidence")
-                    .and_then(|v| v.as_f64());
+                let confidence = obj.get("confidence").and_then(|v| v.as_f64());
 
                 let reasoning = obj
                     .get("reasoning")
@@ -658,17 +659,23 @@ impl ConstrainedDecoder {
 
         // Add fact production
         if constraint.allow_facts {
+            grammar.add_rule(GrammarRule::new("<facts>", vec!["<fact>".to_string()]));
             grammar.add_rule(GrammarRule::new(
                 "<facts>",
-                vec!["<fact>".to_string()],
-            ));
-            grammar.add_rule(GrammarRule::new(
-                "<facts>",
-                vec!["<fact>".to_string(), "\n".to_string(), "<facts>".to_string()],
+                vec![
+                    "<fact>".to_string(),
+                    "\n".to_string(),
+                    "<facts>".to_string(),
+                ],
             ));
             grammar.add_rule(GrammarRule::new(
                 "<fact>",
-                vec!["<predicate>".to_string(), "(".to_string(), "<args>".to_string(), ")".to_string()],
+                vec![
+                    "<predicate>".to_string(),
+                    "(".to_string(),
+                    "<args>".to_string(),
+                    ")".to_string(),
+                ],
             ));
         }
 
@@ -681,36 +688,21 @@ impl ConstrainedDecoder {
             ));
         } else {
             for pred in &constraint.allowed_predicates {
-                grammar.add_rule(GrammarRule::new(
-                    "<predicate>",
-                    vec![pred.clone()],
-                ));
+                grammar.add_rule(GrammarRule::new("<predicate>", vec![pred.clone()]));
             }
         }
 
         // Add argument rules
-        grammar.add_rule(GrammarRule::new(
-            "<args>",
-            vec!["<term>".to_string()],
-        ));
+        grammar.add_rule(GrammarRule::new("<args>", vec!["<term>".to_string()]));
         grammar.add_rule(GrammarRule::new(
             "<args>",
             vec!["<term>".to_string(), ",".to_string(), "<args>".to_string()],
         ));
 
         // Add term types
-        grammar.add_rule(GrammarRule::new(
-            "<term>",
-            vec!["<string>".to_string()],
-        ));
-        grammar.add_rule(GrammarRule::new(
-            "<term>",
-            vec!["<number>".to_string()],
-        ));
-        grammar.add_rule(GrammarRule::new(
-            "<term>",
-            vec!["<variable>".to_string()],
-        ));
+        grammar.add_rule(GrammarRule::new("<term>", vec!["<string>".to_string()]));
+        grammar.add_rule(GrammarRule::new("<term>", vec!["<number>".to_string()]));
+        grammar.add_rule(GrammarRule::new("<term>", vec!["<variable>".to_string()]));
 
         // Set validation regex
         let regex = r#"^[A-Z][a-zA-Z0-9_]*\s*\([^)]+\)(\s*\.\s*)?$"#;
@@ -757,10 +749,7 @@ impl ConstrainedDecoder {
 
         // Build action type alternatives
         for action in &constraint.allowed_actions {
-            grammar.add_rule(GrammarRule::new(
-                "<action_type>",
-                vec![action.clone()],
-            ));
+            grammar.add_rule(GrammarRule::new("<action_type>", vec![action.clone()]));
         }
 
         grammar.add_rule(GrammarRule::new(
@@ -778,7 +767,10 @@ impl ConstrainedDecoder {
         Ok(grammar)
     }
 
-    fn parse_custom_grammar(&self, constraint: &CustomGrammarConstraint) -> ConstraintResult<Grammar> {
+    fn parse_custom_grammar(
+        &self,
+        constraint: &CustomGrammarConstraint,
+    ) -> ConstraintResult<Grammar> {
         let mut grammar = Grammar::new("custom", &constraint.start_symbol);
 
         // Simple KBNF-like parsing
@@ -791,10 +783,8 @@ impl ConstrainedDecoder {
             // Parse rule: <non_terminal> ::= production
             if let Some((lhs, rhs)) = line.split_once("::=") {
                 let non_terminal = lhs.trim().to_string();
-                let production: Vec<String> = rhs
-                    .split_whitespace()
-                    .map(|s| s.to_string())
-                    .collect();
+                let production: Vec<String> =
+                    rhs.split_whitespace().map(|s| s.to_string()).collect();
 
                 grammar.add_rule(GrammarRule::new(non_terminal, production));
             }
@@ -807,10 +797,7 @@ impl ConstrainedDecoder {
         let mut grammar = Grammar::new("choice", "<choice>");
 
         for choice in &constraint.choices {
-            grammar.add_rule(GrammarRule::new(
-                "<choice>",
-                vec![choice.clone()],
-            ));
+            grammar.add_rule(GrammarRule::new("<choice>", vec![choice.clone()]));
         }
 
         Ok(grammar)
@@ -822,7 +809,11 @@ impl ConstrainedDecoder {
         Ok(grammar)
     }
 
-    fn validate_datalog(&self, output: &str, constraint: &DatalogConstraint) -> ConstraintResult<()> {
+    fn validate_datalog(
+        &self,
+        output: &str,
+        constraint: &DatalogConstraint,
+    ) -> ConstraintResult<()> {
         let facts = self.parse_datalog(output)?;
 
         // Check count
@@ -862,7 +853,11 @@ impl ConstrainedDecoder {
         Ok(())
     }
 
-    fn validate_json(&self, output: &str, constraint: &JsonSchemaConstraint) -> ConstraintResult<()> {
+    fn validate_json(
+        &self,
+        output: &str,
+        constraint: &JsonSchemaConstraint,
+    ) -> ConstraintResult<()> {
         let value: serde_json::Value = serde_json::from_str(output)
             .map_err(|e| ConstraintError::ValidationFailed(format!("Invalid JSON: {}", e)))?;
 
@@ -883,15 +878,18 @@ impl ConstrainedDecoder {
         if depth > constraint.max_depth {
             return Err(ConstraintError::ValidationFailed(format!(
                 "JSON too deep: {} > {}",
-                depth,
-                constraint.max_depth
+                depth, constraint.max_depth
             )));
         }
 
         Ok(())
     }
 
-    fn validate_action(&self, output: &str, constraint: &VakActionConstraint) -> ConstraintResult<()> {
+    fn validate_action(
+        &self,
+        output: &str,
+        constraint: &VakActionConstraint,
+    ) -> ConstraintResult<()> {
         let action = self.parse_action(output)?;
 
         // Check allowed actions
@@ -905,7 +903,10 @@ impl ConstrainedDecoder {
         // Check required parameters
         if let Some(required) = constraint.required_params.get(&action.action_type) {
             for param in required {
-                if !action.parameters.contains_key(param) && param != "path" && action.target.is_empty() {
+                if !action.parameters.contains_key(param)
+                    && param != "path"
+                    && action.target.is_empty()
+                {
                     return Err(ConstraintError::ValidationFailed(format!(
                         "Missing required parameter '{}' for action '{}'",
                         param, action.action_type
@@ -917,7 +918,11 @@ impl ConstrainedDecoder {
         Ok(())
     }
 
-    fn validate_custom(&self, output: &str, constraint: &CustomGrammarConstraint) -> ConstraintResult<()> {
+    fn validate_custom(
+        &self,
+        output: &str,
+        constraint: &CustomGrammarConstraint,
+    ) -> ConstraintResult<()> {
         let grammar = self.parse_custom_grammar(constraint)?;
         if grammar.validate(output) {
             Ok(())
@@ -1017,7 +1022,7 @@ impl ConstrainedDecoder {
 
         // String literal
         if term.starts_with('"') && term.ends_with('"') {
-            return Ok(DatalogTerm::String(term[1..term.len()-1].to_string()));
+            return Ok(DatalogTerm::String(term[1..term.len() - 1].to_string()));
         }
 
         // Integer
@@ -1031,8 +1036,13 @@ impl ConstrainedDecoder {
         }
 
         // Variable (starts with uppercase)
-        if term.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) 
-           && !term.contains('(') {
+        if term
+            .chars()
+            .next()
+            .map(|c| c.is_uppercase())
+            .unwrap_or(false)
+            && !term.contains('(')
+        {
             return Ok(DatalogTerm::Variable(term.to_string()));
         }
 
@@ -1056,12 +1066,8 @@ impl ConstrainedDecoder {
 /// Calculate JSON nesting depth
 fn json_depth(value: &serde_json::Value) -> usize {
     match value {
-        serde_json::Value::Object(map) => {
-            1 + map.values().map(json_depth).max().unwrap_or(0)
-        }
-        serde_json::Value::Array(arr) => {
-            1 + arr.iter().map(json_depth).max().unwrap_or(0)
-        }
+        serde_json::Value::Object(map) => 1 + map.values().map(json_depth).max().unwrap_or(0),
+        serde_json::Value::Array(arr) => 1 + arr.iter().map(json_depth).max().unwrap_or(0),
         _ => 0,
     }
 }
@@ -1077,8 +1083,10 @@ mod tests {
     #[test]
     fn test_parse_simple_datalog_fact() {
         let decoder = ConstrainedDecoder::new();
-        let facts = decoder.parse_datalog("Action(read, \"/data/file.txt\")").unwrap();
-        
+        let facts = decoder
+            .parse_datalog("Action(read, \"/data/file.txt\")")
+            .unwrap();
+
         assert_eq!(facts.len(), 1);
         assert_eq!(facts[0].predicate, "Action");
         assert_eq!(facts[0].arguments.len(), 2);
@@ -1091,7 +1099,7 @@ mod tests {
             FileAccess("agent-1", "/data/file.txt")
             Permission(read, "agent-1")
         "#;
-        
+
         let facts = decoder.parse_datalog(input).unwrap();
         assert_eq!(facts.len(), 2);
     }
@@ -1102,7 +1110,7 @@ mod tests {
         let constraint = OutputConstraint::Datalog(
             DatalogConstraint::facts_only()
                 .with_predicate("Action")
-                .with_predicate("FileAccess")
+                .with_predicate("FileAccess"),
         );
 
         // Valid
@@ -1118,7 +1126,7 @@ mod tests {
     fn test_parse_vak_action_json() {
         let decoder = ConstrainedDecoder::new();
         let input = r#"{"action": "read_file", "target": "/data/config.json"}"#;
-        
+
         let action = decoder.parse_action(input).unwrap();
         assert_eq!(action.action_type, "read_file");
         assert_eq!(action.target, "/data/config.json");
@@ -1155,12 +1163,10 @@ mod tests {
     #[test]
     fn test_json_schema_constraint() {
         let decoder = ConstrainedDecoder::new();
-        let constraint = OutputConstraint::JsonSchema(
-            JsonSchemaConstraint::simple_object(vec![
-                ("name", "string"),
-                ("age", "number"),
-            ])
-        );
+        let constraint = OutputConstraint::JsonSchema(JsonSchemaConstraint::simple_object(vec![
+            ("name", "string"),
+            ("age", "number"),
+        ]));
 
         let valid = r#"{"name": "Alice", "age": 30}"#;
         assert!(decoder.validate(valid, &constraint).is_ok());
@@ -1177,16 +1183,18 @@ mod tests {
             .with_arity("Action", 2);
 
         let grammar = decoder.build_datalog_grammar(&constraint).unwrap();
-        
+
         assert!(grammar.validate("Action(x, y)"));
     }
 
     #[test]
     fn test_datalog_term_parsing() {
         let decoder = ConstrainedDecoder::new();
-        
+
         // Test various term types
-        let facts = decoder.parse_datalog(r#"Test("string", 42, 3.14, Variable)"#).unwrap();
+        let facts = decoder
+            .parse_datalog(r#"Test("string", 42, 3.14, Variable)"#)
+            .unwrap();
         assert_eq!(facts.len(), 1);
         assert_eq!(facts[0].arguments.len(), 4);
     }

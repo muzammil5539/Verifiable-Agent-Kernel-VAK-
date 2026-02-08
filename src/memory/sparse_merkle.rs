@@ -221,7 +221,7 @@ pub struct CompactProof {
 impl From<&SparseProof> for CompactProof {
     fn from(proof: &SparseProof) -> Self {
         let siblings: Vec<String> = proof.path.iter().map(|s| s.sibling_hash.clone()).collect();
-        
+
         // Pack direction bits into bytes
         let mut path_bits = Vec::new();
         let mut current_byte = 0u8;
@@ -350,7 +350,7 @@ impl SparseMerkleTree {
     /// Remove a key
     pub fn remove(&mut self, key: &str) -> Option<Vec<u8>> {
         let value = self.get(key).map(|v| v.to_vec());
-        
+
         if let Some(leaf_hash) = self.leaves.remove(key) {
             self.nodes.remove(&leaf_hash);
             let key_hash = compute_hash(key.as_bytes());
@@ -367,7 +367,9 @@ impl SparseMerkleTree {
 
         // Walk from leaf to root, collecting siblings
         // Get the actual value (we store its hex representation for the proof)
-        let value_hash = self.leaves.get(key)
+        let value_hash = self
+            .leaves
+            .get(key)
             .and_then(|leaf_hash| self.nodes.get(leaf_hash))
             .and_then(|node| node.value.as_ref())
             .map(|v| hex::encode(v));
@@ -407,13 +409,12 @@ impl SparseMerkleTree {
 
     /// Update internal nodes along the path from a leaf to root
     fn update_path(&mut self, key_hash: &str) {
-        let mut current_hash = if let Some(leaf) = self.leaves.values()
-            .find(|&h| {
-                self.nodes.get(h)
-                    .and_then(|n| n.key.as_ref())
-                    .map_or(false, |k| compute_hash(k.as_bytes()) == *key_hash)
-            })
-        {
+        let mut current_hash = if let Some(leaf) = self.leaves.values().find(|&h| {
+            self.nodes
+                .get(h)
+                .and_then(|n| n.key.as_ref())
+                .map_or(false, |k| compute_hash(k.as_bytes()) == *key_hash)
+        }) {
             leaf.clone()
         } else {
             self.default_hashes[self.depth].clone()
@@ -539,7 +540,7 @@ mod tests {
     fn test_insert_and_get() {
         let mut tree = SparseMerkleTree::with_depth(16);
         tree.insert("key1", b"value1");
-        
+
         assert!(tree.contains("key1"));
         assert_eq!(tree.get("key1"), Some(b"value1".as_slice()));
         assert!(!tree.contains("key2"));
@@ -581,7 +582,7 @@ mod tests {
     fn test_remove() {
         let mut tree = SparseMerkleTree::with_depth(16);
         tree.insert("key1", b"value1");
-        
+
         let removed = tree.remove("key1");
         assert_eq!(removed, Some(b"value1".to_vec()));
         assert!(!tree.contains("key1"));

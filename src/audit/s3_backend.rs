@@ -177,11 +177,11 @@ impl S3AuditBackend {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         let counter = self
             .upload_counter
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        
+
         let date = chrono::Utc::now().format("%Y/%m/%d");
         let extension = if self.config.compression {
             "jsonl.gz"
@@ -198,28 +198,24 @@ impl S3AuditBackend {
     /// Compress entries to gzip format
     fn compress_entries(&self, entries: &[AuditEntry]) -> Result<Vec<u8>, AuditError> {
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        
+
         for entry in entries {
             let json = serde_json::to_string(entry)
                 .map_err(|e| AuditError::SerializationError(e.to_string()))?;
-            writeln!(encoder, "{}", json)
-                .map_err(|e| AuditError::IoError(e))?;
+            writeln!(encoder, "{}", json).map_err(|e| AuditError::IoError(e))?;
         }
 
-        encoder
-            .finish()
-            .map_err(|e| AuditError::IoError(e))
+        encoder.finish().map_err(|e| AuditError::IoError(e))
     }
 
     /// Serialize entries to JSONL format
     fn serialize_entries(&self, entries: &[AuditEntry]) -> Result<Vec<u8>, AuditError> {
         let mut output = Vec::new();
-        
+
         for entry in entries {
             let json = serde_json::to_string(entry)
                 .map_err(|e| AuditError::SerializationError(e.to_string()))?;
-            writeln!(output, "{}", json)
-                .map_err(|e| AuditError::IoError(e))?;
+            writeln!(output, "{}", json).map_err(|e| AuditError::IoError(e))?;
         }
 
         Ok(output)
@@ -232,7 +228,7 @@ impl S3AuditBackend {
         }
 
         let object_key = self.generate_object_key();
-        
+
         let body = if self.config.compression {
             self.compress_entries(&entries)?
         } else {
@@ -303,9 +299,7 @@ impl S3AuditBackend {
         // Check time since last flush
         let last_flush = self.last_flush.read().ok().map(|t| *t);
         if let Some(last) = last_flush {
-            let elapsed = SystemTime::now()
-                .duration_since(last)
-                .unwrap_or_default();
+            let elapsed = SystemTime::now().duration_since(last).unwrap_or_default();
             if elapsed.as_secs() >= self.config.flush_interval_secs {
                 return true;
             }
@@ -353,7 +347,7 @@ impl S3AuditBackend {
     fn add_to_cache(&self, entry: &AuditEntry) {
         if let Ok(mut cache) = self.local_cache.write() {
             cache.push(entry.clone());
-            
+
             // Trim cache if too large
             if cache.len() > self.max_cache_size {
                 let drain_count = cache.len() - self.max_cache_size;
@@ -401,7 +395,7 @@ impl AuditBackend for S3AuditBackend {
             .local_cache
             .read()
             .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
-        
+
         let mut entries = cache.clone();
         entries.sort_by_key(|e| e.id);
         Ok(entries)
@@ -420,18 +414,14 @@ impl AuditBackend for S3AuditBackend {
             .local_cache
             .read()
             .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
-        
+
         Ok(cache.last().cloned())
     }
 
     fn count(&self) -> Result<u64, AuditError> {
         // Buffer and cache can have overlapping entries, so use cache as the source of truth
         // since append() adds to both. Buffer entries are always in cache too.
-        let cache_count = self
-            .local_cache
-            .read()
-            .map(|c| c.len())
-            .unwrap_or(0);
+        let cache_count = self.local_cache.read().map(|c| c.len()).unwrap_or(0);
 
         Ok(cache_count as u64)
     }
@@ -439,7 +429,9 @@ impl AuditBackend for S3AuditBackend {
     fn flush(&mut self) -> Result<(), AuditError> {
         // For sync interface, we can't call async flush
         // Log a warning and return success
-        tracing::warn!("S3AuditBackend::flush() called synchronously. Use flush_async() for actual S3 upload.");
+        tracing::warn!(
+            "S3AuditBackend::flush() called synchronously. Use flush_async() for actual S3 upload."
+        );
         Ok(())
     }
 
@@ -489,10 +481,7 @@ pub struct ArchiveQuery {
 
 impl ArchiveQuery {
     /// Create a query for a date range
-    pub fn date_range(
-        start: chrono::NaiveDate,
-        end: chrono::NaiveDate,
-    ) -> Self {
+    pub fn date_range(start: chrono::NaiveDate, end: chrono::NaiveDate) -> Self {
         Self {
             start_date: Some(start),
             end_date: Some(end),
@@ -553,17 +542,16 @@ mod tests {
 
     #[test]
     fn test_object_key_generation() {
-        let config = S3Config::new("test-bucket", "us-east-1")
-            .with_prefix("audit/");
-        
+        let config = S3Config::new("test-bucket", "us-east-1").with_prefix("audit/");
+
         let backend = tokio_test::block_on(S3AuditBackend::new(config)).unwrap();
-        
+
         let key1 = backend.generate_object_key();
         let key2 = backend.generate_object_key();
-        
+
         // Keys should be unique
         assert_ne!(key1, key2);
-        
+
         // Keys should have proper prefix and extension
         assert!(key1.starts_with("audit/"));
         assert!(key1.ends_with(".jsonl.gz"));
@@ -571,11 +559,10 @@ mod tests {
 
     #[test]
     fn test_entry_serialization() {
-        let config = S3Config::new("test-bucket", "us-east-1")
-            .without_compression();
-        
+        let config = S3Config::new("test-bucket", "us-east-1").without_compression();
+
         let backend = tokio_test::block_on(S3AuditBackend::new(config)).unwrap();
-        
+
         let entries = vec![
             create_test_entry(1, "agent-1"),
             create_test_entry(2, "agent-2"),
@@ -597,9 +584,9 @@ mod tests {
     #[test]
     fn test_entry_compression() {
         let config = S3Config::new("test-bucket", "us-east-1");
-        
+
         let backend = tokio_test::block_on(S3AuditBackend::new(config)).unwrap();
-        
+
         let entries = vec![
             create_test_entry(1, "agent-1"),
             create_test_entry(2, "agent-2"),
@@ -615,11 +602,10 @@ mod tests {
 
     #[test]
     fn test_buffer_and_cache() {
-        let config = S3Config::new("test-bucket", "us-east-1")
-            .with_batch_size(100);
-        
+        let config = S3Config::new("test-bucket", "us-east-1").with_batch_size(100);
+
         let mut backend = tokio_test::block_on(S3AuditBackend::new(config)).unwrap();
-        
+
         // Add entries
         for i in 0..10 {
             let entry = create_test_entry(i, "agent-test");
@@ -640,11 +626,10 @@ mod tests {
 
     #[test]
     fn test_should_flush_by_size() {
-        let config = S3Config::new("test-bucket", "us-east-1")
-            .with_batch_size(5);
-        
+        let config = S3Config::new("test-bucket", "us-east-1").with_batch_size(5);
+
         let mut backend = tokio_test::block_on(S3AuditBackend::new(config)).unwrap();
-        
+
         // Add less than batch size
         for i in 0..4 {
             backend.append(&create_test_entry(i, "agent")).unwrap();

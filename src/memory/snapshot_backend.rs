@@ -244,11 +244,7 @@ impl SnapshotIndex {
             return Vec::new();
         }
 
-        let pruned: Vec<SnapshotId> = self
-            .snapshots
-            .drain(keep_count..)
-            .map(|e| e.id)
-            .collect();
+        let pruned: Vec<SnapshotId> = self.snapshots.drain(keep_count..).map(|e| e.id).collect();
 
         if !pruned.is_empty() {
             self.updated_at = Utc::now();
@@ -589,7 +585,8 @@ impl FileSnapshotBackend {
         let json = serde_json::to_string_pretty(stored)?;
 
         if self.config.compression {
-            let mut encoder = GzEncoder::new(Vec::new(), Compression::new(self.config.compression_level));
+            let mut encoder =
+                GzEncoder::new(Vec::new(), Compression::new(self.config.compression_level));
             encoder
                 .write_all(json.as_bytes())
                 .map_err(|e| SnapshotError::IoError(e.to_string()))?;
@@ -602,13 +599,17 @@ impl FileSnapshotBackend {
     }
 
     /// Deserialize a snapshot from bytes
-    fn deserialize_snapshot(&self, data: &[u8], compressed: bool) -> SnapshotResult<StoredSnapshot> {
+    fn deserialize_snapshot(
+        &self,
+        data: &[u8],
+        compressed: bool,
+    ) -> SnapshotResult<StoredSnapshot> {
         let json_str = if compressed {
             let mut decoder = GzDecoder::new(data);
             let mut decompressed = String::new();
-            decoder
-                .read_to_string(&mut decompressed)
-                .map_err(|e| SnapshotError::CorruptedData(format!("Decompression failed: {}", e)))?;
+            decoder.read_to_string(&mut decompressed).map_err(|e| {
+                SnapshotError::CorruptedData(format!("Decompression failed: {}", e))
+            })?;
             decompressed
         } else {
             String::from_utf8(data.to_vec())
@@ -796,10 +797,7 @@ mod tests {
         let backend = InMemorySnapshotBackend::new();
         let checkpoint = create_test_checkpoint("test", None);
 
-        backend
-            .save_snapshot("agent1", &checkpoint)
-            .await
-            .unwrap();
+        backend.save_snapshot("agent1", &checkpoint).await.unwrap();
         let loaded = backend.load_snapshot(&checkpoint.id).await.unwrap();
 
         assert_eq!(loaded.agent_id, "agent1");
@@ -833,10 +831,7 @@ mod tests {
         let backend = InMemorySnapshotBackend::new();
         let checkpoint = create_test_checkpoint("test", None);
 
-        backend
-            .save_snapshot("agent1", &checkpoint)
-            .await
-            .unwrap();
+        backend.save_snapshot("agent1", &checkpoint).await.unwrap();
         assert!(backend.exists(&checkpoint.id).await.unwrap());
 
         backend.delete_snapshot(&checkpoint.id).await.unwrap();
@@ -850,10 +845,7 @@ mod tests {
 
         assert!(!backend.exists(&checkpoint.id).await.unwrap());
 
-        backend
-            .save_snapshot("agent1", &checkpoint)
-            .await
-            .unwrap();
+        backend.save_snapshot("agent1", &checkpoint).await.unwrap();
         assert!(backend.exists(&checkpoint.id).await.unwrap());
     }
 
@@ -949,10 +941,7 @@ mod tests {
         let backend = FileSnapshotBackend::new(config).await.unwrap();
 
         let checkpoint = create_test_checkpoint("test", None);
-        backend
-            .save_snapshot("agent1", &checkpoint)
-            .await
-            .unwrap();
+        backend.save_snapshot("agent1", &checkpoint).await.unwrap();
 
         let loaded = backend.load_snapshot(&checkpoint.id).await.unwrap();
         assert_eq!(loaded.agent_id, "agent1");
@@ -967,10 +956,7 @@ mod tests {
         let backend = FileSnapshotBackend::new(config).await.unwrap();
 
         let checkpoint = create_test_checkpoint("test", None);
-        backend
-            .save_snapshot("agent1", &checkpoint)
-            .await
-            .unwrap();
+        backend.save_snapshot("agent1", &checkpoint).await.unwrap();
 
         // Verify the file is compressed
         let expected_path = temp_dir
@@ -1008,10 +994,7 @@ mod tests {
         let backend = FileSnapshotBackend::new(config).await.unwrap();
 
         let checkpoint = create_test_checkpoint("test", None);
-        backend
-            .save_snapshot("agent1", &checkpoint)
-            .await
-            .unwrap();
+        backend.save_snapshot("agent1", &checkpoint).await.unwrap();
 
         assert!(backend.exists(&checkpoint.id).await.unwrap());
 

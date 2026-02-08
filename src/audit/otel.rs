@@ -191,7 +191,10 @@ impl TraceContext {
 
     /// Convert to W3C traceparent header
     pub fn to_traceparent(&self) -> String {
-        format!("00-{}-{}-{:02x}", self.trace_id, self.span_id, self.trace_flags)
+        format!(
+            "00-{}-{}-{:02x}",
+            self.trace_id, self.span_id, self.trace_flags
+        )
     }
 }
 
@@ -297,7 +300,8 @@ impl Span {
 
     /// Get duration in nanoseconds
     pub fn duration_ns(&self) -> Option<u64> {
-        self.end_time_ns.map(|end| end.saturating_sub(self.start_time_ns))
+        self.end_time_ns
+            .map(|end| end.saturating_sub(self.start_time_ns))
     }
 
     /// Get duration as Duration
@@ -496,7 +500,10 @@ impl VakTracer {
     pub async fn start_child_span(&self, name: impl Into<String>, kind: SpanKind) -> Span {
         let context = {
             let current = self.current_context.read().await;
-            current.as_ref().map(|c| c.child()).unwrap_or_else(TraceContext::new)
+            current
+                .as_ref()
+                .map(|c| c.child())
+                .unwrap_or_else(TraceContext::new)
         };
 
         self.start_span_with_context(name, kind, context).await
@@ -563,7 +570,11 @@ impl VakTracer {
     }
 
     /// Add an event to an active span
-    pub async fn add_span_event(&self, span_id: &str, event: impl Into<String>) -> TracingResult<()> {
+    pub async fn add_span_event(
+        &self,
+        span_id: &str,
+        event: impl Into<String>,
+    ) -> TracingResult<()> {
         let mut active = self.active_spans.write().await;
         let span = active
             .get_mut(span_id)
@@ -593,11 +604,7 @@ impl VakTracer {
     }
 
     /// Create a span context helper for convenient span management
-    pub async fn span_context(
-        &self,
-        name: impl Into<String>,
-        kind: SpanKind,
-    ) -> SpanContext<'_> {
+    pub async fn span_context(&self, name: impl Into<String>, kind: SpanKind) -> SpanContext<'_> {
         let span = self.start_child_span(name, kind).await;
         SpanContext {
             tracer: self,
@@ -629,7 +636,10 @@ impl<'a> SpanContext<'a> {
 
     /// Set an attribute on this span
     pub async fn set_attribute(&self, key: impl Into<String>, value: impl Into<AttributeValue>) {
-        let _ = self.tracer.set_span_attribute(&self.span_id, key, value).await;
+        let _ = self
+            .tracer
+            .set_span_attribute(&self.span_id, key, value)
+            .await;
     }
 
     /// Add an event to this span
@@ -757,7 +767,7 @@ impl OtlpExporter {
 
 impl VakTracer {
     /// Start a span for inference operations
-    /// 
+    ///
     /// Use this when an LLM is being called or reasoning is happening.
     pub async fn trace_inference(&self, operation: impl Into<String>) -> SpanContext<'_> {
         let name = format!("inference::{}", operation.into());
@@ -765,7 +775,7 @@ impl VakTracer {
     }
 
     /// Start a span for logic/Datalog verification
-    /// 
+    ///
     /// Use this when validating plans against safety rules.
     pub async fn trace_logic_check(&self, rule_set: impl Into<String>) -> SpanContext<'_> {
         let name = format!("logic_check::{}", rule_set.into());
@@ -773,7 +783,7 @@ impl VakTracer {
     }
 
     /// Start a span for policy evaluation
-    /// 
+    ///
     /// Use this when Cedar policies are being evaluated.
     pub async fn trace_policy_eval(
         &self,
@@ -785,7 +795,7 @@ impl VakTracer {
     }
 
     /// Start a span for tool/skill execution
-    /// 
+    ///
     /// Use this when a WASM skill or built-in tool is being executed.
     pub async fn trace_tool_exec(&self, tool_name: impl Into<String>) -> SpanContext<'_> {
         let name = format!("tool_exec::{}", tool_name.into());
@@ -793,7 +803,7 @@ impl VakTracer {
     }
 
     /// Start a span for memory operations
-    /// 
+    ///
     /// Use this when reading/writing to the memory system (Merkle DAG, vector store, etc.)
     pub async fn trace_memory_op(&self, operation: impl Into<String>) -> SpanContext<'_> {
         let name = format!("memory_op::{}", operation.into());
@@ -801,7 +811,7 @@ impl VakTracer {
     }
 
     /// Start a span for swarm communication
-    /// 
+    ///
     /// Use this when agents are communicating in a multi-agent scenario.
     pub async fn trace_swarm_comm(&self, protocol: impl Into<String>) -> SpanContext<'_> {
         let name = format!("swarm_comm::{}", protocol.into());
@@ -809,7 +819,7 @@ impl VakTracer {
     }
 
     /// Start a span for MCP request handling
-    /// 
+    ///
     /// Use this when processing Model Context Protocol requests.
     pub async fn trace_mcp_request(&self, method: impl Into<String>) -> SpanContext<'_> {
         let name = format!("mcp_request::{}", method.into());
@@ -818,17 +828,17 @@ impl VakTracer {
 }
 
 /// A traced operation that automatically records timing and status
-/// 
+///
 /// This is a convenience wrapper for executing operations with automatic tracing.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```rust,no_run
 /// use vak::audit::otel::{VakTracer, TracingConfig, traced_operation, SpanKind};
-/// 
+///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let tracer = VakTracer::new(TracingConfig::default())?;
-/// 
+///
 /// let result = traced_operation(&tracer, "my_operation", SpanKind::ToolExec, async {
 ///     // Your async operation here
 ///     Ok::<_, String>("result")
@@ -847,7 +857,7 @@ where
     E: std::fmt::Display,
 {
     let span = tracer.span_context(name, kind).await;
-    
+
     match operation.await {
         Ok(result) => {
             span.end().await;
@@ -991,12 +1001,20 @@ mod tests {
         let tracer = VakTracer::new(TracingConfig::default()).unwrap();
 
         // Start a trace
-        let span = tracer.start_trace("test_operation", SpanKind::ToolExec).await;
+        let span = tracer
+            .start_trace("test_operation", SpanKind::ToolExec)
+            .await;
         let span_id = span.context.span_id.clone();
 
         // Add attributes
-        tracer.set_span_attribute(&span_id, "agent_id", "agent-001").await.unwrap();
-        tracer.add_span_event(&span_id, "started processing").await.unwrap();
+        tracer
+            .set_span_attribute(&span_id, "agent_id", "agent-001")
+            .await
+            .unwrap();
+        tracer
+            .add_span_event(&span_id, "started processing")
+            .await
+            .unwrap();
 
         // End span
         let finished = tracer.end_span(&span_id).await.unwrap();
@@ -1022,7 +1040,9 @@ mod tests {
         let trace_id = parent.context.trace_id.clone();
 
         // Start child
-        let child = tracer.start_child_span("child_op", SpanKind::LogicCheck).await;
+        let child = tracer
+            .start_child_span("child_op", SpanKind::LogicCheck)
+            .await;
         let child_id = child.context.span_id.clone();
 
         // Child should have same trace ID but different span ID

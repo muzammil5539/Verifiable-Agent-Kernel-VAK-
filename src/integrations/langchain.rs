@@ -36,8 +36,8 @@
 //! ```
 
 use crate::integrations::common::{
-    ActionContext, ActionType, AdapterError, AdapterResult, BaseAdapterConfig,
-    HookDecision, InterceptionHook, InterceptionResult, VakConnection,
+    ActionContext, ActionType, AdapterError, AdapterResult, BaseAdapterConfig, HookDecision,
+    InterceptionHook, InterceptionResult, VakConnection,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -361,7 +361,9 @@ impl LangChainAdapter {
         // Check if action is blocked
         let action = format!("{}:{}", tool_call.tool_name, tool_call.action);
         if self.config.base.blocked_actions.contains(&action) {
-            self.stats.tool_calls_blocked.fetch_add(1, Ordering::Relaxed);
+            self.stats
+                .tool_calls_blocked
+                .fetch_add(1, Ordering::Relaxed);
             self.stats.policy_violations.fetch_add(1, Ordering::Relaxed);
             return Ok(InterceptionResult {
                 context: tool_call.to_context(agent_id, None),
@@ -377,7 +379,9 @@ impl LangChainAdapter {
 
         // Check if action is always allowed
         if self.config.base.allowed_actions.contains(&action) {
-            self.stats.tool_calls_allowed.fetch_add(1, Ordering::Relaxed);
+            self.stats
+                .tool_calls_allowed
+                .fetch_add(1, Ordering::Relaxed);
             return Ok(InterceptionResult {
                 context: tool_call.to_context(agent_id, None),
                 decision: HookDecision::Allow,
@@ -411,10 +415,7 @@ impl LangChainAdapter {
             return Ok(InterceptionResult {
                 context,
                 decision: HookDecision::RequireApproval {
-                    prompt: format!(
-                        "Tool call '{}' requires human approval. Proceed?",
-                        action
-                    ),
+                    prompt: format!("Tool call '{}' requires human approval. Proceed?", action),
                 },
                 hook_name: "require_approval".to_string(),
                 prm_score: None,
@@ -424,7 +425,9 @@ impl LangChainAdapter {
         }
 
         // Default: allow
-        self.stats.tool_calls_allowed.fetch_add(1, Ordering::Relaxed);
+        self.stats
+            .tool_calls_allowed
+            .fetch_add(1, Ordering::Relaxed);
         Ok(InterceptionResult {
             context,
             decision: HookDecision::Allow,
@@ -443,7 +446,11 @@ impl LangChainAdapter {
     ) -> AdapterResult<InterceptionResult> {
         if !self.config.intercept_chains {
             return Ok(InterceptionResult {
-                context: ActionContext::new(ActionType::ChainExecution, &chain.chain_name, agent_id),
+                context: ActionContext::new(
+                    ActionType::ChainExecution,
+                    &chain.chain_name,
+                    agent_id,
+                ),
                 decision: HookDecision::Allow,
                 hook_name: "disabled".to_string(),
                 prm_score: None,
@@ -460,7 +467,11 @@ impl LangChainAdapter {
         // Check if chain type is blocked
         if self.config.base.blocked_actions.contains(&chain.chain_type) {
             return Ok(InterceptionResult {
-                context: ActionContext::new(ActionType::ChainExecution, &chain.chain_name, agent_id),
+                context: ActionContext::new(
+                    ActionType::ChainExecution,
+                    &chain.chain_name,
+                    agent_id,
+                ),
                 decision: HookDecision::Block {
                     reason: format!("Chain type '{}' is blocked", chain.chain_type),
                 },
@@ -541,7 +552,9 @@ impl LangChainAdapter {
         // Check if action is blocked
         let action = format!("{}:{}", tool_call.tool_name, tool_call.action);
         if self.config.base.blocked_actions.contains(&action) {
-            self.stats.tool_calls_blocked.fetch_add(1, Ordering::Relaxed);
+            self.stats
+                .tool_calls_blocked
+                .fetch_add(1, Ordering::Relaxed);
             self.stats.policy_violations.fetch_add(1, Ordering::Relaxed);
             return Ok(InterceptionResult {
                 context: tool_call.to_context(agent_id, None),
@@ -558,11 +571,13 @@ impl LangChainAdapter {
         // PRM scoring if reasoning context is provided
         let prm_score = if let Some(ctx) = reasoning_context {
             let score = self.evaluate_prm_score(ctx, &action).await;
-            
+
             // Check against threshold
             if score < self.config.base.prm_threshold {
                 self.stats.prm_rejections.fetch_add(1, Ordering::Relaxed);
-                self.stats.tool_calls_blocked.fetch_add(1, Ordering::Relaxed);
+                self.stats
+                    .tool_calls_blocked
+                    .fetch_add(1, Ordering::Relaxed);
                 return Ok(InterceptionResult {
                     context: tool_call.to_context(agent_id, None),
                     decision: HookDecision::Block {
@@ -601,7 +616,9 @@ impl LangChainAdapter {
         }
 
         // Default: allow
-        self.stats.tool_calls_allowed.fetch_add(1, Ordering::Relaxed);
+        self.stats
+            .tool_calls_allowed
+            .fetch_add(1, Ordering::Relaxed);
         Ok(InterceptionResult {
             context,
             decision: HookDecision::Allow,
@@ -759,8 +776,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_blocked_actions() {
-        let config = LangChainConfig::default()
-            .with_blocked_action("dangerous:delete");
+        let config = LangChainConfig::default().with_blocked_action("dangerous:delete");
         let adapter = LangChainAdapter::new(config);
 
         let call = ToolCall::new("dangerous", "delete");
@@ -771,8 +787,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_chain_execution() {
-        let chain = ChainExecution::new("qa_chain", "RetrievalQA")
-            .with_input("question", "What is VAK?");
+        let chain =
+            ChainExecution::new("qa_chain", "RetrievalQA").with_input("question", "What is VAK?");
 
         assert_eq!(chain.chain_name, "qa_chain");
         assert_eq!(chain.chain_type, "RetrievalQA");

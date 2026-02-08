@@ -149,7 +149,11 @@ pub struct TrajectoryScore {
 
 impl TrajectoryScore {
     /// Create a new trajectory score
-    pub fn new(overall_score: f64, step_scores: Vec<ThoughtScore>, reasoning: impl Into<String>) -> Self {
+    pub fn new(
+        overall_score: f64,
+        step_scores: Vec<ThoughtScore>,
+        reasoning: impl Into<String>,
+    ) -> Self {
         Self {
             overall_score,
             step_scores,
@@ -172,10 +176,7 @@ pub trait PrmScorer: Send + Sync {
     ) -> Result<ThoughtScore, PrmError>;
 
     /// Score a complete reasoning trajectory
-    async fn score_trajectory(
-        &self,
-        steps: &[ReasoningStep],
-    ) -> Result<TrajectoryScore, PrmError>;
+    async fn score_trajectory(&self, steps: &[ReasoningStep]) -> Result<TrajectoryScore, PrmError>;
 }
 
 /// A single step in a reasoning chain

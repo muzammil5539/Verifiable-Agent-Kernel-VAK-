@@ -560,24 +560,30 @@ fn generate_dashboard_html(
         prm_backtracks = metrics_json["counters"]["prm_backtrack_triggered"],
         wasm_executions = metrics_json["counters"]["wasm_executions_total"],
         skills_loaded = metrics_json["gauges"]["skills_loaded"],
-        memory_usage = format_bytes(metrics_json["gauges"]["memory_usage_bytes"].as_f64().unwrap_or(0.0)),
+        memory_usage = format_bytes(
+            metrics_json["gauges"]["memory_usage_bytes"]
+                .as_f64()
+                .unwrap_or(0.0)
+        ),
         components_html = generate_components_html(&health_check.components),
         version = env!("CARGO_PKG_VERSION"),
     )
 }
 
-fn generate_components_html(components: &HashMap<String, super::health::ComponentHealth>) -> String {
+fn generate_components_html(
+    components: &HashMap<String, super::health::ComponentHealth>,
+) -> String {
     let mut html = String::new();
-    
+
     for (name, component) in components {
         let status_class = match component.status {
             HealthStatus::Healthy => "healthy",
             HealthStatus::Degraded => "degraded",
             HealthStatus::Unhealthy => "unhealthy",
         };
-        
+
         let message = component.message.as_deref().unwrap_or("");
-        
+
         html.push_str(&format!(
             r#"<div class="component">
                 <span class="component-name">{name}</span>
@@ -587,15 +593,22 @@ fn generate_components_html(components: &HashMap<String, super::health::Componen
                 </div>
             </div>"#,
             name = name,
-            message = if message.is_empty() { "".to_string() } else { format!("<span style=\"color: var(--text-secondary); font-size: 0.75rem;\">{}</span>", message) },
+            message = if message.is_empty() {
+                "".to_string()
+            } else {
+                format!(
+                    "<span style=\"color: var(--text-secondary); font-size: 0.75rem;\">{}</span>",
+                    message
+                )
+            },
             status_class = status_class,
         ));
     }
-    
+
     if html.is_empty() {
         html = r#"<div class="component"><span class="component-name">No components registered</span></div>"#.to_string();
     }
-    
+
     html
 }
 
@@ -691,7 +704,7 @@ mod tests {
         let health = Arc::new(HealthChecker::new());
 
         let server = DashboardServer::new(config, metrics, health);
-        
+
         let response = server.metrics_response();
         assert_eq!(response.status, 200);
         assert!(response.body.contains("vak_"));
@@ -704,7 +717,7 @@ mod tests {
         let health = Arc::new(HealthChecker::new());
 
         let server = DashboardServer::new(config, metrics, health);
-        
+
         let response = server.health_response();
         assert_eq!(response.status, 200);
         assert!(response.body.contains("\"status\":"));
@@ -717,7 +730,7 @@ mod tests {
         let health = Arc::new(HealthChecker::new());
 
         let server = DashboardServer::new(config, metrics, health);
-        
+
         // Not ready by default
         let response = server.ready_response();
         assert_eq!(response.status, 503);
@@ -730,7 +743,7 @@ mod tests {
         let health = Arc::new(HealthChecker::new());
 
         let server = DashboardServer::new(config, metrics, health);
-        
+
         let response = server.live_response();
         assert_eq!(response.status, 200);
     }
@@ -742,7 +755,7 @@ mod tests {
         let health = Arc::new(HealthChecker::new());
 
         let server = DashboardServer::new(config, metrics, health);
-        
+
         let response = server.dashboard_response();
         assert_eq!(response.status, 200);
         assert!(response.body.contains("<!DOCTYPE html>"));

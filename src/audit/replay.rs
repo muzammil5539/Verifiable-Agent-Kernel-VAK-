@@ -254,7 +254,7 @@ impl ReplaySession {
     pub fn new(events: Vec<FlightEvent>) -> Self {
         let metadata = Self::compute_metadata(&events);
         let receipts = Self::compute_receipts(&events);
-        
+
         Self {
             source_path: None,
             events,
@@ -266,7 +266,7 @@ impl ReplaySession {
     /// Load a replay session from a JSONL file
     pub async fn from_merkle_log(path: impl AsRef<Path>) -> ReplayResult<Self> {
         let path = path.as_ref();
-        
+
         if !path.exists() {
             return Err(ReplayError::FileNotFound(path.display().to_string()));
         }
@@ -280,15 +280,12 @@ impl ReplaySession {
             if line.trim().is_empty() {
                 continue;
             }
-            
+
             match serde_json::from_str::<FlightEvent>(&line) {
                 Ok(event) => events.push(event),
                 Err(e) => {
                     warn!(line = line_num, error = %e, "Failed to parse log line");
-                    return Err(ReplayError::ParseError(format!(
-                        "Line {}: {}",
-                        line_num, e
-                    )));
+                    return Err(ReplayError::ParseError(format!("Line {}: {}", line_num, e)));
                 }
             }
         }
@@ -313,7 +310,7 @@ impl ReplaySession {
 
     /// Compute metadata from events
     fn compute_metadata(events: &[FlightEvent]) -> LogMetadata {
-        let trace_ids: std::collections::HashSet<_> = 
+        let trace_ids: std::collections::HashSet<_> =
             events.iter().map(|e| e.trace_id.clone()).collect();
 
         LogMetadata {
@@ -673,7 +670,7 @@ impl ReplayReport {
     pub fn save(&self, path: impl AsRef<Path>) -> ReplayResult<()> {
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| ReplayError::SerializationError(e.to_string()))?;
-        
+
         let mut file = File::create(path)?;
         file.write_all(json.as_bytes())?;
         Ok(())
@@ -705,13 +702,13 @@ impl ReplayVerifier {
     /// Verify the integrity of a replay session's Merkle chain
     pub fn verify_log_integrity(&self, session: &ReplaySession) -> ReplayResult<bool> {
         let events = session.events();
-        
+
         if events.is_empty() {
             return Ok(true);
         }
 
         let mut expected_prev = "genesis".to_string();
-        
+
         for (i, event) in events.iter().enumerate() {
             // Check chain linkage
             if event.prev_hash != expected_prev {
@@ -778,7 +775,7 @@ impl ReplayVerifier {
             EventType::SpanEnd => "span_end".to_string(),
             EventType::Custom(name) => format!("custom:{}", name),
         };
-        
+
         let content = format!(
             "{}:{}:{}:{}:{}:{:?}:{:?}:{:?}:{:?}:{}",
             event.event_id,
@@ -801,14 +798,14 @@ impl ReplayVerifier {
     /// Verify a specific trace within the session
     pub fn verify_trace(&self, session: &ReplaySession, trace_id: &str) -> ReplayResult<bool> {
         let events = session.get_trace_events(trace_id);
-        
+
         if events.is_empty() {
             return Ok(true);
         }
 
         // For now, we just check that all events in the trace are present
         // Full verification would check the chain within the trace
-        
+
         if self.verbose {
             info!(
                 trace_id = %trace_id,
@@ -846,7 +843,7 @@ mod tests {
                 .with_action(format!("action-{}", i))
                 .with_resource(format!("/resource/{}", i))
                 .with_decision("allow");
-            
+
             event.compute_hash(&prev_hash);
             prev_hash = event.hash.clone();
             events.push(event);
@@ -868,7 +865,7 @@ mod tests {
     fn test_integrity_verification() {
         let events = create_test_events();
         let session = ReplaySession::new(events);
-        
+
         let verifier = ReplayVerifier::new();
         assert!(verifier.verify_log_integrity(&session).is_ok());
     }
@@ -876,7 +873,7 @@ mod tests {
     #[test]
     fn test_integrity_violation_detection() {
         let mut events = create_test_events();
-        
+
         // Tamper with an event
         if let Some(event) = events.get_mut(2) {
             event.prev_hash = "tampered".to_string();
@@ -884,7 +881,7 @@ mod tests {
 
         let session = ReplaySession::new(events);
         let verifier = ReplayVerifier::new();
-        
+
         assert!(verifier.verify_log_integrity(&session).is_err());
     }
 
@@ -892,9 +889,9 @@ mod tests {
     async fn test_replay_execution() {
         let events = create_test_events();
         let session = ReplaySession::new(events);
-        
+
         let mut replay = session.start_replay(ReplayConfig::default());
-        
+
         let mut count = 0;
         while let Ok(Some(_step)) = replay.next_step().await {
             count += 1;
@@ -911,11 +908,11 @@ mod tests {
     fn test_replay_config() {
         let default = ReplayConfig::default();
         assert!(default.verify_integrity);
-        
+
         let debug = ReplayConfig::debug();
         assert!(debug.verbose);
         assert_eq!(debug.step_delay_ms, 100);
-        
+
         let fast = ReplayConfig::fast();
         assert!(!fast.verbose);
     }
@@ -924,7 +921,7 @@ mod tests {
     fn test_report_generation() {
         let events = create_test_events();
         let session = ReplaySession::new(events);
-        
+
         let report = ReplayReport {
             source_path: None,
             total_events: 5,

@@ -243,9 +243,7 @@ impl ProposedAction {
     pub fn to_datalog_fact(&self) -> String {
         format!(
             "Action(\"{}\", \"{}\", {})",
-            self.action_type,
-            self.target,
-            self.confidence
+            self.action_type, self.target, self.confidence
         )
     }
 }
@@ -315,8 +313,8 @@ impl AgentPlan {
     pub fn add_action(&mut self, action: ProposedAction) {
         self.actions.push(action);
         // Recalculate confidence
-        self.confidence = self.actions.iter().map(|a| a.confidence).sum::<f64>() 
-            / self.actions.len() as f64;
+        self.confidence =
+            self.actions.iter().map(|a| a.confidence).sum::<f64>() / self.actions.len() as f64;
     }
 
     /// Get plan hash for receipt
@@ -467,10 +465,10 @@ impl std::fmt::Display for PipelineStage {
 pub trait DatalogValidator: Send + Sync {
     /// Validate a plan against safety rules
     fn validate(&self, plan: &AgentPlan) -> DatalogValidation;
-    
+
     /// Add a fact to the knowledge base
     fn assert_fact(&self, fact: &str);
-    
+
     /// Query the knowledge base
     fn query(&self, query: &str) -> Vec<String>;
 }
@@ -546,7 +544,9 @@ impl DatalogValidator for DefaultDatalogValidator {
                             action.action_type
                         ),
                         severity: 8,
-                        remediation: Some("Require additional approval for destructive operations".to_string()),
+                        remediation: Some(
+                            "Require additional approval for destructive operations".to_string(),
+                        ),
                     });
                     derived_facts.push(format!(
                         "Violation(CriticalOperation, \"{}\")",
@@ -564,7 +564,10 @@ impl DatalogValidator for DefaultDatalogValidator {
                         action.action_type, action.confidence
                     ),
                     severity: 5,
-                    remediation: Some("Increase confidence through additional reasoning or user confirmation".to_string()),
+                    remediation: Some(
+                        "Increase confidence through additional reasoning or user confirmation"
+                            .to_string(),
+                    ),
                 });
             }
 
@@ -650,10 +653,7 @@ impl Default for DefaultPolicyChecker {
 
         Self {
             role_permissions,
-            denied_resources: vec![
-                "/etc/shadow".to_string(),
-                "/root".to_string(),
-            ],
+            denied_resources: vec!["/etc/shadow".to_string(), "/root".to_string()],
         }
     }
 }
@@ -682,7 +682,10 @@ impl PolicyChecker for DefaultPolicyChecker {
         // Check role permissions (default role for now)
         let allowed_actions = self.role_permissions.get("default").unwrap();
         let action_allowed = allowed_actions.iter().any(|a| {
-            action.action_type.to_lowercase().contains(&a.to_lowercase())
+            action
+                .action_type
+                .to_lowercase()
+                .contains(&a.to_lowercase())
         });
 
         PolicyCheckResult {
@@ -691,7 +694,10 @@ impl PolicyChecker for DefaultPolicyChecker {
             reason: if action_allowed {
                 "Action permitted by default role".to_string()
             } else {
-                format!("Action '{}' not permitted for default role", action.action_type)
+                format!(
+                    "Action '{}' not permitted for default role",
+                    action.action_type
+                )
             },
             context: HashMap::from([
                 ("agent_id".to_string(), agent_id.to_string()),
@@ -857,7 +863,7 @@ impl NeuroSymbolicPipeline {
         let datalog_result = if self.config.enable_datalog_validation {
             self.set_stage(PipelineStage::DatalogValidation);
             let stage_start = Instant::now();
-            
+
             let validation = self.datalog_validator.validate(&plan);
             stage_timings.insert(
                 "datalog_validation".to_string(),
@@ -865,16 +871,20 @@ impl NeuroSymbolicPipeline {
             );
 
             if !validation.passed {
-                let violation = validation.violations.first()
+                let violation = validation
+                    .violations
+                    .first()
                     .map(|v| v.description.clone())
                     .unwrap_or_else(|| "Unknown violation".to_string());
-                
+
                 warn!(plan_id = %plan_id, violation = %violation, "Datalog validation failed");
-                
+
                 self.set_stage(PipelineStage::Failed);
                 return Err(PipelineError::ValidationFailed {
                     violation,
-                    remediation: validation.violations.first()
+                    remediation: validation
+                        .violations
+                        .first()
                         .and_then(|v| v.remediation.clone()),
                 });
             }
@@ -915,10 +925,9 @@ impl NeuroSymbolicPipeline {
                 }
             }
 
-            let check = self.policy_checker.check(
-                &plan.agent_id,
-                plan.actions.first().unwrap(),
-            );
+            let check = self
+                .policy_checker
+                .check(&plan.agent_id, plan.actions.first().unwrap());
             stage_timings.insert(
                 "policy_check".to_string(),
                 stage_start.elapsed().as_millis() as u64,
@@ -942,12 +951,13 @@ impl NeuroSymbolicPipeline {
             // Score each action and take minimum
             let mut min_score = 1.0f64;
             let mut combined_components = HashMap::new();
-            
+
             for action in &plan.actions {
                 let score = self.prm_scorer.score(action, &context);
                 min_score = min_score.min(score.score);
                 for (k, v) in score.components {
-                    combined_components.entry(k)
+                    combined_components
+                        .entry(k)
                         .and_modify(|existing: &mut f64| *existing = existing.min(v))
                         .or_insert(v);
                 }
@@ -984,7 +994,7 @@ impl NeuroSymbolicPipeline {
         // Stage 4: Execute (placeholder - actual execution would happen here)
         self.set_stage(PipelineStage::Executing);
         let exec_start = Instant::now();
-        
+
         // Simulate execution
         let output = serde_json::json!({
             "status": "completed",
@@ -1000,7 +1010,7 @@ impl NeuroSymbolicPipeline {
         // Stage 5: Generate Receipt
         self.set_stage(PipelineStage::GeneratingReceipt);
         let receipt_start = Instant::now();
-        
+
         let receipt_id = Uuid::now_v7().to_string();
         let receipt_hash = {
             let mut hasher = Sha256::new();
@@ -1140,7 +1150,7 @@ mod tests {
     fn test_proposed_action_to_datalog() {
         let action = ProposedAction::new("read_file", "/data/config.json", "Reading config")
             .with_confidence(0.95);
-        
+
         let fact = action.to_datalog_fact();
         assert!(fact.contains("read_file"));
         assert!(fact.contains("0.95"));
@@ -1150,7 +1160,7 @@ mod tests {
     fn test_agent_plan_hash() {
         let plan1 = AgentPlan::new("agent-1", "read", "/data/file.txt");
         let plan2 = AgentPlan::new("agent-1", "read", "/data/file.txt");
-        
+
         // Different IDs should produce different hashes
         assert_ne!(plan1.hash(), plan2.hash());
     }
@@ -1158,12 +1168,12 @@ mod tests {
     #[test]
     fn test_default_datalog_validator() {
         let validator = DefaultDatalogValidator::default();
-        
+
         // Safe plan
         let safe_plan = AgentPlan::new("agent-1", "read", "/data/file.txt");
         let result = validator.validate(&safe_plan);
         assert!(result.passed);
-        
+
         // Unsafe plan
         let unsafe_plan = AgentPlan::new("agent-1", "read", "/etc/shadow");
         let result = validator.validate(&unsafe_plan);
@@ -1174,12 +1184,12 @@ mod tests {
     #[test]
     fn test_default_policy_checker() {
         let checker = DefaultPolicyChecker::default();
-        
+
         // Allowed action
         let action = ProposedAction::new("read", "/data/file.txt", "");
         let result = checker.check("agent-1", &action);
         assert!(result.allowed);
-        
+
         // Denied resource
         let action = ProposedAction::new("read", "/etc/shadow", "");
         let result = checker.check("agent-1", &action);
@@ -1190,20 +1200,23 @@ mod tests {
     fn test_default_prm_scorer() {
         let scorer = DefaultPrmScorer::default();
         let context = HashMap::new();
-        
+
         // Well-formed action
-        let action = ProposedAction::new("read_file", "/data/config.json", "Reading config for initialization")
-            .with_confidence(0.9)
-            .with_param("encoding", serde_json::json!("utf-8"))
-            .with_param("cache", serde_json::json!(true));
-        
+        let action = ProposedAction::new(
+            "read_file",
+            "/data/config.json",
+            "Reading config for initialization",
+        )
+        .with_confidence(0.9)
+        .with_param("encoding", serde_json::json!("utf-8"))
+        .with_param("cache", serde_json::json!(true));
+
         let score = scorer.score(&action, &context);
         assert!(score.score > 0.5);
-        
+
         // Poorly formed action
-        let action = ProposedAction::new("read", "/sensitive/data", "")
-            .with_confidence(0.3);
-        
+        let action = ProposedAction::new("read", "/sensitive/data", "").with_confidence(0.3);
+
         let score = scorer.score(&action, &context);
         assert!(score.score < 0.5);
     }

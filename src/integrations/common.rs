@@ -55,7 +55,9 @@ pub enum HookDecision {
     /// Block the action with a reason
     Block { reason: String },
     /// Modify the action parameters
-    Modify { new_params: HashMap<String, serde_json::Value> },
+    Modify {
+        new_params: HashMap<String, serde_json::Value>,
+    },
     /// Require human approval before proceeding
     RequireApproval { prompt: String },
     /// Log and monitor but allow
@@ -75,10 +77,10 @@ pub enum AlertLevel {
 pub trait InterceptionHook: Send + Sync {
     /// Name of the hook
     fn name(&self) -> &str;
-    
+
     /// Check if the hook should apply to this action
     fn applies_to(&self, action: &ActionContext) -> bool;
-    
+
     /// Evaluate the action and return a decision
     fn evaluate(&self, action: &ActionContext) -> HookDecision;
 }
@@ -137,7 +139,11 @@ pub enum ActionType {
 
 impl ActionContext {
     /// Create a new action context
-    pub fn new(action_type: ActionType, name: impl Into<String>, agent_id: impl Into<String>) -> Self {
+    pub fn new(
+        action_type: ActionType,
+        name: impl Into<String>,
+        agent_id: impl Into<String>,
+    ) -> Self {
         Self {
             action_type,
             name: name.into(),

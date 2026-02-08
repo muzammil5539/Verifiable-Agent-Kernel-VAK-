@@ -32,7 +32,7 @@ use thiserror::Error;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 
-use crate::policy::{PolicyEffect, PolicyRule, PolicyCondition, ConditionOperator};
+use crate::policy::{ConditionOperator, PolicyCondition, PolicyEffect, PolicyRule};
 
 // ============================================================================
 // Error Types
@@ -310,25 +310,28 @@ impl HotReloadablePolicyEngine {
     pub async fn new(config: HotReloadConfig) -> HotReloadResult<Self> {
         // Load initial policies
         let policies = Self::load_policies_from_dir(&config.policy_dir).await?;
-        
+
         // Create engine first so we can use validate_policies
         let engine = Self {
-            current: ArcSwap::from(Arc::new(PolicySnapshot::new(vec![], PolicyVersion::new(0, &[], None)))),
+            current: ArcSwap::from(Arc::new(PolicySnapshot::new(
+                vec![],
+                PolicyVersion::new(0, &[], None),
+            ))),
             version_history: RwLock::new(vec![]),
             config,
             metrics: RwLock::new(HotReloadMetrics::default()),
             shutdown_tx: None,
         };
-        
+
         // Validate policies if configured
         if engine.config.validate_before_load {
             engine.validate_policies(&policies)?;
         }
-        
+
         // Create version and snapshot
         let version = PolicyVersion::new(1, &policies, None);
         let snapshot = Arc::new(PolicySnapshot::new(policies, version));
-        
+
         // Store the snapshot
         engine.current.store(snapshot.clone());
         *engine.version_history.write().await = vec![snapshot];
@@ -365,14 +368,14 @@ impl HotReloadablePolicyEngine {
         context: &serde_json::Value,
     ) -> HotReloadDecision {
         let snapshot = self.current.load();
-        
+
         // Find matching policies sorted by priority
         let mut matching_policies: Vec<_> = snapshot
             .policies
             .iter()
             .filter(|p| Self::matches_policy(p, action, resource))
             .collect();
-        
+
         matching_policies.sort_by(|a, b| b.priority.cmp(&a.priority));
 
         // Apply first matching policy (highest priority)
@@ -400,19 +403,25 @@ impl HotReloadablePolicyEngine {
     fn matches_policy(policy: &PolicyRule, action: &str, resource: &str) -> bool {
         let action_pattern = &policy.action_pattern;
         let resource_pattern = &policy.resource_pattern;
-        
-        let action_match = action_pattern == "*" 
-            || action_pattern == action 
-            || (action_pattern.ends_with('*') && action.starts_with(&action_pattern[..action_pattern.len()-1]));
-        
-        let resource_match = resource_pattern == "*" 
-            || resource_pattern == resource 
-            || (resource_pattern.ends_with('*') && resource.starts_with(&resource_pattern[..resource_pattern.len()-1]));
+
+        let action_match = action_pattern == "*"
+            || action_pattern == action
+            || (action_pattern.ends_with('*')
+                && action.starts_with(&action_pattern[..action_pattern.len() - 1]));
+
+        let resource_match = resource_pattern == "*"
+            || resource_pattern == resource
+            || (resource_pattern.ends_with('*')
+                && resource.starts_with(&resource_pattern[..resource_pattern.len() - 1]));
 
         action_match && resource_match
     }
 
-    fn evaluate_conditions(policy: &PolicyRule, agent_id: &str, context: &serde_json::Value) -> bool {
+    fn evaluate_conditions(
+        policy: &PolicyRule,
+        agent_id: &str,
+        context: &serde_json::Value,
+    ) -> bool {
         // If no conditions, policy matches
         if policy.conditions.is_empty() {
             return true;
@@ -445,35 +454,40 @@ impl HotReloadablePolicyEngine {
             ConditionOperator::Equals => value == &condition.value,
             ConditionOperator::NotEquals => value != &condition.value,
             ConditionOperator::Contains => {
-                if let (Some(val_str), Some(cond_str)) = (value.as_str(), condition.value.as_str()) {
+                if let (Some(val_str), Some(cond_str)) = (value.as_str(), condition.value.as_str())
+                {
                     val_str.contains(cond_str)
                 } else {
                     false
                 }
             }
             ConditionOperator::StartsWith => {
-                if let (Some(val_str), Some(cond_str)) = (value.as_str(), condition.value.as_str()) {
+                if let (Some(val_str), Some(cond_str)) = (value.as_str(), condition.value.as_str())
+                {
                     val_str.starts_with(cond_str)
                 } else {
                     false
                 }
             }
             ConditionOperator::EndsWith => {
-                if let (Some(val_str), Some(cond_str)) = (value.as_str(), condition.value.as_str()) {
+                if let (Some(val_str), Some(cond_str)) = (value.as_str(), condition.value.as_str())
+                {
                     val_str.ends_with(cond_str)
                 } else {
                     false
                 }
             }
             ConditionOperator::GreaterThan => {
-                if let (Some(val_num), Some(cond_num)) = (value.as_f64(), condition.value.as_f64()) {
+                if let (Some(val_num), Some(cond_num)) = (value.as_f64(), condition.value.as_f64())
+                {
                     val_num > cond_num
                 } else {
                     false
                 }
             }
             ConditionOperator::LessThan => {
-                if let (Some(val_num), Some(cond_num)) = (value.as_f64(), condition.value.as_f64()) {
+                if let (Some(val_num), Some(cond_num)) = (value.as_f64(), condition.value.as_f64())
+                {
                     val_num < cond_num
                 } else {
                     false
@@ -492,7 +506,7 @@ impl HotReloadablePolicyEngine {
     /// Reload policies from disk
     pub async fn reload(&self) -> HotReloadResult<PolicyVersion> {
         let start = std::time::Instant::now();
-        
+
         info!(dir = ?self.config.policy_dir, "Reloading policies");
 
         // Load new policies
@@ -519,7 +533,7 @@ impl HotReloadablePolicyEngine {
         // Update history
         let mut history = self.version_history.write().await;
         history.push(new_snapshot);
-        
+
         // Prune old versions if needed
         while history.len() > self.config.max_versions {
             history.remove(0);
@@ -547,7 +561,7 @@ impl HotReloadablePolicyEngine {
     /// Rollback to a previous version
     pub async fn rollback(&self, target_version: u64) -> HotReloadResult<()> {
         let history = self.version_history.read().await;
-        
+
         let target = history
             .iter()
             .find(|s| s.version.version == target_version)
@@ -566,7 +580,10 @@ impl HotReloadablePolicyEngine {
         metrics.rollbacks += 1;
         metrics.current_version = target_version;
 
-        info!(version = target_version, "Rolled back to previous policy version");
+        info!(
+            version = target_version,
+            "Rolled back to previous policy version"
+        );
 
         Ok(())
     }
@@ -622,10 +639,10 @@ impl HotReloadablePolicyEngine {
 
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            
+
             if path.is_file() {
                 let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                
+
                 if ext == "yaml" || ext == "yml" {
                     match Self::load_yaml_policies(&path).await {
                         Ok(mut file_policies) => {
@@ -647,7 +664,7 @@ impl HotReloadablePolicyEngine {
     /// Load policies from a YAML file
     async fn load_yaml_policies(path: &Path) -> HotReloadResult<Vec<PolicyRule>> {
         let content = tokio::fs::read_to_string(path).await?;
-        
+
         // Try to parse as a list of policies
         let policies: Vec<PolicyRule> = serde_yaml::from_str(&content)
             .map_err(|e| HotReloadError::LoadError(format!("YAML parse error: {}", e)))?;
@@ -666,13 +683,13 @@ impl HotReloadablePolicyEngine {
 
         let policy_dir = self.config.policy_dir.clone();
         let debounce = self.config.debounce_duration;
-        
+
         // Note: This implementation just starts the watcher loop but doesn't
         // automatically reload policies. In a real implementation, you would
         // use a channel to signal the main engine to reload, or use Arc<Self>.
         tokio::spawn(async move {
             let mut last_check = SystemTime::now();
-            
+
             loop {
                 tokio::select! {
                     _ = shutdown_rx.recv() => {
@@ -778,7 +795,7 @@ mod tests {
     #[test]
     fn test_policy_version_chain() {
         let policies = vec![create_test_policy("policy1", PolicyEffect::Allow)];
-        
+
         let v1 = PolicyVersion::new(1, &policies, None);
         let v2 = PolicyVersion::new(2, &policies, Some(&v1));
 
@@ -803,16 +820,16 @@ mod tests {
     async fn test_hot_reload_engine_creation() {
         let temp_dir = TempDir::new().unwrap();
         let config = HotReloadConfig::new(temp_dir.path());
-        
+
         let engine = HotReloadablePolicyEngine::new(config).await.unwrap();
-        
+
         assert_eq!(engine.current_version(), 1);
     }
 
     #[tokio::test]
     async fn test_policy_evaluation() {
         let temp_dir = TempDir::new().unwrap();
-        
+
         // Create a policy file using new format
         let policy_content = r#"
 - id: "allow_read"
@@ -829,9 +846,11 @@ mod tests {
   conditions: []
   priority: 0
 "#;
-        
+
         let policy_path = temp_dir.path().join("test.yaml");
-        tokio::fs::write(&policy_path, policy_content).await.unwrap();
+        tokio::fs::write(&policy_path, policy_content)
+            .await
+            .unwrap();
 
         let config = HotReloadConfig::new(temp_dir.path());
         let engine = HotReloadablePolicyEngine::new(config).await.unwrap();
@@ -848,7 +867,7 @@ mod tests {
     #[tokio::test]
     async fn test_policy_reload() {
         let temp_dir = TempDir::new().unwrap();
-        
+
         // Initial policy
         let initial_content = r#"
 - id: "policy1"
@@ -858,9 +877,11 @@ mod tests {
   conditions: []
   priority: 0
 "#;
-        
+
         let policy_path = temp_dir.path().join("test.yaml");
-        tokio::fs::write(&policy_path, initial_content).await.unwrap();
+        tokio::fs::write(&policy_path, initial_content)
+            .await
+            .unwrap();
 
         let config = HotReloadConfig::new(temp_dir.path());
         let engine = HotReloadablePolicyEngine::new(config).await.unwrap();
@@ -876,12 +897,14 @@ mod tests {
   conditions: []
   priority: 0
 "#;
-        
-        tokio::fs::write(&policy_path, updated_content).await.unwrap();
+
+        tokio::fs::write(&policy_path, updated_content)
+            .await
+            .unwrap();
 
         // Reload
         let new_version = engine.reload().await.unwrap();
-        
+
         assert_eq!(new_version.version, 2);
         assert_eq!(engine.current_version(), 2);
     }
@@ -889,7 +912,7 @@ mod tests {
     #[tokio::test]
     async fn test_rollback() {
         let temp_dir = TempDir::new().unwrap();
-        
+
         let policy_content = r#"
 - id: "policy1"
   effect: Deny
@@ -899,9 +922,11 @@ mod tests {
   conditions: []
   priority: 0
 "#;
-        
+
         let policy_path = temp_dir.path().join("test.yaml");
-        tokio::fs::write(&policy_path, policy_content).await.unwrap();
+        tokio::fs::write(&policy_path, policy_content)
+            .await
+            .unwrap();
 
         let config = HotReloadConfig::new(temp_dir.path());
         let engine = HotReloadablePolicyEngine::new(config).await.unwrap();
@@ -914,14 +939,14 @@ mod tests {
 
         // Rollback to version 1
         engine.rollback(1).await.unwrap();
-        
+
         assert_eq!(engine.current_version(), 1);
     }
 
     #[tokio::test]
     async fn test_validation() {
         let temp_dir = TempDir::new().unwrap();
-        
+
         // Create policy with duplicate IDs using correct field names
         // Note: effect must be lowercase (allow/deny) per serde config
         let policy_content = r#"
@@ -939,9 +964,11 @@ mod tests {
   conditions: []
   priority: 0
 "#;
-        
+
         let policy_path = temp_dir.path().join("test.yaml");
-        tokio::fs::write(&policy_path, policy_content).await.unwrap();
+        tokio::fs::write(&policy_path, policy_content)
+            .await
+            .unwrap();
 
         let config = HotReloadConfig::new(temp_dir.path());
         let result = HotReloadablePolicyEngine::new(config).await;
@@ -953,13 +980,13 @@ mod tests {
     async fn test_metrics() {
         let temp_dir = TempDir::new().unwrap();
         let config = HotReloadConfig::new(temp_dir.path());
-        
+
         let engine = HotReloadablePolicyEngine::new(config).await.unwrap();
-        
+
         engine.reload().await.unwrap();
-        
+
         let metrics = engine.get_metrics().await;
-        
+
         assert_eq!(metrics.successful_reloads, 1);
         assert!(metrics.last_reload.is_some());
     }

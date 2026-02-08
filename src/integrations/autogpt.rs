@@ -34,8 +34,8 @@
 //! ```
 
 use crate::integrations::common::{
-    ActionContext, ActionType, AdapterResult, AlertLevel, BaseAdapterConfig,
-    HookDecision, InterceptionHook, InterceptionResult, VakConnection,
+    ActionContext, ActionType, AdapterResult, AlertLevel, BaseAdapterConfig, HookDecision,
+    InterceptionHook, InterceptionResult, VakConnection,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -248,7 +248,10 @@ impl TaskPlan {
             .filter_map(|step| {
                 if let Some(ref cmd) = step.command {
                     let cmd_lower = cmd.to_lowercase();
-                    if blocked.iter().any(|b| cmd_lower.contains(&b.to_lowercase())) {
+                    if blocked
+                        .iter()
+                        .any(|b| cmd_lower.contains(&b.to_lowercase()))
+                    {
                         return Some(step.step_number);
                     }
                 }
@@ -304,11 +307,7 @@ impl ExecutionResult {
     }
 
     /// Create a failed result
-    pub fn failure(
-        command: impl Into<String>,
-        exit_code: i32,
-        stderr: impl Into<String>,
-    ) -> Self {
+    pub fn failure(command: impl Into<String>, exit_code: i32, stderr: impl Into<String>) -> Self {
         Self {
             execution_id: uuid::Uuid::new_v4().to_string(),
             command: command.into(),
@@ -490,7 +489,7 @@ impl AutoGPTAdapter {
 
         if approved {
             self.stats.plans_approved.fetch_add(1, Ordering::Relaxed);
-            
+
             // Track active plan
             let mut plans = self.active_plans.write().await;
             plans.insert(
@@ -524,7 +523,9 @@ impl AutoGPTAdapter {
         plan_id: Option<&str>,
         agent_id: &str,
     ) -> AdapterResult<InterceptionResult> {
-        self.stats.commands_intercepted.fetch_add(1, Ordering::Relaxed);
+        self.stats
+            .commands_intercepted
+            .fetch_add(1, Ordering::Relaxed);
 
         let context = ActionContext::new(ActionType::CommandExecution, command, agent_id);
 
@@ -692,10 +693,12 @@ impl AutoGPTAdapter {
 
         // Analyze timing
         result.timing_analysis = TimingAnalysis {
-            estimated_duration_secs: plan.estimated_time_secs
+            estimated_duration_secs: plan
+                .estimated_time_secs
                 .unwrap_or_else(|| plan.steps.len() as u64 * 30),
             max_allowed_secs: self.config.max_execution_time_secs,
-            exceeds_limit: plan.estimated_time_secs
+            exceeds_limit: plan
+                .estimated_time_secs
                 .map(|t| t > self.config.max_execution_time_secs)
                 .unwrap_or(false),
             step_count: plan.steps.len(),
@@ -708,7 +711,10 @@ impl AutoGPTAdapter {
         // Final verification decision
         result.verified = result.overall_risk < RiskLevel::Critical
             && !result.timing_analysis.exceeds_limit
-            && result.step_analyses.iter().all(|s| s.blocked_commands.is_empty());
+            && result
+                .step_analyses
+                .iter()
+                .all(|s| s.blocked_commands.is_empty());
 
         result.verification_time_ms = start.elapsed().as_millis() as u64;
 
@@ -724,7 +730,7 @@ impl AutoGPTAdapter {
     /// Analyze the goal for risks
     fn analyze_goal(&self, goal: &str, _opts: &VerificationOptions) -> GoalAnalysis {
         let goal_lower = goal.to_lowercase();
-        
+
         let mut analysis = GoalAnalysis {
             goal: goal.to_string(),
             is_high_risk: false,
@@ -760,7 +766,10 @@ impl AutoGPTAdapter {
         // Determine category
         if goal_lower.contains("file") || goal_lower.contains("directory") {
             analysis.category = GoalCategory::FileOperation;
-        } else if goal_lower.contains("network") || goal_lower.contains("http") || goal_lower.contains("api") {
+        } else if goal_lower.contains("network")
+            || goal_lower.contains("http")
+            || goal_lower.contains("api")
+        {
             analysis.category = GoalCategory::NetworkOperation;
         } else if goal_lower.contains("database") || goal_lower.contains("sql") {
             analysis.category = GoalCategory::DatabaseOperation;
@@ -797,15 +806,21 @@ impl AutoGPTAdapter {
 
             // Analyze command patterns
             if command.contains("|") {
-                analysis.warnings.push("Command uses pipe - verify intermediate steps".to_string());
+                analysis
+                    .warnings
+                    .push("Command uses pipe - verify intermediate steps".to_string());
                 analysis.risk_level = analysis.risk_level.max(RiskLevel::Medium);
             }
             if command.contains("&&") || command.contains(";") {
-                analysis.warnings.push("Command chains multiple operations".to_string());
+                analysis
+                    .warnings
+                    .push("Command chains multiple operations".to_string());
                 analysis.risk_level = analysis.risk_level.max(RiskLevel::Medium);
             }
             if command.contains("curl") || command.contains("wget") {
-                analysis.warnings.push("Command downloads from network".to_string());
+                analysis
+                    .warnings
+                    .push("Command downloads from network".to_string());
                 analysis.risk_level = analysis.risk_level.max(RiskLevel::High);
             }
         }
@@ -825,10 +840,14 @@ impl AutoGPTAdapter {
         for step in &plan.steps {
             if let Some(ref cmd) = step.command {
                 // Extract file paths
-                let path_pattern = regex::Regex::new(r"[/~][\w/.]+").unwrap_or_else(|_| regex::Regex::new(".^").unwrap());
+                let path_pattern = regex::Regex::new(r"[/~][\w/.]+")
+                    .unwrap_or_else(|_| regex::Regex::new(".^").unwrap());
                 for cap in path_pattern.find_iter(cmd) {
                     let path = cap.as_str().to_string();
-                    if path.starts_with("/etc") || path.starts_with("/root") || path.contains("passwd") {
+                    if path.starts_with("/etc")
+                        || path.starts_with("/root")
+                        || path.contains("passwd")
+                    {
                         analysis.sensitive_resources.push(path.clone());
                     }
                     if !analysis.file_paths.contains(&path) {
@@ -864,7 +883,8 @@ impl AutoGPTAdapter {
             recommendations.push(VerificationRecommendation {
                 level: RecommendationLevel::Required,
                 category: "goal".to_string(),
-                message: "High-risk goal detected. Consider human review before execution.".to_string(),
+                message: "High-risk goal detected. Consider human review before execution."
+                    .to_string(),
                 action: Some("request_human_review".to_string()),
             });
         }
@@ -896,7 +916,8 @@ impl AutoGPTAdapter {
             recommendations.push(VerificationRecommendation {
                 level: RecommendationLevel::Required,
                 category: "privileges".to_string(),
-                message: "Plan requires elevated privileges. Ensure proper authorization.".to_string(),
+                message: "Plan requires elevated privileges. Ensure proper authorization."
+                    .to_string(),
                 action: Some("verify_authorization".to_string()),
             });
         }
@@ -937,13 +958,13 @@ impl AutoGPTAdapter {
         output: &str,
     ) -> MonitoringResult {
         let plans = self.active_plans.read().await;
-        
+
         let state = plans.get(plan_id);
         let execution_time = state.map(|s| s.started_at.elapsed().as_secs()).unwrap_or(0);
 
         // Check for anomalies in output
         let mut alerts = Vec::new();
-        
+
         // Check for error patterns
         if output.to_lowercase().contains("error") || output.to_lowercase().contains("failed") {
             alerts.push(MonitoringAlert {
@@ -1241,8 +1262,7 @@ mod tests {
         let config = AutoGPTConfig::default();
         let adapter = AutoGPTAdapter::new(config);
 
-        let plan = TaskPlan::new("Cleanup")
-            .with_command_step("Delete all", "rm -rf /");
+        let plan = TaskPlan::new("Cleanup").with_command_step("Delete all", "rm -rf /");
 
         let eval = adapter.evaluate_plan(&plan, "agent-1").await.unwrap();
 

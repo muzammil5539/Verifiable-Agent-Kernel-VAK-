@@ -84,7 +84,9 @@ impl AgentCard {
     }
 
     pub fn has_capability(&self, capability_type: &str) -> bool {
-        self.capabilities.iter().any(|c| c.capability_type == capability_type)
+        self.capabilities
+            .iter()
+            .any(|c| c.capability_type == capability_type)
     }
 }
 
@@ -173,7 +175,12 @@ impl A2AMessage {
         Self::new(A2AMessageType::Query, from, to, query)
     }
 
-    pub fn response(from: impl Into<String>, to: impl Into<String>, response: serde_json::Value, correlation_id: impl Into<String>) -> Self {
+    pub fn response(
+        from: impl Into<String>,
+        to: impl Into<String>,
+        response: serde_json::Value,
+        correlation_id: impl Into<String>,
+    ) -> Self {
         let mut msg = Self::new(A2AMessageType::Response, from, to, response);
         msg.correlation_id = Some(correlation_id.into());
         msg
@@ -234,7 +241,11 @@ impl DiscoveryService {
 
     pub async fn find_by_capability(&self, capability_type: &str) -> Vec<AgentCard> {
         let agents = self.agents.read().await;
-        agents.values().filter(|a| a.has_capability(capability_type)).cloned().collect()
+        agents
+            .values()
+            .filter(|a| a.has_capability(capability_type))
+            .cloned()
+            .collect()
     }
 
     pub async fn heartbeat(&self, agent_id: &str) -> A2AResult<()> {
@@ -250,7 +261,9 @@ impl DiscoveryService {
     pub async fn is_alive(&self, agent_id: &str) -> bool {
         let last_seen = self.last_seen.read().await;
         if let Some(time) = last_seen.get(agent_id) {
-            time.elapsed().map(|d| d < self.heartbeat_timeout).unwrap_or(false)
+            time.elapsed()
+                .map(|d| d < self.heartbeat_timeout)
+                .unwrap_or(false)
         } else {
             false
         }
@@ -260,18 +273,23 @@ impl DiscoveryService {
         let mut agents = self.agents.write().await;
         let mut last_seen = self.last_seen.write().await;
         let mut pruned = Vec::new();
-        
-        let dead: Vec<_> = last_seen.iter()
-            .filter(|(_, time)| time.elapsed().map(|d| d >= self.heartbeat_timeout).unwrap_or(true))
+
+        let dead: Vec<_> = last_seen
+            .iter()
+            .filter(|(_, time)| {
+                time.elapsed()
+                    .map(|d| d >= self.heartbeat_timeout)
+                    .unwrap_or(true)
+            })
             .map(|(id, _)| id.clone())
             .collect();
-        
+
         for id in dead {
             agents.remove(&id);
             last_seen.remove(&id);
             pruned.push(id);
         }
-        
+
         if !pruned.is_empty() {
             warn!(count = pruned.len(), "Pruned dead agents");
         }
@@ -313,29 +331,33 @@ impl A2AProtocol {
         if !agents.contains_key(&message.to) {
             return Err(A2AError::AgentNotFound(message.to.clone()));
         }
-        
+
         let handlers = self.message_handlers.read().await;
         if let Some(agent_handlers) = handlers.get(&message.to) {
             for handler in agent_handlers {
                 handler(&message);
             }
         }
-        
+
         debug!(from = %message.from, to = %message.to, "Message sent");
         Ok(())
     }
 
-    pub async fn send_and_wait(&self, message: A2AMessage, timeout: Duration) -> A2AResult<A2AMessage> {
+    pub async fn send_and_wait(
+        &self,
+        message: A2AMessage,
+        timeout: Duration,
+    ) -> A2AResult<A2AMessage> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let msg_id = message.id.clone();
-        
+
         {
             let mut pending = self.pending_responses.write().await;
             pending.insert(msg_id.clone(), tx);
         }
-        
+
         self.send(message).await?;
-        
+
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(_)) => Err(A2AError::DeliveryFailed("Channel closed".to_string())),
@@ -376,7 +398,7 @@ mod tests {
         let card = AgentCard::new("agent-1", "Test Agent")
             .with_description("A test agent")
             .with_capability(A2ACapability::new("reasoning"));
-        
+
         assert_eq!(card.id, "agent-1");
         assert!(card.has_capability("reasoning"));
         assert!(!card.has_capability("coding"));
@@ -394,12 +416,12 @@ mod tests {
     async fn test_discovery_service() {
         let service = DiscoveryService::new();
         let card = AgentCard::new("agent-1", "Test Agent");
-        
+
         service.register(card).await.unwrap();
-        
+
         assert!(service.get_agent("agent-1").await.is_some());
         assert!(service.get_agent("nonexistent").await.is_none());
-        
+
         service.unregister("agent-1").await.unwrap();
         assert!(service.get_agent("agent-1").await.is_none());
     }
@@ -407,15 +429,15 @@ mod tests {
     #[tokio::test]
     async fn test_find_by_capability() {
         let service = DiscoveryService::new();
-        
-        let card1 = AgentCard::new("agent-1", "Agent 1")
-            .with_capability(A2ACapability::new("reasoning"));
-        let card2 = AgentCard::new("agent-2", "Agent 2")
-            .with_capability(A2ACapability::new("coding"));
-        
+
+        let card1 =
+            AgentCard::new("agent-1", "Agent 1").with_capability(A2ACapability::new("reasoning"));
+        let card2 =
+            AgentCard::new("agent-2", "Agent 2").with_capability(A2ACapability::new("coding"));
+
         service.register(card1).await.unwrap();
         service.register(card2).await.unwrap();
-        
+
         let reasoning_agents = service.find_by_capability("reasoning").await;
         assert_eq!(reasoning_agents.len(), 1);
         assert_eq!(reasoning_agents[0].id, "agent-1");
@@ -425,10 +447,10 @@ mod tests {
     async fn test_heartbeat() {
         let service = DiscoveryService::new();
         let card = AgentCard::new("agent-1", "Test Agent");
-        
+
         service.register(card).await.unwrap();
         assert!(service.is_alive("agent-1").await);
-        
+
         service.heartbeat("agent-1").await.unwrap();
         assert!(service.is_alive("agent-1").await);
     }
@@ -436,10 +458,10 @@ mod tests {
     #[tokio::test]
     async fn test_protocol_send() {
         let protocol = A2AProtocol::new();
-        
+
         let card = AgentCard::new("agent-1", "Test Agent");
         protocol.discovery().register(card).await.unwrap();
-        
+
         let msg = A2AMessage::heartbeat("agent-2", "agent-1");
         let result = protocol.send(msg).await;
         assert!(result.is_ok());

@@ -359,25 +359,17 @@ impl CryptoReceipt {
         };
 
         // Parse public key
-        let verifying_key = match VerifyingKey::from_bytes(
-            pk_bytes
-                .as_slice()
-                .try_into()
-                .unwrap_or(&[0u8; 32]),
-        ) {
-            Ok(key) => key,
-            Err(_) => return false,
-        };
+        let verifying_key =
+            match VerifyingKey::from_bytes(pk_bytes.as_slice().try_into().unwrap_or(&[0u8; 32])) {
+                Ok(key) => key,
+                Err(_) => return false,
+            };
 
         // Parse signature
-        let signature = match Signature::from_bytes(
-            sig_bytes
-                .as_slice()
-                .try_into()
-                .unwrap_or(&[0u8; 64]),
-        ) {
-            sig => sig,
-        };
+        let signature =
+            match Signature::from_bytes(sig_bytes.as_slice().try_into().unwrap_or(&[0u8; 64])) {
+                sig => sig,
+            };
 
         // Verify signature over root hash
         verifying_key
@@ -387,9 +379,7 @@ impl CryptoReceipt {
 
     /// Get receipt size in bytes (approximate)
     pub fn size_bytes(&self) -> usize {
-        serde_json::to_string(self)
-            .map(|s| s.len())
-            .unwrap_or(0)
+        serde_json::to_string(self).map(|s| s.len()).unwrap_or(0)
     }
 
     /// Get step count
@@ -450,7 +440,11 @@ struct ReceiptBuilder {
 }
 
 impl ReceiptBuilder {
-    fn new(agent_id: impl Into<String>, session_id: impl Into<String>, initial_hash: impl Into<String>) -> Self {
+    fn new(
+        agent_id: impl Into<String>,
+        session_id: impl Into<String>,
+        initial_hash: impl Into<String>,
+    ) -> Self {
         Self {
             agent_id: agent_id.into(),
             session_id: session_id.into(),
@@ -648,7 +642,11 @@ impl ReceiptGenerator {
         policy: &str,
         allowed: bool,
     ) -> ReceiptResult<String> {
-        let content = format!("Policy '{}': {}", policy, if allowed { "ALLOWED" } else { "DENIED" });
+        let content = format!(
+            "Policy '{}': {}",
+            policy,
+            if allowed { "ALLOWED" } else { "DENIED" }
+        );
         let hash = self.add_step(agent_id, session_id, StepType::PolicyCheck, content)?;
 
         // Update success status

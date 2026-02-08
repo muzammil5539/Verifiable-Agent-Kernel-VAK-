@@ -1332,10 +1332,14 @@ mod optimized_tests {
     #[test]
     fn test_optimized_store_basic() {
         let mut store = OptimizedVectorStore::new(VectorStoreConfig::default());
-        
-        store.insert(create_test_entry("doc1", vec![1.0, 0.0, 0.0])).unwrap();
-        store.insert(create_test_entry("doc2", vec![0.0, 1.0, 0.0])).unwrap();
-        
+
+        store
+            .insert(create_test_entry("doc1", vec![1.0, 0.0, 0.0]))
+            .unwrap();
+        store
+            .insert(create_test_entry("doc2", vec![0.0, 1.0, 0.0]))
+            .unwrap();
+
         let results = store.search(&[1.0, 0.0, 0.0], 1, None).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].entry.id, "doc1");
@@ -1344,13 +1348,15 @@ mod optimized_tests {
     #[test]
     fn test_stats_tracking() {
         let mut store = OptimizedVectorStore::new(VectorStoreConfig::default());
-        
-        store.insert(create_test_entry("doc1", vec![1.0, 0.0, 0.0])).unwrap();
-        
+
+        store
+            .insert(create_test_entry("doc1", vec![1.0, 0.0, 0.0]))
+            .unwrap();
+
         // Initial stats
         let stats = store.stats();
         assert_eq!(stats.total_searches, 0);
-        
+
         // After search
         store.search(&[1.0, 0.0, 0.0], 1, None).unwrap();
         let stats = store.stats();
@@ -1361,16 +1367,19 @@ mod optimized_tests {
     #[test]
     fn test_batch_search() {
         let mut store = OptimizedVectorStore::new(VectorStoreConfig::default());
-        
-        store.insert(create_test_entry("doc1", vec![1.0, 0.0, 0.0])).unwrap();
-        store.insert(create_test_entry("doc2", vec![0.0, 1.0, 0.0])).unwrap();
-        store.insert(create_test_entry("doc3", vec![0.0, 0.0, 1.0])).unwrap();
-        
-        let queries = vec![
-            vec![1.0, 0.0, 0.0],
-            vec![0.0, 1.0, 0.0],
-        ];
-        
+
+        store
+            .insert(create_test_entry("doc1", vec![1.0, 0.0, 0.0]))
+            .unwrap();
+        store
+            .insert(create_test_entry("doc2", vec![0.0, 1.0, 0.0]))
+            .unwrap();
+        store
+            .insert(create_test_entry("doc3", vec![0.0, 0.0, 1.0]))
+            .unwrap();
+
+        let queries = vec![vec![1.0, 0.0, 0.0], vec![0.0, 1.0, 0.0]];
+
         let results = store.search_batch(&queries, 1, None).unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0][0].entry.id, "doc1");
@@ -1380,11 +1389,13 @@ mod optimized_tests {
     #[test]
     fn test_stats_reset() {
         let mut store = OptimizedVectorStore::new(VectorStoreConfig::default());
-        store.insert(create_test_entry("doc1", vec![1.0, 0.0, 0.0])).unwrap();
-        
+        store
+            .insert(create_test_entry("doc1", vec![1.0, 0.0, 0.0]))
+            .unwrap();
+
         store.search(&[1.0, 0.0, 0.0], 1, None).unwrap();
         assert_eq!(store.stats().total_searches, 1);
-        
+
         store.reset_stats();
         assert_eq!(store.stats().total_searches, 0);
     }

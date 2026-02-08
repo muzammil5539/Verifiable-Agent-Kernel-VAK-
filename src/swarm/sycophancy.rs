@@ -46,7 +46,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
 // ============================================================================
@@ -240,13 +240,7 @@ impl SycophancyDetector {
     }
 
     /// Record a vote for analysis
-    pub async fn record_vote(
-        &self,
-        session_id: &str,
-        agent_id: &str,
-        option: &str,
-        strength: u64,
-    ) {
+    pub async fn record_vote(&self, session_id: &str, agent_id: &str, option: &str, strength: u64) {
         let mut sessions = self.sessions.write().await;
         let session = sessions
             .entry(session_id.to_string())
@@ -300,7 +294,7 @@ impl SycophancyDetector {
 
         // Identify risk indicators
         let mut risk_indicators = Vec::new();
-        let mut total_risk: f64 = 0.0;  // Explicit type annotation
+        let mut total_risk: f64 = 0.0; // Explicit type annotation
 
         // Check for unanimous agreement
         let max_votes = option_counts.values().max().copied().unwrap_or(0);
@@ -309,7 +303,10 @@ impl SycophancyDetector {
             risk_indicators.push(RiskIndicator {
                 indicator_type: RiskIndicatorType::UnanimousAgreement,
                 severity: 0.9,
-                description: format!("{:.1}% of agents agreed on the same option", unanimity_percent),
+                description: format!(
+                    "{:.1}% of agents agreed on the same option",
+                    unanimity_percent
+                ),
             });
             total_risk += 0.4;
         }
@@ -319,10 +316,7 @@ impl SycophancyDetector {
             risk_indicators.push(RiskIndicator {
                 indicator_type: RiskIndicatorType::LowEntropy,
                 severity: 0.7,
-                description: format!(
-                    "Low vote diversity (entropy: {:.2})",
-                    normalized_entropy
-                ),
+                description: format!("Low vote diversity (entropy: {:.2})", normalized_entropy),
             });
             total_risk += 0.3;
         }
@@ -330,7 +324,12 @@ impl SycophancyDetector {
         // Check for rapid consensus
         if self.config.rapid_consensus_window_secs > 0 {
             if let Some(started) = session.started_at {
-                let last_vote_time = session.votes.iter().map(|v| v.timestamp).max().unwrap_or(started);
+                let last_vote_time = session
+                    .votes
+                    .iter()
+                    .map(|v| v.timestamp)
+                    .max()
+                    .unwrap_or(started);
                 let duration = last_vote_time.saturating_sub(started);
                 if duration < self.config.rapid_consensus_window_secs && total_votes >= 3 {
                     risk_indicators.push(RiskIndicator {
@@ -352,10 +351,7 @@ impl SycophancyDetector {
             risk_indicators.push(RiskIndicator {
                 indicator_type: RiskIndicatorType::InsufficientDisagreement,
                 severity: 0.5,
-                description: format!(
-                    "Only {:.1}% disagreement rate",
-                    disagreement_rate * 100.0
-                ),
+                description: format!("Only {:.1}% disagreement rate", disagreement_rate * 100.0),
             });
             total_risk += 0.1;
         }
@@ -400,7 +396,7 @@ impl SycophancyDetector {
     fn generate_recommendation(
         &self,
         risk_score: f64,
-        indicators: &[RiskIndicator],
+        _indicators: &[RiskIndicator],
     ) -> Recommendation {
         let (action, reasoning) = if risk_score >= 0.8 {
             (
@@ -462,7 +458,10 @@ impl std::fmt::Debug for SycophancyDetector {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SycophancyDetector")
             .field("config", &self.config)
-            .field("sessions_analyzed", &self.sessions_analyzed.load(Ordering::Relaxed))
+            .field(
+                "sessions_analyzed",
+                &self.sessions_analyzed.load(Ordering::Relaxed),
+            )
             .finish()
     }
 }
@@ -483,10 +482,18 @@ mod tests {
             ..Default::default()
         });
 
-        detector.record_vote("session-1", "agent-1", "option-a", 3).await;
-        detector.record_vote("session-1", "agent-2", "option-b", 3).await;
-        detector.record_vote("session-1", "agent-3", "option-c", 3).await;
-        detector.record_vote("session-1", "agent-4", "option-d", 3).await;
+        detector
+            .record_vote("session-1", "agent-1", "option-a", 3)
+            .await;
+        detector
+            .record_vote("session-1", "agent-2", "option-b", 3)
+            .await;
+        detector
+            .record_vote("session-1", "agent-3", "option-c", 3)
+            .await;
+        detector
+            .record_vote("session-1", "agent-4", "option-d", 3)
+            .await;
 
         let analysis = detector.analyze_session("session-1").await.unwrap();
         assert!(analysis.normalized_entropy > 0.5);
@@ -497,9 +504,15 @@ mod tests {
     async fn test_unanimous_agreement() {
         let detector = SycophancyDetector::with_defaults();
 
-        detector.record_vote("session-1", "agent-1", "option-a", 5).await;
-        detector.record_vote("session-1", "agent-2", "option-a", 4).await;
-        detector.record_vote("session-1", "agent-3", "option-a", 5).await;
+        detector
+            .record_vote("session-1", "agent-1", "option-a", 5)
+            .await;
+        detector
+            .record_vote("session-1", "agent-2", "option-a", 4)
+            .await;
+        detector
+            .record_vote("session-1", "agent-3", "option-a", 5)
+            .await;
 
         let analysis = detector.analyze_session("session-1").await.unwrap();
         assert!(analysis.sycophancy_risk > 0.5);
@@ -519,18 +532,24 @@ mod tests {
             ..Default::default()
         });
 
-        detector.record_vote("session-1", "agent-1", "option-a", 5).await;
-        detector.record_vote("session-1", "agent-2", "option-a", 5).await;
-        detector.record_vote("session-1", "agent-3", "option-a", 5).await;
+        detector
+            .record_vote("session-1", "agent-1", "option-a", 5)
+            .await;
+        detector
+            .record_vote("session-1", "agent-2", "option-a", 5)
+            .await;
+        detector
+            .record_vote("session-1", "agent-3", "option-a", 5)
+            .await;
 
         let analysis = detector.analyze_session("session-1").await.unwrap();
         assert!(analysis.normalized_entropy < 0.8);
-        
+
         let has_low_entropy = analysis
             .risk_indicators
             .iter()
             .any(|i| i.indicator_type == RiskIndicatorType::LowEntropy);
-        
+
         assert!(has_low_entropy);
     }
 
@@ -556,9 +575,15 @@ mod tests {
     async fn test_recommendation_generation() {
         let detector = SycophancyDetector::with_defaults();
 
-        detector.record_vote("session-1", "agent-1", "option-a", 10).await;
-        detector.record_vote("session-1", "agent-2", "option-a", 10).await;
-        detector.record_vote("session-1", "agent-3", "option-a", 10).await;
+        detector
+            .record_vote("session-1", "agent-1", "option-a", 10)
+            .await;
+        detector
+            .record_vote("session-1", "agent-2", "option-a", 10)
+            .await;
+        detector
+            .record_vote("session-1", "agent-3", "option-a", 10)
+            .await;
 
         let analysis = detector.analyze_session("session-1").await.unwrap();
         assert!(matches!(

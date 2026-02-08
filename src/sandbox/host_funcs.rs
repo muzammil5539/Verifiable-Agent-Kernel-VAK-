@@ -133,7 +133,7 @@ impl Default for HostFuncConfig {
             audit_logging: true,
             allowed_fs_roots: vec![],
             allowed_network_hosts: vec![],
-            max_file_read_size: 10 * 1024 * 1024, // 10MB
+            max_file_read_size: 10 * 1024 * 1024,        // 10MB
             max_network_response_size: 10 * 1024 * 1024, // 10MB
         }
     }
@@ -211,29 +211,43 @@ impl PermissionCache {
 
     /// Allow a specific action on a resource pattern
     pub fn allow(&mut self, action: impl Into<String>, resource_pattern: impl Into<String>) {
-        self.allowed_actions.insert((action.into(), resource_pattern.into()));
+        self.allowed_actions
+            .insert((action.into(), resource_pattern.into()));
     }
 
     /// Deny a specific action on a resource pattern
     pub fn deny(&mut self, action: impl Into<String>, resource_pattern: impl Into<String>) {
-        self.denied_actions.insert((action.into(), resource_pattern.into()));
+        self.denied_actions
+            .insert((action.into(), resource_pattern.into()));
     }
 
     /// Check if an action is allowed
     pub fn is_allowed(&self, action: &str, resource: &str) -> bool {
         // Check explicit denies first
-        if self.denied_actions.contains(&(action.to_string(), resource.to_string())) {
+        if self
+            .denied_actions
+            .contains(&(action.to_string(), resource.to_string()))
+        {
             return false;
         }
-        if self.denied_actions.contains(&(action.to_string(), "*".to_string())) {
+        if self
+            .denied_actions
+            .contains(&(action.to_string(), "*".to_string()))
+        {
             return false;
         }
 
         // Check explicit allows
-        if self.allowed_actions.contains(&(action.to_string(), resource.to_string())) {
+        if self
+            .allowed_actions
+            .contains(&(action.to_string(), resource.to_string()))
+        {
             return true;
         }
-        if self.allowed_actions.contains(&(action.to_string(), "*".to_string())) {
+        if self
+            .allowed_actions
+            .contains(&(action.to_string(), "*".to_string()))
+        {
             return true;
         }
 
@@ -390,15 +404,15 @@ where
 }
 
 /// Read a string from WASM guest memory
-/// 
+///
 /// # Arguments
 /// * `caller` - The WASM caller context
 /// * `ptr` - Pointer to the string in guest memory
 /// * `len` - Length of the string in bytes
-/// 
+///
 /// # Returns
 /// The string read from guest memory, or an error if the read fails
-/// 
+///
 /// # Errors
 /// - Returns error if the memory export is not found
 /// - Returns error if the pointer/length are out of bounds
@@ -413,22 +427,24 @@ pub fn read_string_from_wasm(
         .get_export("memory")
         .and_then(|e| e.into_memory())
         .ok_or_else(|| HostFuncError::Internal("Failed to get WASM memory export".to_string()))?;
-    
+
     // Validate bounds
     let ptr = ptr as usize;
     let len = len as usize;
     let data = memory.data(caller);
-    
+
     if ptr + len > data.len() {
         return Err(HostFuncError::InvalidArgument(format!(
             "Memory access out of bounds: ptr={}, len={}, memory_size={}",
-            ptr, len, data.len()
+            ptr,
+            len,
+            data.len()
         )));
     }
-    
+
     // Read the bytes
     let bytes = &data[ptr..ptr + len];
-    
+
     // Convert to string
     std::str::from_utf8(bytes)
         .map(|s| s.to_string())
@@ -436,12 +452,12 @@ pub fn read_string_from_wasm(
 }
 
 /// Read bytes from WASM guest memory
-/// 
+///
 /// # Arguments
-/// * `caller` - The WASM caller context  
+/// * `caller` - The WASM caller context
 /// * `ptr` - Pointer to the data in guest memory
 /// * `len` - Length of the data in bytes
-/// 
+///
 /// # Returns
 /// A vector of bytes read from guest memory
 pub fn read_bytes_from_wasm(
@@ -454,19 +470,21 @@ pub fn read_bytes_from_wasm(
         .get_export("memory")
         .and_then(|e| e.into_memory())
         .ok_or_else(|| HostFuncError::Internal("Failed to get WASM memory export".to_string()))?;
-    
+
     // Validate bounds
     let ptr = ptr as usize;
     let len = len as usize;
     let data = memory.data(caller);
-    
+
     if ptr + len > data.len() {
         return Err(HostFuncError::InvalidArgument(format!(
             "Memory access out of bounds: ptr={}, len={}, memory_size={}",
-            ptr, len, data.len()
+            ptr,
+            len,
+            data.len()
         )));
     }
-    
+
     // Copy and return the bytes
     Ok(data[ptr..ptr + len].to_vec())
 }
@@ -595,7 +613,7 @@ impl HostFuncLinker {
                       path_len: i32|
                       -> AnyhowResult<i64> {
                     let state = caller.data().clone();
-                    
+
                     // Read the path from WASM memory
                     let resource = match read_string_from_wasm(&mut caller, path_ptr, path_len) {
                         Ok(path) => path,
@@ -642,7 +660,7 @@ impl HostFuncLinker {
                       _data_len: i32|
                       -> AnyhowResult<i64> {
                     let state = caller.data().clone();
-                    
+
                     // Read the path from WASM memory
                     let resource = match read_string_from_wasm(&mut caller, path_ptr, path_len) {
                         Ok(path) => path,
@@ -815,7 +833,7 @@ mod tests {
     fn test_permission_cache_specific_allows() {
         let mut cache = PermissionCache::new();
         cache.allow("fs_read", "/allowed/path");
-        
+
         assert!(cache.is_allowed("fs_read", "/allowed/path"));
         assert!(!cache.is_allowed("fs_read", "/other/path"));
         assert!(!cache.is_allowed("fs_write", "/allowed/path"));
@@ -825,7 +843,7 @@ mod tests {
     fn test_permission_cache_wildcard() {
         let mut cache = PermissionCache::new();
         cache.allow("log", "*");
-        
+
         assert!(cache.is_allowed("log", "/any/resource"));
         assert!(cache.is_allowed("log", "anything"));
     }
@@ -834,7 +852,7 @@ mod tests {
     fn test_permission_cache_deny_overrides_default() {
         let mut cache = PermissionCache::allow_all();
         cache.deny("fs_write", "/protected");
-        
+
         assert!(!cache.is_allowed("fs_write", "/protected"));
         assert!(cache.is_allowed("fs_write", "/other"));
     }

@@ -901,7 +901,7 @@ mod tests {
     #[test]
     fn test_namespaced_storage_isolation() {
         let manager1 = StorageManager::memory();
-        let manager2 = manager1.config.clone();
+        let _manager2 = manager1.config.clone();
 
         // This demonstrates namespace concept - in practice would share backend
         let ns = NamespacedStorage::new(manager1, "namespace1");

@@ -522,10 +522,7 @@ impl MultiRegionS3Backend {
 
     /// Get health status for all regions
     pub fn get_health_status(&self) -> HashMap<String, RegionHealth> {
-        self.health
-            .read()
-            .map(|h| h.clone())
-            .unwrap_or_default()
+        self.health.read().map(|h| h.clone()).unwrap_or_default()
     }
 
     /// Get overall multi-region status
@@ -832,9 +829,10 @@ impl MultiRegionS3Backend {
     /// Flush buffer to all configured regions based on replication mode
     pub async fn flush_async(&self) -> Result<Vec<String>, AuditError> {
         let entries: Vec<AuditEntry> = {
-            let mut buffer = self.buffer.write().map_err(|e| {
-                AuditError::BackendNotAvailable(format!("Lock error: {}", e))
-            })?;
+            let mut buffer = self
+                .buffer
+                .write()
+                .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
             buffer.drain(..).collect()
         };
 
@@ -861,11 +859,7 @@ impl MultiRegionS3Backend {
                             }
                         }
                         Err(e) => {
-                            tracing::error!(
-                                "Failed to upload to region {}: {}",
-                                region.region,
-                                e
-                            );
+                            tracing::error!("Failed to upload to region {}: {}", region.region, e);
                             // Update health status
                             if let Ok(mut health) = self.health.write() {
                                 if let Some(h) = health.get_mut(&region.region) {
@@ -879,7 +873,12 @@ impl MultiRegionS3Backend {
             ReplicationMode::ActivePassive => {
                 // Upload to primary first
                 let primary_region = self.active_primary_region();
-                if let Some(primary_config) = self.config.all_regions().into_iter().find(|r| r.region == primary_region) {
+                if let Some(primary_config) = self
+                    .config
+                    .all_regions()
+                    .into_iter()
+                    .find(|r| r.region == primary_region)
+                {
                     match self.upload_to_region(primary_config, &entries).await {
                         Ok(key) => {
                             if !key.is_empty() {
@@ -899,7 +898,11 @@ impl MultiRegionS3Backend {
                             }
                         }
                         Err(e) => {
-                            tracing::error!("Failed to upload to primary {}: {}", primary_region, e);
+                            tracing::error!(
+                                "Failed to upload to primary {}: {}",
+                                primary_region,
+                                e
+                            );
                             // Trigger failover evaluation
                             self.evaluate_failover().await;
                             return Err(e);
@@ -910,7 +913,12 @@ impl MultiRegionS3Backend {
             ReplicationMode::PrimaryOnly => {
                 // Upload only to primary
                 let primary_region = self.active_primary_region();
-                if let Some(primary_config) = self.config.all_regions().into_iter().find(|r| r.region == primary_region) {
+                if let Some(primary_config) = self
+                    .config
+                    .all_regions()
+                    .into_iter()
+                    .find(|r| r.region == primary_region)
+                {
                     let key = self.upload_to_region(primary_config, &entries).await?;
                     if !key.is_empty() {
                         uploaded_keys.push(format!("{}:{}", primary_region, key));
@@ -965,9 +973,10 @@ impl AuditBackend for MultiRegionS3Backend {
     fn append(&mut self, entry: &AuditEntry) -> Result<(), AuditError> {
         // Add to buffer
         {
-            let mut buffer = self.buffer.write().map_err(|e| {
-                AuditError::BackendNotAvailable(format!("Lock error: {}", e))
-            })?;
+            let mut buffer = self
+                .buffer
+                .write()
+                .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
             buffer.push(entry.clone());
         }
 
@@ -980,9 +989,10 @@ impl AuditBackend for MultiRegionS3Backend {
     fn load_all(&self) -> Result<Vec<AuditEntry>, AuditError> {
         // Since append() adds to both buffer and cache, just use cache
         // to avoid duplicating entries
-        let cache = self.local_cache.read().map_err(|e| {
-            AuditError::BackendNotAvailable(format!("Lock error: {}", e))
-        })?;
+        let cache = self
+            .local_cache
+            .read()
+            .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
 
         let mut entries = cache.clone();
         entries.sort_by_key(|e| e.id);
@@ -998,9 +1008,10 @@ impl AuditBackend for MultiRegionS3Backend {
         }
 
         // Fall back to cache
-        let cache = self.local_cache.read().map_err(|e| {
-            AuditError::BackendNotAvailable(format!("Lock error: {}", e))
-        })?;
+        let cache = self
+            .local_cache
+            .read()
+            .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
 
         Ok(cache.last().cloned())
     }
@@ -1079,14 +1090,12 @@ mod tests {
     #[test]
     fn test_config_validation() {
         // Missing primary should fail
-        let config = MultiRegionConfig::new()
-            .with_replica_region("us-west-2", "replica-bucket");
+        let config = MultiRegionConfig::new().with_replica_region("us-west-2", "replica-bucket");
 
         assert!(config.validate().is_err());
 
         // Valid config
-        let config = MultiRegionConfig::new()
-            .with_primary_region("us-east-1", "primary-bucket");
+        let config = MultiRegionConfig::new().with_primary_region("us-east-1", "primary-bucket");
 
         assert!(config.validate().is_ok());
     }
@@ -1178,7 +1187,7 @@ mod tests {
         let mut health = HashMap::new();
         health.insert("us-east-1".to_string(), RegionHealth::healthy("us-east-1"));
 
-        let mut us_west = RegionHealth::healthy("us-west-2");
+        let us_west = RegionHealth::healthy("us-west-2");
         health.insert("us-west-2".to_string(), us_west.clone());
 
         let mut eu_west = RegionHealth::healthy("eu-west-1");

@@ -408,8 +408,7 @@ impl<S: PrmScorer + Send + Sync> PrmGate<S> {
         }
 
         // Create reasoning step
-        let step = ReasoningStep::new(context.history.len() + 1, thought)
-            .with_action(action);
+        let step = ReasoningStep::new(context.history.len() + 1, thought).with_action(action);
 
         // Score the step
         let score = self.scorer.score_step(&step, &context.history).await?;
@@ -433,7 +432,7 @@ impl<S: PrmScorer + Send + Sync> PrmGate<S> {
         {
             // Score is good enough - allow
             self.stats.allowed.fetch_add(1, Ordering::Relaxed);
-            
+
             // Reset backtrack state on success
             {
                 let mut state = self.backtrack_state.write().await;
@@ -454,7 +453,9 @@ impl<S: PrmScorer + Send + Sync> PrmGate<S> {
                 let mut state = self.backtrack_state.write().await;
                 let session_state = state.entry(session_key).or_default();
                 session_state.retry_count += 1;
-                session_state.failed_actions.push((action.to_string(), score.score));
+                session_state
+                    .failed_actions
+                    .push((action.to_string(), score.score));
                 session_state.last_score = Some(score.score);
             }
 
@@ -463,16 +464,17 @@ impl<S: PrmScorer + Send + Sync> PrmGate<S> {
                 self.stats.denied.fetch_add(1, Ordering::Relaxed);
                 return Ok(GateDecision::Deny {
                     score: score.score,
-                    reason: format!(
-                        "Backtracking limit exceeded after {} attempts",
-                        retry_count
+                    reason: format!("Backtracking limit exceeded after {} attempts", retry_count),
+                    suggestion: Some(
+                        "Consider reformulating the task or seeking human guidance".to_string(),
                     ),
-                    suggestion: Some("Consider reformulating the task or seeking human guidance".to_string()),
                 });
             }
 
             // Generate alternative suggestion
-            let alternative = self.suggest_alternative(thought, action, &score, context).await;
+            let alternative = self
+                .suggest_alternative(thought, action, &score, context)
+                .await;
 
             GateDecision::Backtrack {
                 score: score.score,
@@ -518,9 +520,9 @@ impl<S: PrmScorer + Send + Sync> PrmGate<S> {
     ) -> Option<AlternativeAction> {
         // Generate alternative based on the score feedback
         // In a real implementation, this would use the LLM to propose alternatives
-        
+
         let is_high_risk = self.is_high_risk_action(original_action);
-        
+
         if is_high_risk {
             // For high-risk actions, suggest a read-only alternative
             Some(AlternativeAction {
@@ -528,7 +530,13 @@ impl<S: PrmScorer + Send + Sync> PrmGate<S> {
                     "Instead of {}, let me first verify the current state",
                     original_thought
                 ),
-                action: format!("read_{}", original_action.replace("write", "").replace("delete", "").replace("modify", "")),
+                action: format!(
+                    "read_{}",
+                    original_action
+                        .replace("write", "")
+                        .replace("delete", "")
+                        .replace("modify", "")
+                ),
                 expected_score: 0.8,
                 generation_method: "high_risk_mitigation".to_string(),
             })
@@ -623,7 +631,7 @@ impl<S: PrmScorer + Send + Sync> PrmGate<S> {
 
         for (idx, (thought, action)) in steps.iter().enumerate() {
             let decision = self.evaluate(thought, action, context).await?;
-            
+
             if !decision.is_allowed() {
                 all_allowed = false;
                 if first_denial_idx.is_none() {
@@ -693,7 +701,10 @@ mod tests {
         let gate = PrmGate::new(config, scorer);
 
         let context = GateContext::new("test-agent", "test task");
-        let decision = gate.evaluate("good thought", "read", &context).await.unwrap();
+        let decision = gate
+            .evaluate("good thought", "read", &context)
+            .await
+            .unwrap();
 
         assert!(decision.is_allowed());
         match decision {
@@ -709,7 +720,10 @@ mod tests {
         let gate = PrmGate::new(config, scorer);
 
         let context = GateContext::new("test-agent", "test task");
-        let decision = gate.evaluate("poor thought", "delete", &context).await.unwrap();
+        let decision = gate
+            .evaluate("poor thought", "delete", &context)
+            .await
+            .unwrap();
 
         assert!(!decision.is_allowed());
         match decision {
@@ -725,10 +739,15 @@ mod tests {
         let gate = PrmGate::new(config, scorer);
 
         let context = GateContext::new("test-agent", "test task");
-        let decision = gate.evaluate("mediocre thought", "read", &context).await.unwrap();
+        let decision = gate
+            .evaluate("mediocre thought", "read", &context)
+            .await
+            .unwrap();
 
         match decision {
-            GateDecision::Backtrack { score, alternative, .. } => {
+            GateDecision::Backtrack {
+                score, alternative, ..
+            } => {
                 assert!(score < 0.7);
                 assert!(alternative.is_some());
             }
@@ -743,7 +762,7 @@ mod tests {
         let gate = PrmGate::new(config, scorer);
 
         let context = GateContext::new("test-agent", "test task");
-        
+
         // 0.8 is enough for read but not for delete (high-risk)
         let read_decision = gate.evaluate("thought", "read", &context).await.unwrap();
         let delete_decision = gate.evaluate("thought", "delete", &context).await.unwrap();
@@ -759,7 +778,10 @@ mod tests {
         let gate = PrmGate::new(config, scorer);
 
         let context = GateContext::new("test-agent", "test task");
-        let decision = gate.evaluate("any thought", "any action", &context).await.unwrap();
+        let decision = gate
+            .evaluate("any thought", "any action", &context)
+            .await
+            .unwrap();
 
         assert!(matches!(decision, GateDecision::Bypassed));
     }
@@ -770,8 +792,7 @@ mod tests {
         let config = GateConfig::default().with_max_retries(2);
         let gate = PrmGate::new(config, scorer);
 
-        let context = GateContext::new("test-agent", "test task")
-            .with_session("test-session");
+        let context = GateContext::new("test-agent", "test task").with_session("test-session");
 
         // First two attempts should backtrack
         for _ in 0..2 {
@@ -802,14 +823,14 @@ mod tests {
     #[test]
     fn test_gate_stats() {
         let stats = GateStats::default();
-        
+
         stats.total_evaluations.fetch_add(10, Ordering::Relaxed);
         stats.allowed.fetch_add(7, Ordering::Relaxed);
         stats.denied.fetch_add(2, Ordering::Relaxed);
         stats.backtracked.fetch_add(1, Ordering::Relaxed);
 
         assert_eq!(stats.allow_rate(), 0.7);
-        
+
         let summary = stats.summary();
         assert_eq!(summary["total_evaluations"], 10);
         assert_eq!(summary["allowed"], 7);

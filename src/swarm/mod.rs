@@ -52,11 +52,11 @@ pub use router::{
 pub use messages::SwarmMessage;
 
 // Consensus exports - only export types that exist
-pub use consensus::{ConsensusMechanism, ConsensusError};
+pub use consensus::{ConsensusError, ConsensusMechanism};
 
 // Sycophancy exports
 pub use sycophancy::{
-    DetectorConfig, DetectorStats, RecommendedAction, Recommendation, RiskIndicator,
+    DetectorConfig, DetectorStats, Recommendation, RecommendedAction, RiskIndicator,
     RiskIndicatorType, SessionData, SycophancyAnalysis, SycophancyDetector, VoteRecord,
 };
 

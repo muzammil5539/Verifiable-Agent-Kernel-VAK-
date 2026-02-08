@@ -9,7 +9,6 @@
 pub mod skill_sign;
 
 pub use skill_sign::{
-    SigningKeypair, SkillSigner, SkillVerifier, SignedSkillManifest, SkillSignature,
-    VerificationResult, SigningError,
-    cmd_keygen, cmd_sign, cmd_verify, cmd_info,
+    cmd_info, cmd_keygen, cmd_sign, cmd_verify, SignedSkillManifest, SigningError, SigningKeypair,
+    SkillSignature, SkillSigner, SkillVerifier, VerificationResult,
 };

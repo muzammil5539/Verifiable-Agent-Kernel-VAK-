@@ -402,7 +402,7 @@ impl<'a> MigrationRunner<'a> {
     /// Create a new migration runner
     pub fn new(conn: &'a Connection) -> Result<Self, MigrationError> {
         let migrations = get_all_migrations();
-        
+
         // Ensure schema_migrations table exists (bootstrap)
         conn.execute_batch(
             r#"
@@ -422,11 +422,9 @@ impl<'a> MigrationRunner<'a> {
     pub fn current_version(&self) -> Result<u32, MigrationError> {
         let result: Option<u32> = self
             .conn
-            .query_row(
-                "SELECT MAX(version) FROM schema_migrations",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
             .ok()
             .flatten();
 
@@ -527,11 +525,7 @@ impl<'a> MigrationRunner<'a> {
             return Err(MigrationError::NotFound(version));
         }
 
-        tracing::info!(
-            "Rolling back migration {}: {}",
-            version,
-            migration.name
-        );
+        tracing::info!("Rolling back migration {}: {}", version, migration.name);
 
         // Run rollback
         self.conn
@@ -567,7 +561,7 @@ impl<'a> MigrationRunner<'a> {
     /// Get migration status
     pub fn status(&self) -> Result<Vec<(Migration, MigrationStatus)>, MigrationError> {
         let applied = self.get_applied_versions()?;
-        
+
         Ok(self
             .migrations
             .iter()
@@ -598,6 +592,7 @@ fn calculate_checksum(sql: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
     use tempfile::tempdir;
 
     fn setup_test_db() -> Connection {
@@ -687,7 +682,7 @@ mod tests {
 
         let pending = runner.pending().unwrap();
         let total_migrations = get_all_migrations().len();
-        
+
         // Initially all migrations are pending (minus bootstrap)
         assert_eq!(pending.len(), total_migrations);
     }

@@ -327,7 +327,7 @@ impl FlightEvent {
     /// Calculate and set the hash for this event
     pub fn compute_hash(&mut self, prev_hash: &str) {
         self.prev_hash = prev_hash.to_string();
-        
+
         // Hash the event content (excluding hash fields)
         let content = format!(
             "{}:{}:{}:{}:{}:{:?}:{:?}:{:?}:{:?}:{}",
@@ -416,17 +416,17 @@ pub struct FlightRecorder {
 impl FlightRecorder {
     /// Create a new flight recorder
     pub fn new(config: RecorderConfig) -> Self {
-        let file_handle = config.storage_path.as_ref().map(|path| {
-            // Ensure directory exists
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).ok();
-            }
-            OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-                .ok()
-        }).flatten();
+        let file_handle = config
+            .storage_path
+            .as_ref()
+            .map(|path| {
+                // Ensure directory exists
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).ok();
+                }
+                OpenOptions::new().create(true).append(true).open(path).ok()
+            })
+            .flatten();
 
         Self {
             config,
@@ -447,7 +447,7 @@ impl FlightRecorder {
     /// Start a new trace
     pub fn start_trace(&self, agent_id: &str) -> String {
         let trace_id = Uuid::new_v4().to_string();
-        
+
         {
             let mut current = self.current_trace_id.write().unwrap();
             *current = Some(trace_id.clone());
@@ -490,18 +490,20 @@ impl FlightRecorder {
         }
 
         // Record span start event
-        let trace_id = self.get_current_trace_id().unwrap_or_else(|| "default".to_string());
-        let mut event = FlightEvent::new(&trace_id, EventType::SpanStart, agent_id)
-            .with_span(span_id);
-        
+        let trace_id = self
+            .get_current_trace_id()
+            .unwrap_or_else(|| "default".to_string());
+        let mut event =
+            FlightEvent::new(&trace_id, EventType::SpanStart, agent_id).with_span(span_id);
+
         if let Some(parent) = parent_span_id {
             event = event.with_parent_span(parent);
         }
-        
+
         if self.config.shadow_mode {
             event = event.as_shadow();
         }
-        
+
         self.record_event(event);
     }
 
@@ -509,21 +511,25 @@ impl FlightRecorder {
     pub fn end_span(&self, span_id: &str, agent_id: &str) {
         let duration_us = {
             let mut spans = self.active_spans.write().unwrap();
-            spans.remove(span_id).map(|start| start.elapsed().as_micros() as u64)
+            spans
+                .remove(span_id)
+                .map(|start| start.elapsed().as_micros() as u64)
         };
 
-        let trace_id = self.get_current_trace_id().unwrap_or_else(|| "default".to_string());
-        let mut event = FlightEvent::new(&trace_id, EventType::SpanEnd, agent_id)
-            .with_span(span_id);
-        
+        let trace_id = self
+            .get_current_trace_id()
+            .unwrap_or_else(|| "default".to_string());
+        let mut event =
+            FlightEvent::new(&trace_id, EventType::SpanEnd, agent_id).with_span(span_id);
+
         if let Some(dur) = duration_us {
             event = event.with_duration(dur);
         }
-        
+
         if self.config.shadow_mode {
             event = event.as_shadow();
         }
-        
+
         self.record_event(event);
     }
 
@@ -539,7 +545,9 @@ impl FlightRecorder {
             return;
         }
 
-        let trace_id = self.get_current_trace_id().unwrap_or_else(|| "default".to_string());
+        let trace_id = self
+            .get_current_trace_id()
+            .unwrap_or_else(|| "default".to_string());
         let mut event = FlightEvent::new(&trace_id, EventType::Request, agent_id)
             .with_action(action)
             .with_resource(resource);
@@ -572,7 +580,9 @@ impl FlightRecorder {
             return;
         }
 
-        let trace_id = self.get_current_trace_id().unwrap_or_else(|| "default".to_string());
+        let trace_id = self
+            .get_current_trace_id()
+            .unwrap_or_else(|| "default".to_string());
         let mut event = FlightEvent::new(&trace_id, EventType::Response, agent_id)
             .with_action(action)
             .with_decision(if success { "success" } else { "failure" });
@@ -605,7 +615,9 @@ impl FlightRecorder {
             return;
         }
 
-        let trace_id = self.get_current_trace_id().unwrap_or_else(|| "default".to_string());
+        let trace_id = self
+            .get_current_trace_id()
+            .unwrap_or_else(|| "default".to_string());
         let mut event = FlightEvent::new(&trace_id, EventType::PolicyEvaluation, agent_id)
             .with_decision(decision)
             .with_duration(evaluation_time_us);
@@ -636,7 +648,9 @@ impl FlightRecorder {
             return;
         }
 
-        let trace_id = self.get_current_trace_id().unwrap_or_else(|| "default".to_string());
+        let trace_id = self
+            .get_current_trace_id()
+            .unwrap_or_else(|| "default".to_string());
         let mut event = FlightEvent::new(&trace_id, EventType::ToolExecution, agent_id)
             .with_action(tool_name)
             .with_decision(if success { "success" } else { "failure" })
@@ -654,10 +668,17 @@ impl FlightRecorder {
     }
 
     /// Record an error event
-    pub fn record_error(&self, agent_id: &str, error_message: &str, context: Option<serde_json::Value>) {
-        let trace_id = self.get_current_trace_id().unwrap_or_else(|| "default".to_string());
-        let mut event = FlightEvent::new(&trace_id, EventType::Error, agent_id)
-            .with_error(error_message);
+    pub fn record_error(
+        &self,
+        agent_id: &str,
+        error_message: &str,
+        context: Option<serde_json::Value>,
+    ) {
+        let trace_id = self
+            .get_current_trace_id()
+            .unwrap_or_else(|| "default".to_string());
+        let mut event =
+            FlightEvent::new(&trace_id, EventType::Error, agent_id).with_error(error_message);
 
         if let Some(ctx) = context {
             event = event.with_metadata(ctx);
@@ -676,7 +697,7 @@ impl FlightRecorder {
         if self.config.enable_chain_hashing {
             let prev_hash = self.last_hash.read().unwrap().clone();
             event.compute_hash(&prev_hash);
-            
+
             {
                 let mut last = self.last_hash.write().unwrap();
                 *last = event.hash.clone();
@@ -802,7 +823,7 @@ impl FlightRecorder {
         let mut events = self.events.write().unwrap();
         events.clear();
         self.event_count.store(0, Ordering::Relaxed);
-        
+
         let mut last_hash = self.last_hash.write().unwrap();
         *last_hash = "genesis".to_string();
     }
@@ -813,7 +834,12 @@ impl FlightRecorder {
             serde_json::Value::Object(mut map) => {
                 for (key, val) in map.clone() {
                     let key_lower = key.to_lowercase();
-                    if self.config.sensitive_patterns.iter().any(|p| key_lower.contains(p)) {
+                    if self
+                        .config
+                        .sensitive_patterns
+                        .iter()
+                        .any(|p| key_lower.contains(p))
+                    {
                         map.insert(key, serde_json::Value::String("[REDACTED]".to_string()));
                     } else {
                         map.insert(key, self.redact_sensitive_fields(val));
@@ -821,13 +847,11 @@ impl FlightRecorder {
                 }
                 serde_json::Value::Object(map)
             }
-            serde_json::Value::Array(arr) => {
-                serde_json::Value::Array(
-                    arr.into_iter()
-                        .map(|v| self.redact_sensitive_fields(v))
-                        .collect(),
-                )
-            }
+            serde_json::Value::Array(arr) => serde_json::Value::Array(
+                arr.into_iter()
+                    .map(|v| self.redact_sensitive_fields(v))
+                    .collect(),
+            ),
             other => other,
         }
     }
@@ -892,11 +916,7 @@ impl ReplayEngine {
 
     /// Get all unique trace IDs
     pub fn trace_ids(&self) -> Vec<String> {
-        let mut ids: Vec<String> = self
-            .events
-            .iter()
-            .map(|e| e.trace_id.clone())
-            .collect();
+        let mut ids: Vec<String> = self.events.iter().map(|e| e.trace_id.clone()).collect();
         ids.sort();
         ids.dedup();
         ids
@@ -923,10 +943,10 @@ impl ReplayEngine {
     /// Get summary statistics
     pub fn summary(&self) -> ReplaySummary {
         let mut summary = ReplaySummary::default();
-        
+
         for event in &self.events {
             summary.total_events += 1;
-            
+
             if event.shadow_mode {
                 summary.shadow_events += 1;
             }
@@ -978,11 +998,11 @@ mod tests {
         let recorder = FlightRecorder::new(config);
 
         let trace_id = recorder.start_trace("test-agent");
-        
+
         recorder.record_request("test-agent", "read", "/data/file.txt", None);
         recorder.record_policy_decision("test-agent", "allow", Some("rule-1"), 100);
         recorder.record_response("test-agent", "read", true, None);
-        
+
         let receipt = recorder.end_trace("test-agent").unwrap();
 
         assert_eq!(receipt.trace_id, trace_id);
@@ -998,7 +1018,7 @@ mod tests {
 
         let trace_id = recorder.start_trace("test-agent");
         recorder.record_request("test-agent", "write", "/data/file.txt", None);
-        
+
         let events = recorder.get_trace_events(&trace_id);
         assert!(events.iter().all(|e| e.shadow_mode));
     }
@@ -1035,7 +1055,8 @@ mod tests {
         recorder.record_request("test-agent", "login", "/auth", Some(input));
 
         let events = recorder.events.read().unwrap();
-        let request = events.iter()
+        let request = events
+            .iter()
             .find(|e| matches!(e.event_type, EventType::Request))
             .unwrap();
 
@@ -1071,15 +1092,16 @@ mod tests {
         recorder.start_trace("agent-1");
         recorder.start_span("span-1", None, "agent-1");
         recorder.start_span("span-2", Some("span-1"), "agent-1");
-        
+
         std::thread::sleep(std::time::Duration::from_millis(10));
-        
+
         recorder.end_span("span-2", "agent-1");
         recorder.end_span("span-1", "agent-1");
         recorder.end_trace("agent-1");
 
         let events = recorder.events.read().unwrap();
-        let span_ends: Vec<_> = events.iter()
+        let span_ends: Vec<_> = events
+            .iter()
             .filter(|e| matches!(e.event_type, EventType::SpanEnd))
             .collect();
 

@@ -20,9 +20,8 @@ pub mod hot_reload;
 
 // Re-export Cedar enforcer types (POL-001, POL-003)
 pub use enforcer::{
-    Action, CedarEnforcer, CedarRule, Decision, EnforcerConfig, EnforcerError,
-    EnforcerResult, PolicySet, Principal, Resource,
-    forbid_rule, permit_rule,
+    forbid_rule, permit_rule, Action, CedarEnforcer, CedarRule, Decision, EnforcerConfig,
+    EnforcerError, EnforcerResult, PolicySet, Principal, Resource,
 };
 // Rename to avoid conflict with existing PolicyContext
 pub use enforcer::PolicyContext as CedarContext;
@@ -35,21 +34,21 @@ pub use context::{
 
 // Re-export hot-reload types (POL-006)
 pub use hot_reload::{
-    HotReloadablePolicyEngine, HotReloadConfig, HotReloadError, HotReloadResult,
-    HotReloadMetrics, PolicySnapshot, PolicyVersion, HotReloadDecision,
+    HotReloadConfig, HotReloadDecision, HotReloadError, HotReloadMetrics, HotReloadResult,
+    HotReloadablePolicyEngine, PolicySnapshot, PolicyVersion,
 };
 
 // Re-export context integration types (POL-005 complete)
 pub use context_integration::{
-    ContextSnapshot, EnrichedDecision, IntegratedPolicyEngine, IntegrationConfig,
-    IntegrationError, IntegrationResult, RiskAssessment, RiskFactor,
+    ContextSnapshot, EnrichedDecision, IntegratedPolicyEngine, IntegrationConfig, IntegrationError,
+    IntegrationResult, RiskAssessment, RiskFactor,
 };
 
 // Re-export analyzer types (POL-008)
 pub use analyzer::{
-    AnalysisReport, AnalysisWarning, AnalyzerConfig, AnalyzerError, AnalyzerResult,
-    CoverageReport, InvariantCondition, InvariantSeverity, PolicyAnalyzer, PolicyConflict,
-    RedundantRule, SafetyInvariant, ViolationDetails,
+    AnalysisReport, AnalysisWarning, AnalyzerConfig, AnalyzerError, AnalyzerResult, CoverageReport,
+    InvariantCondition, InvariantSeverity, PolicyAnalyzer, PolicyConflict, RedundantRule,
+    SafetyInvariant, ViolationDetails,
 };
 
 use serde::{Deserialize, Serialize};
@@ -257,17 +256,20 @@ impl RateLimiter {
             return Ok(());
         }
 
-        let mut buckets = self.buckets.lock().map_err(|_| PolicyError::RateLimitError {
-            agent_id: agent_id.to_string(),
-            reason: "Failed to acquire rate limiter lock".to_string(),
-        })?;
+        let mut buckets = self
+            .buckets
+            .lock()
+            .map_err(|_| PolicyError::RateLimitError {
+                agent_id: agent_id.to_string(),
+                reason: "Failed to acquire rate limiter lock".to_string(),
+            })?;
 
-        let bucket = buckets
-            .entry(agent_id.to_string())
-            .or_insert_with(|| TokenBucket::new(
+        let bucket = buckets.entry(agent_id.to_string()).or_insert_with(|| {
+            TokenBucket::new(
                 self.config.per_agent_per_second as f64,
                 self.config.burst_size as f64,
-            ));
+            )
+        });
 
         if bucket.try_consume() {
             Ok(())
@@ -363,15 +365,19 @@ impl PolicyEngine {
         let mut warnings = Vec::new();
 
         if self.rules.is_empty() {
-            warnings.push("No policies loaded - all actions will be denied (default deny)".to_string());
+            warnings
+                .push("No policies loaded - all actions will be denied (default deny)".to_string());
         } else if !self.has_allow_rules() {
             warnings.push("No Allow policies found - all actions will be denied".to_string());
         }
 
         // Check for overly permissive rules
         for rule in &self.rules {
-            if rule.resource_pattern == "*" && rule.action_pattern == "*" 
-                && rule.effect == PolicyEffect::Allow && rule.conditions.is_empty() {
+            if rule.resource_pattern == "*"
+                && rule.action_pattern == "*"
+                && rule.effect == PolicyEffect::Allow
+                && rule.conditions.is_empty()
+            {
                 warnings.push(format!(
                     "Rule '{}' allows all actions on all resources with no conditions (overly permissive)",
                     rule.id
@@ -679,11 +685,7 @@ impl std::fmt::Display for PolicyError {
                 )
             }
             PolicyError::RateLimitError { agent_id, reason } => {
-                write!(
-                    f,
-                    "Rate limiter error for agent '{}': {}",
-                    agent_id, reason
-                )
+                write!(f, "Rate limiter error for agent '{}': {}", agent_id, reason)
             }
         }
     }
@@ -848,9 +850,13 @@ mod tests {
         let ctx = test_context();
 
         // First two requests should succeed (burst size = 2)
-        assert!(engine.evaluate_with_rate_limit("test", "read", &ctx).is_ok());
-        assert!(engine.evaluate_with_rate_limit("test", "read", &ctx).is_ok());
-        
+        assert!(engine
+            .evaluate_with_rate_limit("test", "read", &ctx)
+            .is_ok());
+        assert!(engine
+            .evaluate_with_rate_limit("test", "read", &ctx)
+            .is_ok());
+
         // Third request should be rate limited
         let result = engine.evaluate_with_rate_limit("test", "read", &ctx);
         assert!(matches!(result, Err(PolicyError::RateLimitExceeded { .. })));
@@ -879,14 +885,20 @@ mod tests {
         };
 
         // First request from agent-001 succeeds
-        assert!(engine.evaluate_with_rate_limit("test", "read", &ctx1).is_ok());
-        
+        assert!(engine
+            .evaluate_with_rate_limit("test", "read", &ctx1)
+            .is_ok());
+
         // First request from agent-002 also succeeds (different agent)
-        assert!(engine.evaluate_with_rate_limit("test", "read", &ctx2).is_ok());
-        
+        assert!(engine
+            .evaluate_with_rate_limit("test", "read", &ctx2)
+            .is_ok());
+
         // Second request from agent-001 should be rate limited
         let result = engine.evaluate_with_rate_limit("test", "read", &ctx1);
-        assert!(matches!(result, Err(PolicyError::RateLimitExceeded { agent_id, .. }) if agent_id == "agent-001"));
+        assert!(
+            matches!(result, Err(PolicyError::RateLimitExceeded { agent_id, .. }) if agent_id == "agent-001")
+        );
     }
 
     // Issue #19: Default deny policy validation tests

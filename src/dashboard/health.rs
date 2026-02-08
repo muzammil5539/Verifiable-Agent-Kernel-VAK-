@@ -209,18 +209,12 @@ impl HealthChecker {
         F: Fn() -> ComponentHealth + Send + Sync + 'static,
     {
         let name = name.into();
-        self.checks
-            .write()
-            .unwrap()
-            .insert(name, Box::new(check));
+        self.checks.write().unwrap().insert(name, Box::new(check));
     }
 
     /// Register a component as required for readiness
     pub fn require_for_ready(&self, component: impl Into<String>) {
-        self.ready_checks
-            .write()
-            .unwrap()
-            .push(component.into());
+        self.ready_checks.write().unwrap().push(component.into());
     }
 
     /// Mark the system as ready
@@ -246,7 +240,7 @@ impl HealthChecker {
 
         for (name, check_fn) in checks.iter() {
             let component_health = check_fn();
-            
+
             // Update overall status based on component health
             match component_health.status {
                 HealthStatus::Unhealthy => {
@@ -312,10 +306,7 @@ impl HealthChecker {
         } else {
             ReadinessResponse {
                 status: ReadinessStatus::NotReady,
-                reason: Some(format!(
-                    "Components not ready: {}",
-                    not_ready.join(", ")
-                )),
+                reason: Some(format!("Components not ready: {}", not_ready.join(", "))),
                 not_ready_components: not_ready,
                 timestamp: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -349,9 +340,7 @@ pub fn create_default_checks(checker: &HealthChecker) {
     });
 
     // Audit logger check
-    checker.register_check("audit_logger", || {
-        ComponentHealth::healthy("audit_logger")
-    });
+    checker.register_check("audit_logger", || ComponentHealth::healthy("audit_logger"));
 
     // Memory system check
     checker.register_check("memory_system", || {
@@ -359,9 +348,7 @@ pub fn create_default_checks(checker: &HealthChecker) {
     });
 
     // WASM sandbox check
-    checker.register_check("wasm_sandbox", || {
-        ComponentHealth::healthy("wasm_sandbox")
-    });
+    checker.register_check("wasm_sandbox", || ComponentHealth::healthy("wasm_sandbox"));
 
     // Mark critical components as required for readiness
     checker.require_for_ready("policy_engine");
@@ -414,14 +401,10 @@ mod tests {
     #[test]
     fn test_health_checker_basic() {
         let checker = HealthChecker::new();
-        
-        checker.register_check("component_a", || {
-            ComponentHealth::healthy("component_a")
-        });
-        
-        checker.register_check("component_b", || {
-            ComponentHealth::healthy("component_b")
-        });
+
+        checker.register_check("component_a", || ComponentHealth::healthy("component_a"));
+
+        checker.register_check("component_b", || ComponentHealth::healthy("component_b"));
 
         let health = checker.check_health();
         assert_eq!(health.status, HealthStatus::Healthy);
@@ -431,14 +414,10 @@ mod tests {
     #[test]
     fn test_health_checker_degraded() {
         let checker = HealthChecker::new();
-        
-        checker.register_check("healthy", || {
-            ComponentHealth::healthy("healthy")
-        });
-        
-        checker.register_check("degraded", || {
-            ComponentHealth::degraded("degraded", "slow")
-        });
+
+        checker.register_check("healthy", || ComponentHealth::healthy("healthy"));
+
+        checker.register_check("degraded", || ComponentHealth::degraded("degraded", "slow"));
 
         let health = checker.check_health();
         assert_eq!(health.status, HealthStatus::Degraded);
@@ -447,11 +426,9 @@ mod tests {
     #[test]
     fn test_health_checker_unhealthy() {
         let checker = HealthChecker::new();
-        
-        checker.register_check("healthy", || {
-            ComponentHealth::healthy("healthy")
-        });
-        
+
+        checker.register_check("healthy", || ComponentHealth::healthy("healthy"));
+
         checker.register_check("unhealthy", || {
             ComponentHealth::unhealthy("unhealthy", "down")
         });
@@ -493,7 +470,9 @@ mod tests {
 
         let readiness = checker.check_readiness();
         assert_eq!(readiness.status, ReadinessStatus::NotReady);
-        assert!(readiness.not_ready_components.contains(&"policy_engine".to_string()));
+        assert!(readiness
+            .not_ready_components
+            .contains(&"policy_engine".to_string()));
     }
 
     #[test]
@@ -513,10 +492,10 @@ mod tests {
     fn test_health_response_json() {
         let checker = HealthChecker::new();
         checker.register_check("test", || ComponentHealth::healthy("test"));
-        
+
         let health = checker.check_health();
         let json = health.to_json();
-        
+
         assert!(json.contains("\"status\":"));
         assert!(json.contains("\"components\":"));
         assert!(json.contains("\"uptime_seconds\":"));

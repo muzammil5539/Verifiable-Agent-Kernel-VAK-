@@ -93,17 +93,27 @@ impl PatternType {
         match self {
             PatternType::OpenAiKey => r"sk-[a-zA-Z0-9]{20,}",
             PatternType::AnthropicKey => r"sk-ant-[a-zA-Z0-9-]{20,}",
-            PatternType::GenericApiKey => r"(?i)(api[_-]?key|apikey)\s*[=:]\s*['\x22]?([a-zA-Z0-9_-]{16,})['\x22]?",
+            PatternType::GenericApiKey => {
+                r"(?i)(api[_-]?key|apikey)\s*[=:]\s*['\x22]?([a-zA-Z0-9_-]{16,})['\x22]?"
+            }
             PatternType::AwsAccessKey => r"AKIA[0-9A-Z]{16}",
-            PatternType::AwsSecretKey => r"(?i)(aws[_-]?secret[_-]?access[_-]?key)\s*[=:]\s*['\x22]?([a-zA-Z0-9/+=]{40})['\x22]?",
+            PatternType::AwsSecretKey => {
+                r"(?i)(aws[_-]?secret[_-]?access[_-]?key)\s*[=:]\s*['\x22]?([a-zA-Z0-9/+=]{40})['\x22]?"
+            }
             PatternType::GitHubToken => r"(ghp|gho|ghu|ghs|ghr)_[a-zA-Z0-9]{36,}",
             PatternType::BearerToken => r"(?i)bearer\s+[a-zA-Z0-9_.~+/-]+=*",
-            PatternType::Password => r"(?i)(password|passwd|pwd)\s*[=:]\s*['\x22]?([^\s'\x22]{4,})['\x22]?",
+            PatternType::Password => {
+                r"(?i)(password|passwd|pwd)\s*[=:]\s*['\x22]?([^\s'\x22]{4,})['\x22]?"
+            }
             PatternType::PrivateKey => r"-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----",
             PatternType::JwtToken => r"eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*",
             PatternType::DatabaseUrl => r"(?i)(postgres|mysql|mongodb|redis)://[^\s]+",
-            PatternType::GenericSecret => r"(?i)(secret|token|credential)[_-]?\w*\s*[=:]\s*['\x22]?([a-zA-Z0-9_-]{8,})['\x22]?",
-            PatternType::CreditCard => r"\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b",
+            PatternType::GenericSecret => {
+                r"(?i)(secret|token|credential)[_-]?\w*\s*[=:]\s*['\x22]?([a-zA-Z0-9_-]{8,})['\x22]?"
+            }
+            PatternType::CreditCard => {
+                r"\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b"
+            }
             PatternType::Ssn => r"\b\d{3}-\d{2}-\d{4}\b",
             PatternType::Custom => "",
         }
@@ -376,9 +386,7 @@ impl SecretScrubber {
         }
 
         match value {
-            serde_json::Value::String(s) => {
-                serde_json::Value::String(self.scrub(s))
-            }
+            serde_json::Value::String(s) => serde_json::Value::String(self.scrub(s)),
             serde_json::Value::Object(map) => {
                 let scrubbed: serde_json::Map<String, serde_json::Value> = map
                     .iter()
@@ -432,9 +440,7 @@ impl SecretScrubber {
             "secret_key",
         ];
 
-        sensitive_keywords
-            .iter()
-            .any(|kw| key_lower.contains(kw))
+        sensitive_keywords.iter().any(|kw| key_lower.contains(kw))
     }
 
     /// Check if text contains any secrets
@@ -550,12 +556,17 @@ mod tests {
 
         let detections = scrubber.detect(text);
         assert!(!detections.is_empty());
-        // Multiple patterns may match (e.g., GenericSecret matches "Token: ..."), 
+        // Multiple patterns may match (e.g., GenericSecret matches "Token: ..."),
         // so check that GitHubToken is among the detections
         assert!(
-            detections.iter().any(|d| d.pattern_type == PatternType::GitHubToken),
+            detections
+                .iter()
+                .any(|d| d.pattern_type == PatternType::GitHubToken),
             "Expected GitHubToken in detections: {:?}",
-            detections.iter().map(|d| &d.pattern_type).collect::<Vec<_>>()
+            detections
+                .iter()
+                .map(|d| &d.pattern_type)
+                .collect::<Vec<_>>()
         );
     }
 
@@ -579,9 +590,14 @@ mod tests {
         // Multiple patterns may match (e.g., GenericSecret matches "Token: ..."),
         // so check that JwtToken is among the detections
         assert!(
-            detections.iter().any(|d| d.pattern_type == PatternType::JwtToken),
+            detections
+                .iter()
+                .any(|d| d.pattern_type == PatternType::JwtToken),
             "Expected JwtToken in detections: {:?}",
-            detections.iter().map(|d| &d.pattern_type).collect::<Vec<_>>()
+            detections
+                .iter()
+                .map(|d| &d.pattern_type)
+                .collect::<Vec<_>>()
         );
     }
 

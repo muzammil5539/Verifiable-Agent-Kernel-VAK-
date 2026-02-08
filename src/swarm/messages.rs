@@ -47,7 +47,11 @@ pub enum SwarmMessageType {
 
 impl SwarmMessage {
     /// Create a new broadcast message
-    pub fn broadcast(from: SwarmAgentId, message_type: SwarmMessageType, payload: serde_json::Value) -> Self {
+    pub fn broadcast(
+        from: SwarmAgentId,
+        message_type: SwarmMessageType,
+        payload: serde_json::Value,
+    ) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             from,
@@ -59,7 +63,12 @@ impl SwarmMessage {
     }
 
     /// Create a directed message
-    pub fn directed(from: SwarmAgentId, to: SwarmAgentId, message_type: SwarmMessageType, payload: serde_json::Value) -> Self {
+    pub fn directed(
+        from: SwarmAgentId,
+        to: SwarmAgentId,
+        message_type: SwarmMessageType,
+        payload: serde_json::Value,
+    ) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             from,

@@ -383,7 +383,9 @@ impl McpServer {
     pub fn new(config: McpConfig) -> Self {
         let capabilities = ServerCapabilities {
             tools: if config.enable_tools {
-                Some(ToolCapabilities { list_changed: false })
+                Some(ToolCapabilities {
+                    list_changed: false,
+                })
             } else {
                 None
             },
@@ -396,7 +398,9 @@ impl McpServer {
                 None
             },
             prompts: if config.enable_prompts {
-                Some(PromptCapabilities { list_changed: false })
+                Some(PromptCapabilities {
+                    list_changed: false,
+                })
             } else {
                 None
             },
@@ -427,7 +431,12 @@ impl McpServer {
     }
 
     /// Register a simple tool
-    pub async fn register_simple_tool(&self, name: &str, description: &str, schema: serde_json::Value) {
+    pub async fn register_simple_tool(
+        &self,
+        name: &str,
+        description: &str,
+        schema: serde_json::Value,
+    ) {
         let tool = SimpleToolHandler {
             name: name.to_string(),
             description: description.to_string(),
@@ -667,8 +676,8 @@ impl ToolHandler for VerifyPlanToolHandler {
             agent_id: String,
         }
 
-        let params: VerifyPlanArgs = serde_json::from_value(args)
-            .map_err(|e| McpError::InvalidParams(e.to_string()))?;
+        let params: VerifyPlanArgs =
+            serde_json::from_value(args).map_err(|e| McpError::InvalidParams(e.to_string()))?;
 
         // This would integrate with the actual VAK reasoning engine
         let result = format!(
@@ -686,7 +695,8 @@ impl ToolHandler for VerifyPlanToolHandler {
     fn definition(&self) -> McpTool {
         McpTool {
             name: "verify_plan".to_string(),
-            description: "Verify an agent's proposed plan against safety rules and policies".to_string(),
+            description: "Verify an agent's proposed plan against safety rules and policies"
+                .to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -719,8 +729,8 @@ impl ToolHandler for ExecuteSkillToolHandler {
             input: serde_json::Value,
         }
 
-        let params: ExecuteSkillArgs = serde_json::from_value(args)
-            .map_err(|e| McpError::InvalidParams(e.to_string()))?;
+        let params: ExecuteSkillArgs =
+            serde_json::from_value(args).map_err(|e| McpError::InvalidParams(e.to_string()))?;
 
         // This would integrate with the actual VAK sandbox
         let result = format!(

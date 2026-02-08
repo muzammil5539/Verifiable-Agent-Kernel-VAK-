@@ -213,7 +213,7 @@ impl PreemptionBudget {
     pub fn record_consumption(&self, epochs: u64) {
         let new_consumed = self.consumed.fetch_add(epochs, Ordering::SeqCst) + epochs;
         let budget = self.total_budget.load(Ordering::SeqCst);
-        
+
         if new_consumed >= budget {
             self.exhausted.store(true, Ordering::SeqCst);
             warn!(

@@ -258,9 +258,12 @@ pub fn load_public_key(encoded: &str) -> Result<VerifyingKey, SigningError> {
         )));
     }
 
-    VerifyingKey::from_bytes(bytes.as_slice().try_into().map_err(|_| {
-        SigningError::InvalidKeyFormat("Invalid public key bytes".to_string())
-    })?)
+    VerifyingKey::from_bytes(
+        bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| SigningError::InvalidKeyFormat("Invalid public key bytes".to_string()))?,
+    )
     .map_err(|e| SigningError::InvalidKeyFormat(format!("Invalid public key: {}", e)))
 }
 
@@ -357,13 +360,12 @@ impl SkillSigner {
         let signed_manifest = self.sign_skill(&wasm_path, &manifest_path)?;
 
         // Write signed manifest
-        let yaml = serde_yaml::to_string(&signed_manifest)
-            .map_err(|e| SigningError::ManifestError(format!("Failed to serialize manifest: {}", e)))?;
+        let yaml = serde_yaml::to_string(&signed_manifest).map_err(|e| {
+            SigningError::ManifestError(format!("Failed to serialize manifest: {}", e))
+        })?;
 
-        let signed_path = manifest_path
-            .as_ref()
-            .with_extension("signed.yaml");
-        
+        let signed_path = manifest_path.as_ref().with_extension("signed.yaml");
+
         fs::write(&signed_path, yaml)?;
 
         Ok(signed_path)
@@ -441,16 +443,16 @@ impl SkillVerifier {
             .decode(&sig_info.signature)
             .map_err(|_e| SigningError::InvalidSignature)?;
 
-        let signature = Signature::from_bytes(signature_bytes.as_slice().try_into().map_err(
-            |_| SigningError::InvalidSignature,
-        )?);
+        let signature = Signature::from_bytes(
+            signature_bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| SigningError::InvalidSignature)?,
+        );
 
         // Create signable content
-        let signable_content = format!(
-            "{}:{}:{}",
-            manifest.name, manifest.version, wasm_hash
-        )
-        .into_bytes();
+        let signable_content =
+            format!("{}:{}:{}", manifest.name, manifest.version, wasm_hash).into_bytes();
 
         // Verify signature
         match verifying_key.verify(&signable_content, &signature) {
@@ -652,7 +654,7 @@ fn find_wasm_file(skill_dir: &Path) -> Result<PathBuf, SigningError> {
         .join("target")
         .join("wasm32-unknown-unknown")
         .join("release");
-    
+
     if release_path.exists() {
         for entry in fs::read_dir(&release_path)? {
             let entry = entry?;
@@ -696,11 +698,11 @@ mod tests {
     #[test]
     fn test_keypair_generation() {
         let keypair = SigningKeypair::generate();
-        
+
         // Keys should be proper length when Base64 decoded
         let private_decoded = BASE64.decode(keypair.private_key_base64()).unwrap();
         let public_decoded = BASE64.decode(keypair.public_key_base64()).unwrap();
-        
+
         assert_eq!(private_decoded.len(), SECRET_KEY_LENGTH);
         assert_eq!(public_decoded.len(), PUBLIC_KEY_LENGTH);
     }
@@ -738,7 +740,7 @@ mod tests {
         let pub_base64 = keypair.public_key_base64();
 
         let loaded_key = load_public_key(&pub_base64).unwrap();
-        
+
         // Verify loaded key works
         let content = b"test";
         let signature = keypair.sign(content);
@@ -749,14 +751,14 @@ mod tests {
     fn test_compute_hash() {
         let content = b"test content";
         let hash = SkillSigner::compute_hash(content);
-        
+
         // Should be hex-encoded SHA-256 (64 chars)
         assert_eq!(hash.len(), 64);
-        
+
         // Same content should produce same hash
         let hash2 = SkillSigner::compute_hash(content);
         assert_eq!(hash, hash2);
-        
+
         // Different content should produce different hash
         let hash3 = SkillSigner::compute_hash(b"different");
         assert_ne!(hash, hash3);

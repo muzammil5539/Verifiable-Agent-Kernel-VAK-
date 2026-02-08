@@ -84,7 +84,10 @@ pub enum Fact {
     InternalEndpoint(String),
 
     /// An agent has a specific capability
-    AgentCapability { agent_id: String, capability: String },
+    AgentCapability {
+        agent_id: String,
+        capability: String,
+    },
 
     /// An agent has a risk score (stored as integer basis points for Hash/Eq)
     AgentRiskScore { agent_id: String, score_bp: u32 },
@@ -103,7 +106,10 @@ pub enum Fact {
     },
 
     /// Custom fact with key-value
-    Custom { predicate: String, args: Vec<String> },
+    Custom {
+        predicate: String,
+        args: Vec<String>,
+    },
 }
 
 impl PartialEq for Fact {
@@ -114,18 +120,50 @@ impl PartialEq for Fact {
             (Fact::SystemPath(a), Fact::SystemPath(b)) => a == b,
             (Fact::ExternalEndpoint(a), Fact::ExternalEndpoint(b)) => a == b,
             (Fact::InternalEndpoint(a), Fact::InternalEndpoint(b)) => a == b,
-            (Fact::AgentCapability { agent_id: a1, capability: c1 }, 
-             Fact::AgentCapability { agent_id: a2, capability: c2 }) => a1 == a2 && c1 == c2,
-            (Fact::AgentRiskScore { agent_id: a1, score_bp: s1 }, 
-             Fact::AgentRiskScore { agent_id: a2, score_bp: s2 }) => a1 == a2 && s1 == s2,
+            (
+                Fact::AgentCapability {
+                    agent_id: a1,
+                    capability: c1,
+                },
+                Fact::AgentCapability {
+                    agent_id: a2,
+                    capability: c2,
+                },
+            ) => a1 == a2 && c1 == c2,
+            (
+                Fact::AgentRiskScore {
+                    agent_id: a1,
+                    score_bp: s1,
+                },
+                Fact::AgentRiskScore {
+                    agent_id: a2,
+                    score_bp: s2,
+                },
+            ) => a1 == a2 && s1 == s2,
             (Fact::AvailableTool(a), Fact::AvailableTool(b)) => a == b,
             (Fact::RestrictedTool(a), Fact::RestrictedTool(b)) => a == b,
-            (Fact::ProposedAction { action_type: a1, target: t1, agent_id: ag1 },
-             Fact::ProposedAction { action_type: a2, target: t2, agent_id: ag2 }) => {
-                a1 == a2 && t1 == t2 && ag1 == ag2
-            }
-            (Fact::Custom { predicate: p1, args: a1 }, 
-             Fact::Custom { predicate: p2, args: a2 }) => p1 == p2 && a1 == a2,
+            (
+                Fact::ProposedAction {
+                    action_type: a1,
+                    target: t1,
+                    agent_id: ag1,
+                },
+                Fact::ProposedAction {
+                    action_type: a2,
+                    target: t2,
+                    agent_id: ag2,
+                },
+            ) => a1 == a2 && t1 == t2 && ag1 == ag2,
+            (
+                Fact::Custom {
+                    predicate: p1,
+                    args: a1,
+                },
+                Fact::Custom {
+                    predicate: p2,
+                    args: a2,
+                },
+            ) => p1 == p2 && a1 == a2,
             _ => false,
         }
     }
@@ -142,7 +180,10 @@ impl std::hash::Hash for Fact {
             Fact::SystemPath(s) => s.hash(state),
             Fact::ExternalEndpoint(s) => s.hash(state),
             Fact::InternalEndpoint(s) => s.hash(state),
-            Fact::AgentCapability { agent_id, capability } => {
+            Fact::AgentCapability {
+                agent_id,
+                capability,
+            } => {
                 agent_id.hash(state);
                 capability.hash(state);
             }
@@ -152,7 +193,11 @@ impl std::hash::Hash for Fact {
             }
             Fact::AvailableTool(s) => s.hash(state),
             Fact::RestrictedTool(s) => s.hash(state),
-            Fact::ProposedAction { action_type, target, agent_id } => {
+            Fact::ProposedAction {
+                action_type,
+                target,
+                agent_id,
+            } => {
                 action_type.hash(state);
                 target.hash(state);
                 agent_id.hash(state);
@@ -269,10 +314,7 @@ pub enum SafetyVerdict {
     Violation(Vec<Violation>),
 
     /// Action requires additional review (warning)
-    Warning {
-        message: String,
-        risk_score: f64,
-    },
+    Warning { message: String, risk_score: f64 },
 
     /// Could not determine safety (fail-closed: treat as unsafe)
     Unknown(String),
@@ -431,7 +473,10 @@ impl SafetyEngine {
             "Cannot delete critical system files",
             vec!["delete_file".to_string(), "remove".to_string()],
             |engine, action, target, _agent| {
-                if engine.facts.contains(&Fact::CriticalFile(target.to_string())) {
+                if engine
+                    .facts
+                    .contains(&Fact::CriticalFile(target.to_string()))
+                {
                     Some(
                         Violation::new(
                             "RULE_001_CRITICAL_DELETE",
@@ -452,9 +497,16 @@ impl SafetyEngine {
         self.rules.push(SafetyRule::new(
             "RULE_002_CRITICAL_MODIFY",
             "Cannot modify critical system files",
-            vec!["write_file".to_string(), "modify".to_string(), "append".to_string()],
+            vec![
+                "write_file".to_string(),
+                "modify".to_string(),
+                "append".to_string(),
+            ],
             |engine, action, target, _agent| {
-                if engine.facts.contains(&Fact::CriticalFile(target.to_string())) {
+                if engine
+                    .facts
+                    .contains(&Fact::CriticalFile(target.to_string()))
+                {
                     Some(
                         Violation::new(
                             "RULE_002_CRITICAL_MODIFY",
@@ -477,7 +529,10 @@ impl SafetyEngine {
             "Cannot access sensitive files without proper capability",
             vec!["read_file".to_string(), "open".to_string()],
             |engine, action, target, _agent| {
-                if engine.facts.contains(&Fact::SensitiveFile(target.to_string())) {
+                if engine
+                    .facts
+                    .contains(&Fact::SensitiveFile(target.to_string()))
+                {
                     Some(
                         Violation::new(
                             "RULE_003_SENSITIVE_ACCESS",
@@ -500,7 +555,10 @@ impl SafetyEngine {
             "External network requests require validation",
             vec!["http_request".to_string(), "network_call".to_string()],
             |engine, action, target, _agent| {
-                if engine.facts.contains(&Fact::ExternalEndpoint(target.to_string())) {
+                if engine
+                    .facts
+                    .contains(&Fact::ExternalEndpoint(target.to_string()))
+                {
                     Some(
                         Violation::new(
                             "RULE_004_EXTERNAL_NETWORK",
@@ -523,7 +581,10 @@ impl SafetyEngine {
             "Cannot use restricted tools",
             vec!["execute_tool".to_string(), "call_tool".to_string()],
             |engine, action, target, _agent| {
-                if engine.facts.contains(&Fact::RestrictedTool(target.to_string())) {
+                if engine
+                    .facts
+                    .contains(&Fact::RestrictedTool(target.to_string()))
+                {
                     Some(
                         Violation::new(
                             "RULE_005_RESTRICTED_TOOL",
@@ -596,7 +657,11 @@ impl SafetyEngine {
                             target,
                         )
                         .with_severity(risk_score)
-                        .with_fact(format!("AgentRiskScore(\"{}\", {:.0})", agent, risk_score * 10000.0)),
+                        .with_fact(format!(
+                            "AgentRiskScore(\"{}\", {:.0})",
+                            agent,
+                            risk_score * 10000.0
+                        )),
                     );
                 }
                 None
@@ -608,16 +673,16 @@ impl SafetyEngine {
         self.rules.push(SafetyRule::new(
             "RULE_008_RISK_EXTERNAL_API",
             "Risk-based external API access control",
-            vec![
-                "http_request".to_string(),
-                "api_call".to_string(),
-            ],
+            vec!["http_request".to_string(), "api_call".to_string()],
             |engine, action, target, agent| {
                 // Only applies to external endpoints
-                if !engine.facts.contains(&Fact::ExternalEndpoint(target.to_string())) {
+                if !engine
+                    .facts
+                    .contains(&Fact::ExternalEndpoint(target.to_string()))
+                {
                     return None;
                 }
-                
+
                 let risk_score = engine.get_agent_risk_internal(agent);
                 // Lower threshold (0.5) for external APIs
                 if risk_score > 0.5 {
@@ -632,8 +697,12 @@ impl SafetyEngine {
                             target,
                         )
                         .with_severity((risk_score * 1.2).min(1.0))
-                        .with_fact(format!("ExternalEndpoint(\"{}\"), AgentRiskScore(\"{}\", {:.0})", 
-                            target, agent, risk_score * 10000.0)),
+                        .with_fact(format!(
+                            "ExternalEndpoint(\"{}\"), AgentRiskScore(\"{}\", {:.0})",
+                            target,
+                            agent,
+                            risk_score * 10000.0
+                        )),
                     );
                 }
                 None
@@ -657,7 +726,7 @@ impl SafetyEngine {
                     agent_id: agent.to_string(),
                     capability: "network".to_string(),
                 });
-                
+
                 if !has_capability {
                     return Some(
                         Violation::new(
@@ -681,7 +750,11 @@ impl SafetyEngine {
     /// Internal method to get agent risk score
     fn get_agent_risk_internal(&self, agent_id: &str) -> f64 {
         for fact in &self.facts {
-            if let Fact::AgentRiskScore { agent_id: id, score_bp } = fact {
+            if let Fact::AgentRiskScore {
+                agent_id: id,
+                score_bp,
+            } = fact
+            {
                 if id == agent_id {
                     return (*score_bp as f64) / 10000.0;
                 }
@@ -693,16 +766,23 @@ impl SafetyEngine {
     /// Add default critical file facts
     fn add_default_facts(&mut self) {
         // Critical system files (as per Gap Analysis example)
-        self.facts.insert(Fact::CriticalFile("/etc/shadow".to_string()));
-        self.facts.insert(Fact::CriticalFile("/etc/passwd".to_string()));
-        self.facts.insert(Fact::CriticalFile("/etc/hosts".to_string()));
-        self.facts.insert(Fact::CriticalFile("/etc/sudoers".to_string()));
+        self.facts
+            .insert(Fact::CriticalFile("/etc/shadow".to_string()));
+        self.facts
+            .insert(Fact::CriticalFile("/etc/passwd".to_string()));
+        self.facts
+            .insert(Fact::CriticalFile("/etc/hosts".to_string()));
+        self.facts
+            .insert(Fact::CriticalFile("/etc/sudoers".to_string()));
 
         // Sensitive files
         self.facts.insert(Fact::SensitiveFile(".env".to_string()));
-        self.facts.insert(Fact::SensitiveFile("secrets.json".to_string()));
-        self.facts.insert(Fact::SensitiveFile(".ssh/id_rsa".to_string()));
-        self.facts.insert(Fact::SensitiveFile(".aws/credentials".to_string()));
+        self.facts
+            .insert(Fact::SensitiveFile("secrets.json".to_string()));
+        self.facts
+            .insert(Fact::SensitiveFile(".ssh/id_rsa".to_string()));
+        self.facts
+            .insert(Fact::SensitiveFile(".aws/credentials".to_string()));
 
         // System paths
         self.facts.insert(Fact::SystemPath("/etc".to_string()));
@@ -712,7 +792,8 @@ impl SafetyEngine {
         self.facts.insert(Fact::SystemPath("/sbin".to_string()));
 
         // Restricted tools
-        self.facts.insert(Fact::RestrictedTool("rm -rf".to_string()));
+        self.facts
+            .insert(Fact::RestrictedTool("rm -rf".to_string()));
         self.facts.insert(Fact::RestrictedTool("dd".to_string()));
         self.facts.insert(Fact::RestrictedTool("mkfs".to_string()));
     }
@@ -796,7 +877,11 @@ impl SafetyEngine {
     /// Get agent risk score (NSR-004)
     fn get_agent_risk(&self, agent_id: &str) -> f64 {
         for fact in &self.facts {
-            if let Fact::AgentRiskScore { agent_id: id, score_bp } = fact {
+            if let Fact::AgentRiskScore {
+                agent_id: id,
+                score_bp,
+            } = fact
+            {
                 if id == agent_id {
                     return (*score_bp as f64) / 10000.0;
                 }
@@ -922,9 +1007,15 @@ mod tests {
             // /etc/shadow triggers multiple rules:
             // - RULE_001_CRITICAL_DELETE (critical file)
             // - RULE_006_SYSTEM_PATH (/etc is a system path)
-            assert!(violations.len() >= 1, "Expected at least 1 violation, got {}", violations.len());
             assert!(
-                violations.iter().any(|v| v.rule_id == "RULE_001_CRITICAL_DELETE"),
+                violations.len() >= 1,
+                "Expected at least 1 violation, got {}",
+                violations.len()
+            );
+            assert!(
+                violations
+                    .iter()
+                    .any(|v| v.rule_id == "RULE_001_CRITICAL_DELETE"),
                 "Expected RULE_001_CRITICAL_DELETE in violations"
             );
         }
@@ -977,11 +1068,8 @@ mod tests {
         engine.add_fact(Fact::agent_risk("risky-agent", 0.5));
 
         // Check action - should get warning
-        let verdict = engine.check_action_with_agent(
-            "read_file",
-            "/home/user/file.txt",
-            "risky-agent",
-        );
+        let verdict =
+            engine.check_action_with_agent("read_file", "/home/user/file.txt", "risky-agent");
 
         assert!(verdict.is_warning());
     }

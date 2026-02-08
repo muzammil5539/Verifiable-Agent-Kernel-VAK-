@@ -408,13 +408,18 @@ impl MerkleDag {
     }
 
     /// Merge two branches
-    pub fn merge(&self, content: &[u8], branch_a: &str, branch_b: &str) -> Result<ContentId, DagError> {
-        let head_a = self.head(branch_a).ok_or_else(|| {
-            DagError::NodeNotFound(format!("Branch {} not found", branch_a))
-        })?;
-        let head_b = self.head(branch_b).ok_or_else(|| {
-            DagError::NodeNotFound(format!("Branch {} not found", branch_b))
-        })?;
+    pub fn merge(
+        &self,
+        content: &[u8],
+        branch_a: &str,
+        branch_b: &str,
+    ) -> Result<ContentId, DagError> {
+        let head_a = self
+            .head(branch_a)
+            .ok_or_else(|| DagError::NodeNotFound(format!("Branch {} not found", branch_a)))?;
+        let head_b = self
+            .head(branch_b)
+            .ok_or_else(|| DagError::NodeNotFound(format!("Branch {} not found", branch_b)))?;
 
         let node = DagNode::merge(content, vec![head_a, head_b]);
         let id = node.id.clone();
@@ -715,7 +720,7 @@ impl MemorySnapshot {
     pub fn new(agent_id: impl Into<String>, state: Vec<u8>) -> Self {
         let id = ContentId::from_bytes(&state);
         let size = state.len();
-        
+
         Self {
             id,
             agent_id: agent_id.into(),
@@ -730,7 +735,7 @@ impl MemorySnapshot {
     /// Create a DAG node from this snapshot
     pub fn to_dag_node(&self, parent: Option<&ContentId>) -> DagNode {
         let content = serde_json::to_vec(self).unwrap_or_default();
-        
+
         match parent {
             Some(p) => DagNode::with_parent(&content, p).with_type(NodeType::Snapshot),
             None => DagNode::root(&content).with_type(NodeType::Snapshot),
@@ -800,7 +805,7 @@ mod tests {
         let id3 = dag.insert_with_parent(b"grandchild", &id2);
 
         let ancestry = dag.get_ancestry(&id3);
-        
+
         assert_eq!(ancestry.len(), 3);
         assert_eq!(ancestry[0], id3);
         assert_eq!(ancestry[1], id2);
@@ -896,7 +901,7 @@ mod tests {
     #[test]
     fn test_memory_snapshot() {
         let snapshot = MemorySnapshot::new("agent-1", b"memory state".to_vec());
-        
+
         let node = snapshot.to_dag_node(None);
         assert_eq!(node.node_type, NodeType::Snapshot);
 

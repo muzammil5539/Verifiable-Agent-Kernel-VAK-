@@ -205,7 +205,11 @@ impl StreamEvent {
 
     /// Create an alert event
     pub fn alert(alert: StreamAlert, sequence: u64) -> Self {
-        Self::new(StreamEventType::Alert, StreamPayload::Alert(alert), sequence)
+        Self::new(
+            StreamEventType::Alert,
+            StreamPayload::Alert(alert),
+            sequence,
+        )
     }
 
     /// Create an error event
@@ -391,9 +395,7 @@ impl StreamFilter {
         // Check payload-specific filters
         match &event.payload {
             StreamPayload::AuditEntry(entry) => self.matches_entry(entry),
-            StreamPayload::AuditBatch(entries) => {
-                entries.iter().any(|e| self.matches_entry(e))
-            }
+            StreamPayload::AuditBatch(entries) => entries.iter().any(|e| self.matches_entry(e)),
             StreamPayload::Alert(alert) => self.matches_alert(alert),
             _ => true,
         }
@@ -582,9 +584,10 @@ impl AuditStreamManager {
         filter: StreamFilter,
         name: Option<String>,
     ) -> Result<SubscriberId, AuditError> {
-        let mut subscribers = self.subscribers.write().map_err(|e| {
-            AuditError::BackendNotAvailable(format!("Lock error: {}", e))
-        })?;
+        let mut subscribers = self
+            .subscribers
+            .write()
+            .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
 
         // Check subscriber limit
         if subscribers.len() >= self.config.max_subscribers {
@@ -639,9 +642,10 @@ impl AuditStreamManager {
 
     /// Unsubscribe from the event stream
     pub fn unsubscribe(&self, subscriber_id: &SubscriberId) -> Result<(), AuditError> {
-        let mut subscribers = self.subscribers.write().map_err(|e| {
-            AuditError::BackendNotAvailable(format!("Lock error: {}", e))
-        })?;
+        let mut subscribers = self
+            .subscribers
+            .write()
+            .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
 
         if subscribers.remove(subscriber_id).is_some() {
             // Update stats
@@ -716,9 +720,10 @@ impl AuditStreamManager {
         self.add_to_recent_events(&event);
 
         // Get all subscribers
-        let subscribers = self.subscribers.read().map_err(|e| {
-            AuditError::BackendNotAvailable(format!("Lock error: {}", e))
-        })?;
+        let subscribers = self
+            .subscribers
+            .read()
+            .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
 
         let mut delivered = 0u64;
         let mut dropped = 0u64;
@@ -736,10 +741,7 @@ impl AuditStreamManager {
                 }
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     dropped += 1;
-                    tracing::warn!(
-                        "Subscriber {} channel full, dropping event",
-                        id
-                    );
+                    tracing::warn!("Subscriber {} channel full, dropping event", id);
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {
                     // Subscriber disconnected
@@ -795,7 +797,11 @@ impl AuditStreamManager {
     }
 
     /// Get recent events (for replay)
-    pub fn get_recent_events(&self, filter: &StreamFilter, limit: Option<usize>) -> Vec<StreamEvent> {
+    pub fn get_recent_events(
+        &self,
+        filter: &StreamFilter,
+        limit: Option<usize>,
+    ) -> Vec<StreamEvent> {
         self.recent_events
             .read()
             .map(|events| {
@@ -830,10 +836,7 @@ impl AuditStreamManager {
 
     /// Get streaming statistics
     pub fn get_stats(&self) -> StreamStats {
-        self.stats
-            .read()
-            .map(|s| s.clone())
-            .unwrap_or_default()
+        self.stats.read().map(|s| s.clone()).unwrap_or_default()
     }
 
     /// Get a broadcast receiver for all events
@@ -1047,9 +1050,10 @@ impl WebhookSink {
 impl StreamSink for WebhookSink {
     fn send(&self, event: &StreamEvent) -> Result<(), AuditError> {
         if self.config.batch_enabled {
-            let mut buffer = self.buffer.write().map_err(|e| {
-                AuditError::BackendNotAvailable(format!("Lock error: {}", e))
-            })?;
+            let mut buffer = self
+                .buffer
+                .write()
+                .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
 
             buffer.push(event.clone());
 
@@ -1069,9 +1073,10 @@ impl StreamSink for WebhookSink {
 
     fn flush(&self) -> Result<(), AuditError> {
         let events: Vec<_> = {
-            let mut buffer = self.buffer.write().map_err(|e| {
-                AuditError::BackendNotAvailable(format!("Lock error: {}", e))
-            })?;
+            let mut buffer = self
+                .buffer
+                .write()
+                .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
             buffer.drain(..).collect()
         };
 
@@ -1302,7 +1307,7 @@ mod tests {
         let config = StreamConfig::default();
         let manager = AuditStreamManager::new(config);
 
-        let mut receiver = manager.get_broadcast_receiver();
+        let _receiver = manager.get_broadcast_receiver();
 
         // Publish an entry
         let entry = create_test_entry(1, "agent-1");

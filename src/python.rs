@@ -669,27 +669,27 @@ impl PyKernel {
 // ============================================================================
 
 /// Async-capable kernel wrapper for Python integration with FastAPI/aiohttp
-/// 
+///
 /// This provides documentation for Python users on how to use VAK with async frameworks:
-/// 
+///
 /// ```python
 /// # Example usage with FastAPI
 /// from vak import VakKernel
 /// import asyncio
-/// 
+///
 /// kernel = VakKernel.default()
-/// 
+///
 /// async def evaluate_async(agent_id: str, action: str, context: dict) -> dict:
 ///     # Use run_in_executor for CPU-bound operations
 ///     loop = asyncio.get_event_loop()
 ///     import json
 ///     context_json = json.dumps(context)
 ///     result = await loop.run_in_executor(
-///         None, 
+///         None,
 ///         lambda: kernel.evaluate_policy(agent_id, action, context_json)
 ///     )
 ///     return result
-/// 
+///
 /// async def execute_tool_async(tool_id: str, agent_id: str, params: dict) -> dict:
 ///     loop = asyncio.get_event_loop()
 ///     import json
@@ -700,9 +700,9 @@ impl PyKernel {
 ///     )
 ///     return result
 /// ```
-/// 
+///
 /// For true async support with pyo3-asyncio (future enhancement):
-/// The kernel operations are CPU-bound, so using run_in_executor is the 
+/// The kernel operations are CPU-bound, so using run_in_executor is the
 /// recommended approach. True async would only benefit I/O-bound operations
 /// like database queries or network requests.
 #[cfg(feature = "python")]

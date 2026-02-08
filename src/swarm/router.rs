@@ -238,35 +238,47 @@ pub struct RouterConfig {
 impl Default for RouterConfig {
     fn default() -> Self {
         let mut keywords = HashMap::new();
-        
-        keywords.insert(Topology::Debate, vec![
-            "debate".to_string(),
-            "discuss".to_string(),
-            "pros and cons".to_string(),
-            "compare".to_string(),
-        ]);
-        
-        keywords.insert(Topology::Voting, vec![
-            "vote".to_string(),
-            "decide".to_string(),
-            "choose".to_string(),
-            "select".to_string(),
-        ]);
-        
-        keywords.insert(Topology::Adversarial, vec![
-            "security".to_string(),
-            "vulnerability".to_string(),
-            "attack".to_string(),
-            "red team".to_string(),
-        ]);
-        
-        keywords.insert(Topology::Pipeline, vec![
-            "first".to_string(),
-            "then".to_string(),
-            "next".to_string(),
-            "step".to_string(),
-            "sequential".to_string(),
-        ]);
+
+        keywords.insert(
+            Topology::Debate,
+            vec![
+                "debate".to_string(),
+                "discuss".to_string(),
+                "pros and cons".to_string(),
+                "compare".to_string(),
+            ],
+        );
+
+        keywords.insert(
+            Topology::Voting,
+            vec![
+                "vote".to_string(),
+                "decide".to_string(),
+                "choose".to_string(),
+                "select".to_string(),
+            ],
+        );
+
+        keywords.insert(
+            Topology::Adversarial,
+            vec![
+                "security".to_string(),
+                "vulnerability".to_string(),
+                "attack".to_string(),
+                "red team".to_string(),
+            ],
+        );
+
+        keywords.insert(
+            Topology::Pipeline,
+            vec![
+                "first".to_string(),
+                "then".to_string(),
+                "next".to_string(),
+                "step".to_string(),
+                "sequential".to_string(),
+            ],
+        );
 
         Self {
             default_topology: Topology::Hierarchical,
@@ -307,24 +319,25 @@ impl ProtocolRouter {
     ) -> RoutingDecision {
         let task_lower = task.to_lowercase();
         let characteristics = self.detect_characteristics(&task_lower);
-        
+
         // Score each topology
         let mut scores: Vec<(Topology, f64)> = Vec::new();
-        
+
         for (topology, keywords) in &self.config.topology_keywords {
             let keyword_score = keywords
                 .iter()
                 .filter(|kw| task_lower.contains(kw.as_str()))
-                .count() as f64 / keywords.len().max(1) as f64;
-            
+                .count() as f64
+                / keywords.len().max(1) as f64;
+
             if keyword_score > 0.0 && topology.min_agents() <= available_agents {
                 scores.push((*topology, keyword_score));
             }
         }
-        
+
         // Sort by score descending
         scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        
+
         // Select topology
         let (topology, confidence) = if let Some((top, conf)) = scores.first() {
             if *conf >= self.config.min_confidence {
@@ -335,19 +348,21 @@ impl ProtocolRouter {
         } else {
             self.fallback_selection(complexity, available_agents, &characteristics)
         };
-        
+
         // Calculate suggested agents
         let min_for_complexity = complexity.min_agents();
         let min_for_topology = topology.min_agents();
-        let suggested = min_for_complexity.max(min_for_topology).min(available_agents);
-        
+        let suggested = min_for_complexity
+            .max(min_for_topology)
+            .min(available_agents);
+
         let mut reasons = Vec::new();
         if !scores.is_empty() {
             reasons.push(format!("Keyword analysis matched {:?}", topology));
         }
         reasons.push(format!("Task complexity: {:?}", complexity));
         reasons.push(format!("Available agents: {}", available_agents));
-        
+
         RoutingDecision {
             topology,
             confidence,
@@ -366,7 +381,7 @@ impl ProtocolRouter {
     /// Detect task complexity from description
     fn detect_complexity(&self, task: &str) -> TaskComplexity {
         let task_lower = task.to_lowercase();
-        
+
         if task_lower.contains("critical") || task_lower.contains("urgent") {
             TaskComplexity::Critical
         } else if task_lower.contains("complex") || task_lower.contains("security") {
@@ -381,11 +396,19 @@ impl ProtocolRouter {
     /// Detect task characteristics
     fn detect_characteristics(&self, task: &str) -> TaskCharacteristics {
         TaskCharacteristics {
-            requires_decision: task.contains("decide") || task.contains("choose") || task.contains("select"),
-            involves_risk: task.contains("security") || task.contains("risk") || task.contains("vulnerability"),
+            requires_decision: task.contains("decide")
+                || task.contains("choose")
+                || task.contains("select"),
+            involves_risk: task.contains("security")
+                || task.contains("risk")
+                || task.contains("vulnerability"),
             sequential: task.contains("first") || task.contains("then") || task.contains("next"),
-            benefits_from_diversity: task.contains("perspective") || task.contains("opinion") || task.contains("debate"),
-            time_sensitive: task.contains("urgent") || task.contains("asap") || task.contains("quickly"),
+            benefits_from_diversity: task.contains("perspective")
+                || task.contains("opinion")
+                || task.contains("debate"),
+            time_sensitive: task.contains("urgent")
+                || task.contains("asap")
+                || task.contains("quickly"),
         }
     }
 
@@ -400,22 +423,22 @@ impl ProtocolRouter {
         if available_agents == 1 {
             return (Topology::Solo, 0.9);
         }
-        
+
         // Risk tasks benefit from adversarial review
         if characteristics.involves_risk && available_agents >= Topology::Adversarial.min_agents() {
             return (Topology::Adversarial, 0.7);
         }
-        
+
         // Decision tasks benefit from voting
         if characteristics.requires_decision && available_agents >= Topology::Voting.min_agents() {
             return (Topology::Voting, 0.7);
         }
-        
+
         // Sequential tasks use pipeline
         if characteristics.sequential && available_agents >= Topology::Pipeline.min_agents() {
             return (Topology::Pipeline, 0.7);
         }
-        
+
         // Default based on complexity
         match complexity {
             TaskComplexity::Low => (Topology::Solo, 0.6),
@@ -443,7 +466,12 @@ impl ProtocolRouter {
             decision.topology,
             decision.confidence * 100.0,
             decision.suggested_agents,
-            decision.reasons.iter().map(|r| format!("  - {}", r)).collect::<Vec<_>>().join("\n")
+            decision
+                .reasons
+                .iter()
+                .map(|r| format!("  - {}", r))
+                .collect::<Vec<_>>()
+                .join("\n")
         )
     }
 }
@@ -543,11 +571,7 @@ mod tests {
     #[test]
     fn test_insufficient_agents() {
         let router = ProtocolRouter::new(RouterConfig::default());
-        let decision = router.route(
-            "Complex security analysis",
-            TaskComplexity::High,
-            1,
-        );
+        let decision = router.route("Complex security analysis", TaskComplexity::High, 1);
 
         assert_eq!(decision.topology, Topology::Solo);
     }

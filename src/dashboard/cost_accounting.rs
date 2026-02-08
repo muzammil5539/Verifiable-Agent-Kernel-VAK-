@@ -110,12 +110,12 @@ impl Default for PricingRates {
     fn default() -> Self {
         Self {
             // Based on typical LLM API pricing
-            input_tokens_per_1k: 0.001,    // $1 per 1M input tokens
-            output_tokens_per_1k: 0.002,   // $2 per 1M output tokens
-            fuel_per_1m: 0.0001,           // $0.10 per 1B fuel units
-            io_per_gb: 0.01,               // $0.01 per GB
-            storage_ops_per_1k: 0.0005,    // $0.50 per 1M ops
-            api_call_base: 0.0001,         // $0.10 per 1000 calls
+            input_tokens_per_1k: 0.001,  // $1 per 1M input tokens
+            output_tokens_per_1k: 0.002, // $2 per 1M output tokens
+            fuel_per_1m: 0.0001,         // $0.10 per 1B fuel units
+            io_per_gb: 0.01,             // $0.01 per GB
+            storage_ops_per_1k: 0.0005,  // $0.50 per 1M ops
+            api_call_base: 0.0001,       // $0.10 per 1000 calls
         }
     }
 }
@@ -281,7 +281,10 @@ impl ApiUsage {
     /// Record an API call
     pub fn add_call(&mut self, service: &str) {
         self.total_calls += 1;
-        *self.calls_by_service.entry(service.to_string()).or_default() += 1;
+        *self
+            .calls_by_service
+            .entry(service.to_string())
+            .or_default() += 1;
     }
 }
 
@@ -443,8 +446,14 @@ impl std::fmt::Debug for CostAccountant {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CostAccountant")
             .field("config", &self.config)
-            .field("total_tokens_input", &self.total_tokens_input.load(Ordering::Relaxed))
-            .field("total_tokens_output", &self.total_tokens_output.load(Ordering::Relaxed))
+            .field(
+                "total_tokens_input",
+                &self.total_tokens_input.load(Ordering::Relaxed),
+            )
+            .field(
+                "total_tokens_output",
+                &self.total_tokens_output.load(Ordering::Relaxed),
+            )
             .field("total_fuel", &self.total_fuel.load(Ordering::Relaxed))
             .finish_non_exhaustive()
     }
@@ -483,7 +492,12 @@ impl CostAccountant {
         let mut sessions = self.sessions.write().await;
         sessions.insert((agent_id.to_string(), session_id.to_string()), cost);
 
-        info!(agent_id, session_id, budget_usd = budget, "Cost tracking session started");
+        info!(
+            agent_id,
+            session_id,
+            budget_usd = budget,
+            "Cost tracking session started"
+        );
         Ok(())
     }
 
@@ -500,8 +514,10 @@ impl CostAccountant {
         }
 
         // Update global counters
-        self.total_tokens_input.fetch_add(input_tokens, Ordering::Relaxed);
-        self.total_tokens_output.fetch_add(output_tokens, Ordering::Relaxed);
+        self.total_tokens_input
+            .fetch_add(input_tokens, Ordering::Relaxed);
+        self.total_tokens_output
+            .fetch_add(output_tokens, Ordering::Relaxed);
 
         // Update session
         let mut sessions = self.sessions.write().await;
@@ -549,17 +565,15 @@ impl CostAccountant {
             sessions.insert(key, cost);
         }
 
-        debug!(agent_id, session_id, input_tokens, output_tokens, "Tokens recorded");
+        debug!(
+            agent_id,
+            session_id, input_tokens, output_tokens, "Tokens recorded"
+        );
         Ok(())
     }
 
     /// Record WASM fuel consumption
-    pub async fn record_fuel(
-        &self,
-        agent_id: &str,
-        session_id: &str,
-        fuel: u64,
-    ) -> CostResult<()> {
+    pub async fn record_fuel(&self, agent_id: &str, session_id: &str, fuel: u64) -> CostResult<()> {
         if !self.config.enabled {
             return Ok(());
         }
@@ -590,7 +604,8 @@ impl CostAccountant {
             return Ok(());
         }
 
-        self.total_io_bytes.fetch_add(ingress_bytes + egress_bytes, Ordering::Relaxed);
+        self.total_io_bytes
+            .fetch_add(ingress_bytes + egress_bytes, Ordering::Relaxed);
 
         let mut sessions = self.sessions.write().await;
         let key = (agent_id.to_string(), session_id.to_string());
@@ -600,7 +615,10 @@ impl CostAccountant {
             cost.calculate_costs(&self.config.rates);
         }
 
-        debug!(agent_id, session_id, ingress_bytes, egress_bytes, "Network I/O recorded");
+        debug!(
+            agent_id,
+            session_id, ingress_bytes, egress_bytes, "Network I/O recorded"
+        );
         Ok(())
     }
 
@@ -622,7 +640,8 @@ impl CostAccountant {
         let key = (agent_id.to_string(), session_id.to_string());
 
         if let Some(cost) = sessions.get_mut(&key) {
-            cost.io.add_storage(reads, writes, bytes_read, bytes_written);
+            cost.io
+                .add_storage(reads, writes, bytes_read, bytes_written);
             cost.calculate_costs(&self.config.rates);
         }
 
@@ -664,18 +683,17 @@ impl CostAccountant {
         let sessions = self.sessions.read().await;
         let key = (agent_id.to_string(), session_id.to_string());
 
-        sessions.get(&key).cloned().ok_or(CostError::SessionNotFound {
-            agent_id: agent_id.to_string(),
-            session_id: session_id.to_string(),
-        })
+        sessions
+            .get(&key)
+            .cloned()
+            .ok_or(CostError::SessionNotFound {
+                agent_id: agent_id.to_string(),
+                session_id: session_id.to_string(),
+            })
     }
 
     /// End a session and move to completed
-    pub async fn end_session(
-        &self,
-        agent_id: &str,
-        session_id: &str,
-    ) -> CostResult<ExecutionCost> {
+    pub async fn end_session(&self, agent_id: &str, session_id: &str) -> CostResult<ExecutionCost> {
         let mut sessions = self.sessions.write().await;
         let key = (agent_id.to_string(), session_id.to_string());
 
@@ -747,7 +765,10 @@ impl CostAccountant {
             total_input_tokens: agent_sessions.iter().map(|c| c.tokens.input_tokens).sum(),
             total_output_tokens: agent_sessions.iter().map(|c| c.tokens.output_tokens).sum(),
             total_fuel,
-            total_io_bytes: agent_sessions.iter().map(|c| c.io.total_network_bytes()).sum(),
+            total_io_bytes: agent_sessions
+                .iter()
+                .map(|c| c.io.total_network_bytes())
+                .sum(),
             total_api_calls: agent_sessions.iter().map(|c| c.api.total_calls).sum(),
             sessions: agent_sessions,
         }
@@ -863,7 +884,10 @@ impl BillingReport {
         invoice.push_str("═══════════════════════════════════════════════════════\n\n");
 
         invoice.push_str(&format!("Agent ID:        {}\n", self.agent_id));
-        invoice.push_str(&format!("Generated:       {}\n", format_timestamp(self.generated_at)));
+        invoice.push_str(&format!(
+            "Generated:       {}\n",
+            format_timestamp(self.generated_at)
+        ));
         invoice.push_str(&format!("Sessions:        {}\n", self.session_count));
         invoice.push_str("\n───────────────────────────────────────────────────────\n");
         invoice.push_str("                      USAGE SUMMARY                      \n");
@@ -962,11 +986,23 @@ mod tests {
     async fn test_basic_cost_tracking() {
         let accountant = CostAccountant::with_defaults();
 
-        accountant.start_session("agent-1", "session-1", None).await.unwrap();
-        accountant.record_tokens("agent-1", "session-1", 1000, 500).await.unwrap();
-        accountant.record_fuel("agent-1", "session-1", 1_000_000).await.unwrap();
+        accountant
+            .start_session("agent-1", "session-1", None)
+            .await
+            .unwrap();
+        accountant
+            .record_tokens("agent-1", "session-1", 1000, 500)
+            .await
+            .unwrap();
+        accountant
+            .record_fuel("agent-1", "session-1", 1_000_000)
+            .await
+            .unwrap();
 
-        let cost = accountant.get_session_cost("agent-1", "session-1").await.unwrap();
+        let cost = accountant
+            .get_session_cost("agent-1", "session-1")
+            .await
+            .unwrap();
         assert!(cost.total_cost_usd > 0.0);
         assert_eq!(cost.tokens.input_tokens, 1000);
         assert_eq!(cost.tokens.output_tokens, 500);
@@ -982,13 +1018,21 @@ mod tests {
         };
         let accountant = CostAccountant::new(config);
 
-        accountant.start_session("agent-1", "session-1", Some(0.5)).await.unwrap();
+        accountant
+            .start_session("agent-1", "session-1", Some(0.5))
+            .await
+            .unwrap();
 
         // First batch should succeed
-        accountant.record_tokens("agent-1", "session-1", 400, 0).await.unwrap();
+        accountant
+            .record_tokens("agent-1", "session-1", 400, 0)
+            .await
+            .unwrap();
 
         // Second batch should exceed budget
-        let result = accountant.record_tokens("agent-1", "session-1", 200, 0).await;
+        let result = accountant
+            .record_tokens("agent-1", "session-1", 200, 0)
+            .await;
         assert!(matches!(result, Err(CostError::BudgetExceeded { .. })));
     }
 
@@ -996,9 +1040,18 @@ mod tests {
     async fn test_billing_report() {
         let accountant = CostAccountant::with_defaults();
 
-        accountant.start_session("agent-1", "session-1", None).await.unwrap();
-        accountant.record_tokens("agent-1", "session-1", 1000, 500).await.unwrap();
-        accountant.end_session("agent-1", "session-1").await.unwrap();
+        accountant
+            .start_session("agent-1", "session-1", None)
+            .await
+            .unwrap();
+        accountant
+            .record_tokens("agent-1", "session-1", 1000, 500)
+            .await
+            .unwrap();
+        accountant
+            .end_session("agent-1", "session-1")
+            .await
+            .unwrap();
 
         let report = accountant.generate_billing_report("agent-1").await;
         assert_eq!(report.session_count, 1);
@@ -1024,10 +1077,16 @@ mod tests {
     #[test]
     fn test_global_stats() {
         let accountant = CostAccountant::with_defaults();
-        
-        accountant.total_tokens_input.fetch_add(1000, Ordering::Relaxed);
-        accountant.total_tokens_output.fetch_add(500, Ordering::Relaxed);
-        accountant.total_fuel.fetch_add(1_000_000, Ordering::Relaxed);
+
+        accountant
+            .total_tokens_input
+            .fetch_add(1000, Ordering::Relaxed);
+        accountant
+            .total_tokens_output
+            .fetch_add(500, Ordering::Relaxed);
+        accountant
+            .total_fuel
+            .fetch_add(1_000_000, Ordering::Relaxed);
 
         let stats = accountant.get_global_stats();
         assert_eq!(stats.total_input_tokens, 1000);

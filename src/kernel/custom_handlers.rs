@@ -168,7 +168,7 @@ impl CustomHandlerRegistry {
     /// Register a custom handler
     pub async fn register<H: ToolHandler + 'static>(&self, handler: H) -> HandlerResult<()> {
         let name = handler.name().to_string();
-        
+
         let metadata = HandlerMetadata {
             name: name.clone(),
             description: handler.description().to_string(),

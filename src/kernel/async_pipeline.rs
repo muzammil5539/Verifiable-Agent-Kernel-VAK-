@@ -388,7 +388,8 @@ impl PipelineMetrics {
     pub fn record_completed(&self, latency_us: u64) {
         self.in_flight.fetch_sub(1, Ordering::Relaxed);
         self.completed.fetch_add(1, Ordering::Relaxed);
-        self.total_latency_us.fetch_add(latency_us, Ordering::Relaxed);
+        self.total_latency_us
+            .fetch_add(latency_us, Ordering::Relaxed);
 
         // Update min/max latency
         let _ = self
@@ -531,8 +532,8 @@ impl PipelineHandle {
         let (response_tx, response_rx) = oneshot::channel();
 
         // Create envelope
-        let envelope =
-            RequestEnvelope::new(agent_id, session_id, request, response_tx).with_priority(priority);
+        let envelope = RequestEnvelope::new(agent_id, session_id, request, response_tx)
+            .with_priority(priority);
 
         // Record metrics
         self.metrics.record_received();
@@ -588,8 +589,7 @@ pub struct AsyncPipeline {
     /// Request handler function
     handler: Arc<dyn Fn(ToolRequest) -> PipelineResult<serde_json::Value> + Send + Sync>,
     /// Policy evaluator function
-    policy_evaluator:
-        Arc<dyn Fn(&AgentId, &ToolRequest) -> PolicyDecision + Send + Sync>,
+    policy_evaluator: Arc<dyn Fn(&AgentId, &ToolRequest) -> PolicyDecision + Send + Sync>,
 }
 
 impl std::fmt::Debug for AsyncPipeline {
@@ -644,7 +644,10 @@ impl AsyncPipeline {
 
     /// Run the pipeline processing loop
     pub async fn run(mut self) {
-        info!("Starting async pipeline with {} workers", self.config.worker_count);
+        info!(
+            "Starting async pipeline with {} workers",
+            self.config.worker_count
+        );
 
         loop {
             tokio::select! {
@@ -1008,7 +1011,11 @@ mod tests {
 
         // Submit a request
         let result = handle
-            .submit(AgentId::new(), SessionId::new(), create_test_request("test"))
+            .submit(
+                AgentId::new(),
+                SessionId::new(),
+                create_test_request("test"),
+            )
             .await;
 
         assert!(result.is_err());

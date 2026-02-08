@@ -699,14 +699,17 @@ mod tests {
     fn test_voting_session_minimum_participation() {
         let proposal = Proposal::new("Test Proposal");
         let config = VotingConfig::default().with_min_participation(0.5);
-        let mut session = VotingSession::new("session1".to_string(), proposal, config)
-            .with_expected_voters(10);
+        let mut session =
+            VotingSession::new("session1".to_string(), proposal, config).with_expected_voters(10);
 
         let agent1 = SwarmAgentId::new();
         session.record_vote(agent1, Vote::for_proposal(5)).unwrap();
 
         // Only 1 out of 10 expected voters - should fail
         let result = session.finalize();
-        assert!(matches!(result, Err(VotingError::MinParticipationNotMet(_, _))));
+        assert!(matches!(
+            result,
+            Err(VotingError::MinParticipationNotMet(_, _))
+        ));
     }
 }

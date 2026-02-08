@@ -58,13 +58,13 @@ pub use merkle_dag::{
 };
 
 pub use migrations::{
-    Migration, MigrationError, MigrationRecord, MigrationRunner, MigrationStatus,
-    get_all_migrations,
+    get_all_migrations, Migration, MigrationError, MigrationRecord, MigrationRunner,
+    MigrationStatus,
 };
 
 pub use receipts::{
-    CompactReceipt, CryptoReceipt, ExecutionStep, ReceiptConfig, ReceiptError,
-    ReceiptGenerator, ReceiptResult, StepType,
+    CompactReceipt, CryptoReceipt, ExecutionStep, ReceiptConfig, ReceiptError, ReceiptGenerator,
+    ReceiptResult, StepType,
 };
 
 pub use secret_scrubber::{
@@ -78,8 +78,8 @@ pub use snapshot_backend::{
 };
 
 pub use sparse_merkle::{
-    CompactProof, SparseProof, SparseProofStep, SparseMerkleError, SparseMerkleExport,
-    SparseMerkleNode, SparseMerkleResult, SparseMerkleTree,
+    CompactProof, SparseMerkleError, SparseMerkleExport, SparseMerkleNode, SparseMerkleResult,
+    SparseMerkleTree, SparseProof, SparseProofStep,
 };
 
 pub use storage::{
@@ -89,11 +89,22 @@ pub use storage::{
 
 // Time Travel with full checkout capability (MEM-005)
 pub use time_travel::{
-    TimeTravelManager, TimeTravelConfig, TimeTravelError, SnapshotId,
-    StateCheckpoint, StateDiff,
+    CheckoutMetadata,
+    CheckoutOptions,
+    CheckoutResult,
+    CheckoutStateSummary,
     // MEM-005 Enhanced exports
-    FullCheckout, CheckoutMetadata, ProvenanceLink, ReplayStep, ReplayAction, StateChange,
-    CheckoutOptions, CheckoutResult, CheckoutStateSummary,
+    FullCheckout,
+    ProvenanceLink,
+    ReplayAction,
+    ReplayStep,
+    SnapshotId,
+    StateChange,
+    StateCheckpoint,
+    StateDiff,
+    TimeTravelConfig,
+    TimeTravelError,
+    TimeTravelManager,
 };
 
 pub use vector_store::{

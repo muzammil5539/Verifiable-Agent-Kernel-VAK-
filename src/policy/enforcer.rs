@@ -508,17 +508,15 @@ impl PolicySet {
 /// This implements the fail-closed requirement from Gap Analysis Section 3.2
 fn default_deny_policy_set() -> PolicySet {
     PolicySet {
-        rules: vec![
-            CedarRule {
-                id: "default-deny-all".to_string(),
-                effect: "forbid".to_string(),
-                principal: "*".to_string(),
-                action: "*".to_string(),
-                resource: "*".to_string(),
-                conditions: vec![],
-                description: Some("Default deny rule - no policies loaded (fail-closed)".to_string()),
-            },
-        ],
+        rules: vec![CedarRule {
+            id: "default-deny-all".to_string(),
+            effect: "forbid".to_string(),
+            principal: "*".to_string(),
+            action: "*".to_string(),
+            resource: "*".to_string(),
+            conditions: vec![],
+            description: Some("Default deny rule - no policies loaded (fail-closed)".to_string()),
+        }],
         version: Some("default-deny-v1".to_string()),
         modified: Some(
             std::time::SystemTime::now()
@@ -604,13 +602,14 @@ impl CedarEnforcer {
 
     /// Check if valid policies have been loaded
     pub fn has_policies_loaded(&self) -> bool {
-        self.policy_loaded.load(std::sync::atomic::Ordering::Relaxed)
+        self.policy_loaded
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Load policies from a YAML file with proper error handling (POL-007)
     pub async fn load_policies<P: AsRef<Path>>(&self, path: P) -> EnforcerResult<()> {
         let path = path.as_ref();
-        
+
         // Check file exists
         if !path.exists() {
             error!(
@@ -619,27 +618,24 @@ impl CedarEnforcer {
             );
             return Err(EnforcerError::PolicyNotFound(path.display().to_string()));
         }
-        
-        let content = tokio::fs::read_to_string(path)
-            .await
-            .map_err(|e| {
-                error!(
-                    path = %path.display(),
-                    error = %e,
-                    "Failed to read policy file - using default-deny"
-                );
-                EnforcerError::IoError(format!("{}: {}", path.display(), e))
-            })?;
 
-        let policy_set: PolicySet = serde_yaml::from_str(&content)
-            .map_err(|e| {
-                error!(
-                    path = %path.display(),
-                    error = %e,
-                    "Invalid policy format - using default-deny"
-                );
-                EnforcerError::InvalidPolicy(e.to_string())
-            })?;
+        let content = tokio::fs::read_to_string(path).await.map_err(|e| {
+            error!(
+                path = %path.display(),
+                error = %e,
+                "Failed to read policy file - using default-deny"
+            );
+            EnforcerError::IoError(format!("{}: {}", path.display(), e))
+        })?;
+
+        let policy_set: PolicySet = serde_yaml::from_str(&content).map_err(|e| {
+            error!(
+                path = %path.display(),
+                error = %e,
+                "Invalid policy format - using default-deny"
+            );
+            EnforcerError::InvalidPolicy(e.to_string())
+        })?;
 
         info!(
             path = %path.display(),
@@ -649,22 +645,23 @@ impl CedarEnforcer {
 
         let mut policies = self.policies.write().await;
         *policies = policy_set;
-        self.policy_loaded.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.policy_loaded
+            .store(true, std::sync::atomic::Ordering::Relaxed);
 
         Ok(())
     }
 
     /// Load policies from a string
     pub async fn load_policies_from_str(&self, content: &str) -> EnforcerResult<()> {
-        let policy_set: PolicySet = serde_yaml::from_str(content)
-            .map_err(|e| {
-                error!(error = %e, "Invalid policy format - using default-deny");
-                EnforcerError::InvalidPolicy(e.to_string())
-            })?;
+        let policy_set: PolicySet = serde_yaml::from_str(content).map_err(|e| {
+            error!(error = %e, "Invalid policy format - using default-deny");
+            EnforcerError::InvalidPolicy(e.to_string())
+        })?;
 
         let mut policies = self.policies.write().await;
         *policies = policy_set;
-        self.policy_loaded.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.policy_loaded
+            .store(true, std::sync::atomic::Ordering::Relaxed);
 
         Ok(())
     }
@@ -708,7 +705,7 @@ impl CedarEnforcer {
             self.stats.denied_requests.fetch_add(1, Ordering::Relaxed);
             return Ok(Decision::deny(
                 "No valid policies loaded - system operating in fail-closed mode. \
-                 Load policies using load_policies() before authorizing requests."
+                 Load policies using load_policies() before authorizing requests.",
             ));
         }
 
@@ -729,13 +726,7 @@ impl CedarEnforcer {
         }
 
         // Evaluate policies
-        let decision = self.evaluate_policies(
-            &policies,
-            principal,
-            action,
-            resource,
-            context,
-        );
+        let decision = self.evaluate_policies(&policies, principal, action, resource, context);
 
         let elapsed = start.elapsed();
         let mut result = match decision {
@@ -789,21 +780,27 @@ impl CedarEnforcer {
 
         // Check for explicit forbid rules first (forbid overrides permit)
         for rule in &policies.rules {
-            if rule.effect == "forbid" && self.rule_matches(rule, &principal_uid, &action_uid, &resource_uid) {
+            if rule.effect == "forbid"
+                && self.rule_matches(rule, &principal_uid, &action_uid, &resource_uid)
+            {
                 return Ok(Decision::deny(format!(
                     "Forbidden by rule: {}",
                     rule.description.as_deref().unwrap_or(&rule.id)
-                )).with_policy(rule.id.clone()));
+                ))
+                .with_policy(rule.id.clone()));
             }
         }
 
         // Check for permit rules
         for rule in &policies.rules {
-            if rule.effect == "permit" && self.rule_matches(rule, &principal_uid, &action_uid, &resource_uid) {
+            if rule.effect == "permit"
+                && self.rule_matches(rule, &principal_uid, &action_uid, &resource_uid)
+            {
                 return Ok(Decision::allow(format!(
                     "Permitted by rule: {}",
                     rule.description.as_deref().unwrap_or(&rule.id)
-                )).with_policy(rule.id.clone()));
+                ))
+                .with_policy(rule.id.clone()));
             }
         }
 
@@ -916,7 +913,8 @@ mod tests {
         // With POL-007, we now fail closed with explicit message when no valid policies loaded
         assert!(decision.is_denied());
         assert!(
-            decision.reason.contains("fail-closed") || decision.reason.contains("No valid policies"),
+            decision.reason.contains("fail-closed")
+                || decision.reason.contains("No valid policies"),
             "Expected fail-closed message, got: {}",
             decision.reason
         );
@@ -936,7 +934,10 @@ rules:
     resource: "File::*"
     description: "Allow agents to read files"
 "#;
-        enforcer.load_policies_from_str(policies_yaml).await.unwrap();
+        enforcer
+            .load_policies_from_str(policies_yaml)
+            .await
+            .unwrap();
 
         let principal = Principal::agent("test-agent");
         let action = Action::file_read();
@@ -947,7 +948,11 @@ rules:
             .await
             .unwrap();
 
-        assert!(decision.is_allowed(), "Expected allowed, got: {}", decision.reason);
+        assert!(
+            decision.is_allowed(),
+            "Expected allowed, got: {}",
+            decision.reason
+        );
     }
 
     #[tokio::test]
@@ -970,7 +975,10 @@ rules:
     resource: "File::\"/etc/shadow\""
     description: "Deny access to shadow file"
 "#;
-        enforcer.load_policies_from_str(policies_yaml).await.unwrap();
+        enforcer
+            .load_policies_from_str(policies_yaml)
+            .await
+            .unwrap();
 
         let principal = Principal::agent("test-agent");
         let action = Action::file_read();
@@ -981,7 +989,11 @@ rules:
             .await
             .unwrap();
 
-        assert!(decision.is_denied(), "Expected denied, got: {}", decision.reason);
+        assert!(
+            decision.is_denied(),
+            "Expected denied, got: {}",
+            decision.reason
+        );
         assert_eq!(
             decision.matched_policy.as_deref(),
             Some("deny-secrets"),

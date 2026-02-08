@@ -7,9 +7,9 @@
 //!
 //! The loop iterates until a valid plan is found or max iterations exceeded.
 
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
@@ -78,7 +78,7 @@ impl HybridConfig {
         self.max_iterations = max;
         self
     }
-    
+
     /// Set planning model
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.planning_model = model.into();
@@ -127,13 +127,13 @@ impl ExecutionPlan {
             expected_outcome: String::new(),
         }
     }
-    
+
     /// Add an action to the plan
     pub fn with_action(mut self, action: PlanAction) -> Self {
         self.actions.push(action);
         self
     }
-    
+
     /// Set the reasoning for the plan
     pub fn with_reasoning(mut self, reasoning: impl Into<String>) -> Self {
         self.reasoning = reasoning.into();
@@ -233,7 +233,7 @@ impl<L: LlmProvider> HybridReasoningLoop<L> {
     ) -> HybridResult<ExecutionResult> {
         info!(task = %task, "Starting hybrid reasoning loop");
         let mut last_violations: Vec<Violation> = Vec::new();
-        
+
         for iteration in 0..self.config.max_iterations {
             let start = std::time::Instant::now();
             if self.config.verbose_logging {
@@ -243,7 +243,11 @@ impl<L: LlmProvider> HybridReasoningLoop<L> {
             // Neural phase: Generate plan using LLM
             let plan = self.neural_phase(task, context, &last_violations).await?;
             if self.config.verbose_logging {
-                debug!(iteration = iteration, actions = plan.actions.len(), "Plan generated");
+                debug!(
+                    iteration = iteration,
+                    actions = plan.actions.len(),
+                    "Plan generated"
+                );
             }
 
             // Symbolic phase: Validate plan using safety rules
@@ -269,8 +273,10 @@ impl<L: LlmProvider> HybridReasoningLoop<L> {
                 last_violations = validation.violations;
             }
         }
-        
-        Err(HybridError::MaxIterationsExceeded(self.config.max_iterations))
+
+        Err(HybridError::MaxIterationsExceeded(
+            self.config.max_iterations,
+        ))
     }
 
     /// Neural phase: Generate a plan using the LLM
@@ -289,10 +295,12 @@ impl<L: LlmProvider> HybridReasoningLoop<L> {
             .with_temperature(self.config.planning_temperature)
             .with_max_tokens(self.config.max_plan_tokens);
 
-        let response = self.llm.complete(request)
+        let response = self
+            .llm
+            .complete(request)
             .await
             .map_err(|e| HybridError::LlmError(e.to_string()))?;
-        
+
         self.parse_plan(&response.content)
     }
 
@@ -303,15 +311,14 @@ impl<L: LlmProvider> HybridReasoningLoop<L> {
 
         for action in &plan.actions {
             // Check each action against safety rules
-            let verdict = self.safety_engine.check_action(&action.action, &action.target);
-            
+            let verdict = self
+                .safety_engine
+                .check_action(&action.action, &action.target);
+
             if let SafetyVerdict::Violation(violations) = &verdict {
                 for v in violations {
                     all_violations.push(v.clone());
-                    refinements.push(format!(
-                        "Violation of {}: {}",
-                        v.rule_id, v.description
-                    ));
+                    refinements.push(format!("Violation of {}: {}", v.rule_id, v.description));
                 }
             }
         }
@@ -345,7 +352,7 @@ impl<L: LlmProvider> HybridReasoningLoop<L> {
                 output: serde_json::json!({"status": "simulated"}),
                 error: None,
             };
-            
+
             if let Some(obs) = result.output.get("observation").and_then(|o| o.as_str()) {
                 observations.push(obs.to_string());
             }
@@ -374,7 +381,7 @@ impl<L: LlmProvider> HybridReasoningLoop<L> {
         previous_violations: &[Violation],
     ) -> String {
         let mut prompt = format!("Task: {}\nContext: {}\n", task, context);
-        
+
         if !previous_violations.is_empty() && self.config.include_violations_in_prompt {
             prompt.push_str("\nPrevious violations:\n");
             for v in previous_violations {
@@ -398,27 +405,44 @@ impl<L: LlmProvider> HybridReasoningLoop<L> {
 
         let parsed: serde_json::Value = serde_json::from_str(json_str)
             .map_err(|e| HybridError::LlmError(format!("Parse error: {}", e)))?;
-        
+
         let mut plan = ExecutionPlan::new(
-            parsed.get("description").and_then(|d| d.as_str()).unwrap_or("Plan")
+            parsed
+                .get("description")
+                .and_then(|d| d.as_str())
+                .unwrap_or("Plan"),
         );
 
         if let Some(actions) = parsed.get("actions").and_then(|a| a.as_array()) {
             for a in actions {
                 plan.actions.push(PlanAction {
-                    action: a.get("action").and_then(|x| x.as_str()).unwrap_or("unknown").to_string(),
-                    target: a.get("target").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-                    parameters: a.get("parameters").cloned().unwrap_or(serde_json::json!({})),
-                    reasoning: a.get("reasoning").and_then(|x| x.as_str()).map(String::from),
+                    action: a
+                        .get("action")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("unknown")
+                        .to_string(),
+                    target: a
+                        .get("target")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    parameters: a
+                        .get("parameters")
+                        .cloned()
+                        .unwrap_or(serde_json::json!({})),
+                    reasoning: a
+                        .get("reasoning")
+                        .and_then(|x| x.as_str())
+                        .map(String::from),
                     risk_level: None,
                 });
             }
         }
-        
+
         if let Some(r) = parsed.get("reasoning").and_then(|x| x.as_str()) {
             plan.reasoning = r.to_string();
         }
-        
+
         Ok(plan)
     }
 
