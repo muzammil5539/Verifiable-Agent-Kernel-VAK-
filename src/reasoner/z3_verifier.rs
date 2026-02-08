@@ -495,7 +495,10 @@ impl Z3FormalVerifier {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() >= 5 {
                     let name = parts[1].to_string();
-                    let value_str = parts.last().unwrap().trim_end_matches(')');
+                    let value_str = parts
+                        .last()
+                        .ok_or_else(|| Z3Error::ParseError("Missing value in define-fun".into()))?
+                        .trim_end_matches(')');
 
                     let value = if let Ok(i) = value_str.parse::<i64>() {
                         ConstraintValue::Integer(i)

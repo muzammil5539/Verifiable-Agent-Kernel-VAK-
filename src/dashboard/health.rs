@@ -87,7 +87,7 @@ impl ComponentHealth {
             message: None,
             last_check: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
             response_time_ms: None,
         }
@@ -100,7 +100,7 @@ impl ComponentHealth {
             message: Some(message.into()),
             last_check: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
             response_time_ms: None,
         }
@@ -113,7 +113,7 @@ impl ComponentHealth {
             message: Some(message.into()),
             last_check: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
             response_time_ms: None,
         }
@@ -209,22 +209,28 @@ impl HealthChecker {
         F: Fn() -> ComponentHealth + Send + Sync + 'static,
     {
         let name = name.into();
-        self.checks.write().unwrap().insert(name, Box::new(check));
+        if let Ok(mut checks) = self.checks.write() {
+            checks.insert(name, Box::new(check));
+        }
     }
 
     /// Register a component as required for readiness
     pub fn require_for_ready(&self, component: impl Into<String>) {
-        self.ready_checks.write().unwrap().push(component.into());
+        if let Ok(mut ready_checks) = self.ready_checks.write() {
+            ready_checks.push(component.into());
+        }
     }
 
     /// Mark the system as ready
     pub fn set_ready(&self, ready: bool) {
-        *self.ready.write().unwrap() = ready;
+        if let Ok(mut ready_lock) = self.ready.write() {
+            *ready_lock = ready;
+        }
     }
 
     /// Check if system is ready
     pub fn is_ready(&self) -> bool {
-        *self.ready.read().unwrap()
+        *self.ready.read().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Get uptime in seconds
@@ -234,11 +240,11 @@ impl HealthChecker {
 
     /// Perform health check
     pub fn check_health(&self) -> HealthResponse {
-        let checks = self.checks.read().unwrap();
+        let checks_guard = self.checks.read().unwrap_or_else(|e| e.into_inner());
         let mut components = HashMap::new();
         let mut overall_status = HealthStatus::Healthy;
 
-        for (name, check_fn) in checks.iter() {
+        for (name, check_fn) in checks_guard.iter() {
             let component_health = check_fn();
 
             // Update overall status based on component health
@@ -262,7 +268,7 @@ impl HealthChecker {
             version: env!("CARGO_PKG_VERSION").to_string(),
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
         }
     }
@@ -276,13 +282,13 @@ impl HealthChecker {
                 not_ready_components: vec![],
                 timestamp: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_secs(),
             };
         }
 
         let health = self.check_health();
-        let required = self.ready_checks.read().unwrap();
+        let required = self.ready_checks.read().unwrap_or_else(|e| e.into_inner());
         let mut not_ready = Vec::new();
 
         for component_name in required.iter() {
@@ -300,7 +306,7 @@ impl HealthChecker {
                 not_ready_components: vec![],
                 timestamp: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_secs(),
             }
         } else {
@@ -310,7 +316,7 @@ impl HealthChecker {
                 not_ready_components: not_ready,
                 timestamp: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_secs(),
             }
         }
