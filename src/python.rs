@@ -193,7 +193,12 @@ fn py_to_json(obj: Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
         let mut map = serde_json::Map::new();
         for (k, v) in dict.iter() {
             // Mirror Python's json.dumps behavior: coerce dict keys via str(k)
-            let key = k.str()?.to_str()?.to_owned();
+            let key = k.str()?.to_str().map_err(|e| {
+                PyValueError::new_err(format!(
+                    "Dictionary key must be convertible to valid UTF-8 string: {}",
+                    e
+                ))
+            })?.to_owned();
             let value = py_to_json(v)?;
             map.insert(key, value);
         }
@@ -235,8 +240,9 @@ fn py_to_json(obj: Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
             if let Some(n) = serde_json::Number::from_f64(f) {
                 return Ok(serde_json::Value::Number(n));
             } else {
+                // This should theoretically never occur for finite floats, but handle it defensively
                 return Err(PyValueError::new_err(format!(
-                    "Failed to convert finite float ({}) to JSON number",
+                    "Unexpected error: failed to convert finite float ({}) to JSON number",
                     f
                 )));
             }
