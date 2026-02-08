@@ -61,7 +61,7 @@ arc-swap = "1.7"
 rs_merkle = "1.5"
 
 # HTTP client (using rustls for TLS to avoid system OpenSSL dependency)
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+reqwest = { version = "0.11", default-features = false, features = ["json", "stream", "rustls-tls"] }
 
 # Streaming
 futures = "0.3"
@@ -148,10 +148,6 @@ glob.workspace = true
 
 [[bench]]
 name = "kernel_benchmarks"
-harness = false
-
-[[bench]]
-name = "audit_benchmarks"
 harness = false
 
 # Build profiles

@@ -349,8 +349,6 @@ pub struct AutoGPTAdapter {
     rate_limiter: Option<Arc<RateLimiter>>,
     /// PRM model (optional)
     prm: Option<Arc<dyn ProcessRewardModel>>,
-    /// Blocked commands regex set
-    blocked_commands_set: regex::RegexSet,
 }
 
 /// Statistics for AutoGPT adapter
@@ -405,18 +403,6 @@ impl PlanExecutionState {
 impl AutoGPTAdapter {
     /// Create a new AutoGPT adapter
     pub fn new(config: AutoGPTConfig) -> Self {
-        // Compile regex set for blocked commands
-        // We use (?i) to make it case insensitive and escape the command to treat it as a literal
-        let patterns: Vec<String> = config
-            .blocked_commands
-            .iter()
-            .map(|cmd| format!("(?i){}", regex::escape(cmd)))
-            .collect();
-
-        // Unwrap is safe here because we are escaping all inputs
-        let blocked_commands_set = regex::RegexSet::new(patterns)
-            .expect("Failed to compile blocked commands regex set");
-
         Self {
             config,
             vak_connection: VakConnection::local(),
@@ -425,7 +411,6 @@ impl AutoGPTAdapter {
             active_plans: RwLock::new(HashMap::new()),
             rate_limiter: None,
             prm: None,
-            blocked_commands_set,
         }
     }
 
@@ -464,7 +449,11 @@ impl AutoGPTAdapter {
 
     /// Check if a command is blocked
     fn is_blocked_command(&self, command: &str) -> bool {
-        self.blocked_commands_set.is_match(command)
+        let cmd_lower = command.to_lowercase();
+        self.config
+            .blocked_commands
+            .iter()
+            .any(|b| cmd_lower.contains(&b.to_lowercase()))
     }
 
     /// Evaluate a task plan
@@ -496,19 +485,7 @@ impl AutoGPTAdapter {
         }
 
         // Check for blocked commands
-        let blocked_steps: Vec<usize> = plan
-            .steps
-            .iter()
-            .filter_map(|step| {
-                if let Some(ref cmd) = step.command {
-                    if self.blocked_commands_set.is_match(cmd) {
-                        return Some(step.step_number);
-                    }
-                }
-                None
-            })
-            .collect();
-
+        let blocked_steps = plan.has_blocked_commands(&self.config.blocked_commands);
         if !blocked_steps.is_empty() {
             issues.push(format!(
                 "Steps {:?} contain blocked commands",
@@ -885,14 +862,15 @@ impl AutoGPTAdapter {
 
         if let Some(ref command) = step.command {
             // Check for blocked commands
-            for match_index in self.blocked_commands_set.matches(command).iter() {
-                let blocked = &self.config.blocked_commands[match_index];
-                analysis.blocked_commands.push(BlockedCommandInfo {
-                    pattern: blocked.clone(),
-                    found_in: command.clone(),
-                    reason: format!("Command pattern '{}' is blocked", blocked),
-                });
-                analysis.risk_level = RiskLevel::Critical;
+            for blocked in &self.config.blocked_commands {
+                if command.to_lowercase().contains(&blocked.to_lowercase()) {
+                    analysis.blocked_commands.push(BlockedCommandInfo {
+                        pattern: blocked.clone(),
+                        found_in: command.clone(),
+                        reason: format!("Command pattern '{}' is blocked", blocked),
+                    });
+                    analysis.risk_level = RiskLevel::Critical;
+                }
             }
 
             // Analyze command patterns
