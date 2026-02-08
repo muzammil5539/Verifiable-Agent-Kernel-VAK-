@@ -101,6 +101,7 @@
 #![doc(html_root_url = "https://docs.rs/vak/0.1.0")]
 #![deny(unsafe_code)]
 #![allow(missing_docs)]
+#![allow(clippy::unwrap_used)]
 #![warn(rustdoc::missing_doc_code_examples)]
 
 // Re-export core types at the crate root for convenience

@@ -906,11 +906,13 @@ impl AutoGPTAdapter {
             sensitive_resources: Vec::new(),
         };
 
+        // Pre-compile regex
+        let path_pattern = regex::Regex::new(r"[/~][\w/.]+")
+            .unwrap_or_else(|_| regex::Regex::new(".^").unwrap());
+
         for step in &plan.steps {
             if let Some(ref cmd) = step.command {
                 // Extract file paths
-                let path_pattern = regex::Regex::new(r"[/~][\w/.]+")
-                    .unwrap_or_else(|_| regex::Regex::new(".^").unwrap());
                 for cap in path_pattern.find_iter(cmd) {
                     let path = cap.as_str().to_string();
                     if path.starts_with("/etc")
