@@ -48,7 +48,7 @@ pub use self::neurosymbolic_pipeline::{
     ProposedAction,
 };
 pub use self::rate_limiter::{
-    ActionLimit, CheckResult, LimitType, RateLimitConfig, RateLimiter, ResourceLimit,
+    LimitResult, RateLimitConfig, RateLimiter, ResourceKey,
 };
 
 use std::path::PathBuf;

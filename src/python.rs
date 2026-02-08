@@ -35,6 +35,8 @@
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
+#[cfg(feature = "python")]
+use pyo3::types::{PyAny, PyDict, PyList};
 
 #[cfg(feature = "python")]
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
@@ -175,6 +177,58 @@ impl PyAuditEntry {
     }
 }
 
+/// Helper to convert Python objects to serde_json::Value
+#[cfg(feature = "python")]
+fn py_to_json(obj: Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
+    if obj.is_none() {
+        return Ok(serde_json::Value::Null);
+    }
+
+    // Check boolean first since it can be extracted as int
+    if obj.is_instance_of::<pyo3::types::PyBool>() {
+        return Ok(serde_json::Value::Bool(obj.extract::<bool>()?));
+    }
+
+    if let Ok(dict) = obj.downcast::<PyDict>() {
+        let mut map = serde_json::Map::new();
+        for (k, v) in dict.iter() {
+            let key = k.extract::<String>()?;
+            let value = py_to_json(v)?;
+            map.insert(key, value);
+        }
+        return Ok(serde_json::Value::Object(map));
+    }
+
+    if let Ok(list) = obj.downcast::<PyList>() {
+        let mut vec = Vec::new();
+        for v in list.iter() {
+            vec.push(py_to_json(v)?);
+        }
+        return Ok(serde_json::Value::Array(vec));
+    }
+
+    if let Ok(s) = obj.extract::<String>() {
+        return Ok(serde_json::Value::String(s));
+    }
+
+    if let Ok(i) = obj.extract::<i64>() {
+        return Ok(serde_json::Value::Number(i.into()));
+    }
+
+    if let Ok(f) = obj.extract::<f64>() {
+        if let Some(n) = serde_json::Number::from_f64(f) {
+            return Ok(serde_json::Value::Number(n));
+        } else {
+            return Ok(serde_json::Value::Null);
+        }
+    }
+
+    Err(PyValueError::new_err(format!(
+        "Unsupported type for JSON conversion: {}",
+        obj.get_type()
+    )))
+}
+
 /// Python wrapper for the VAK Kernel
 #[cfg(feature = "python")]
 #[pyclass(name = "Kernel")]
@@ -262,14 +316,23 @@ impl PyKernel {
     }
 
     /// Register an agent with the kernel
-    fn register_agent(&mut self, agent_id: &str, name: &str, config_json: &str) -> PyResult<()> {
+    fn register_agent(
+        &mut self,
+        agent_id: &str,
+        name: &str,
+        config: Bound<'_, PyDict>,
+    ) -> PyResult<()> {
         if !self.initialized {
             return Err(PyRuntimeError::new_err("Kernel not initialized"));
         }
 
+        // Convert Python dictionary to JSON string for internal storage
+        let config_val = py_to_json(config.as_any().clone())?;
+        let config_json = serde_json::to_string(&config_val).unwrap_or_else(|_| "{}".to_string());
+
         let mut agent_data = HashMap::new();
         agent_data.insert("name".to_string(), name.to_string());
-        agent_data.insert("config".to_string(), config_json.to_string());
+        agent_data.insert("config".to_string(), config_json);
 
         self.agents.insert(agent_id.to_string(), agent_data);
         Ok(())
@@ -295,7 +358,7 @@ impl PyKernel {
         &mut self,
         agent_id: &str,
         action: &str,
-        context_json: &str,
+        context: Bound<'_, PyDict>,
     ) -> PyResult<HashMap<String, String>> {
         if !self.initialized {
             return Err(PyRuntimeError::new_err("Kernel not initialized"));
@@ -309,9 +372,13 @@ impl PyKernel {
             )));
         }
 
-        // Parse context JSON with proper error handling
-        let context_attrs: HashMap<String, serde_json::Value> = serde_json::from_str(context_json)
-            .map_err(|e| PyValueError::new_err(format!("Invalid context JSON: {}", e)))?;
+        // Convert Python dictionary to serde_json::Value map
+        let mut context_attrs = HashMap::new();
+        for (k, v) in context.iter() {
+            let key = k.extract::<String>()?;
+            let value = py_to_json(v)?;
+            context_attrs.insert(key, value);
+        }
 
         // Build policy context
         let agent_config = self.agents.get(agent_id);
@@ -370,7 +437,7 @@ impl PyKernel {
         tool_id: &str,
         agent_id: &str,
         action: &str,
-        params_json: &str,
+        params: Bound<'_, PyDict>,
         timeout_ms: u64,
         _memory_limit: usize,
     ) -> PyResult<HashMap<String, String>> {
@@ -394,6 +461,10 @@ impl PyKernel {
             action,
             AuditDecision::Allowed,
         );
+
+        // Convert Python dictionary to serde_json::Value
+        let params_val = py_to_json(params.as_any().clone())?;
+        let params_json = serde_json::to_string(&params_val).unwrap_or_else(|_| "{}".to_string());
 
         let mut result = HashMap::new();
         result.insert("request_id".to_string(), request_id);
@@ -498,23 +569,25 @@ impl PyKernel {
     }
 
     /// Get audit logs
-    fn get_audit_logs(&self, filters_json: &str) -> PyResult<Vec<HashMap<String, String>>> {
+    fn get_audit_logs(&self, filters: Bound<'_, PyDict>) -> PyResult<Vec<HashMap<String, String>>> {
         if !self.initialized {
             return Err(PyRuntimeError::new_err("Kernel not initialized"));
         }
 
-        // Parse filters - use defaults if parsing fails (non-critical)
-        let filters: HashMap<String, serde_json::Value> = match serde_json::from_str(filters_json) {
-            Ok(f) => f,
-            Err(e) => {
-                tracing::debug!("Failed to parse audit log filters, using defaults: {}", e);
-                HashMap::new()
-            }
-        };
+        // Convert Python dictionary to serde_json::Value map
+        let mut filters_map = HashMap::new();
+        for (k, v) in filters.iter() {
+            let key = k.extract::<String>()?;
+            let value = py_to_json(v)?;
+            filters_map.insert(key, value);
+        }
 
-        let limit = filters.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
+        let limit = filters_map
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(100) as usize;
 
-        let agent_filter = filters.get("agent_id").and_then(|v| v.as_str());
+        let agent_filter = filters_map.get("agent_id").and_then(|v| v.as_str());
 
         // Get audit entries from logger
         let mut results = Vec::new();
@@ -571,23 +644,28 @@ impl PyKernel {
     }
 
     /// Create an audit entry
-    fn create_audit_entry(&mut self, entry_json: &str) -> PyResult<String> {
+    fn create_audit_entry(&mut self, entry_data: Bound<'_, PyDict>) -> PyResult<String> {
         if !self.initialized {
             return Err(PyRuntimeError::new_err("Kernel not initialized"));
         }
 
-        let entry_data: HashMap<String, serde_json::Value> = serde_json::from_str(entry_json)
-            .map_err(|e| PyValueError::new_err(format!("Invalid JSON: {}", e)))?;
+        // Convert Python dictionary to serde_json::Value map
+        let mut entry_map = HashMap::new();
+        for (k, v) in entry_data.iter() {
+            let key = k.extract::<String>()?;
+            let value = py_to_json(v)?;
+            entry_map.insert(key, value);
+        }
 
-        let agent_id = entry_data
+        let agent_id = entry_map
             .get("agent_id")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        let action = entry_data
+        let action = entry_map
             .get("action")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        let resource = entry_data
+        let resource = entry_map
             .get("resource")
             .and_then(|v| v.as_str())
             .unwrap_or("*");
@@ -617,13 +695,14 @@ impl PyKernel {
     }
 
     /// Add a policy rule
-    fn add_policy_rule(&mut self, rule_json: &str) -> PyResult<()> {
+    fn add_policy_rule(&mut self, rule_dict: Bound<'_, PyDict>) -> PyResult<()> {
         if !self.initialized {
             return Err(PyRuntimeError::new_err("Kernel not initialized"));
         }
 
-        let rule: PolicyRule = serde_json::from_str(rule_json)
-            .map_err(|e| PyValueError::new_err(format!("Invalid rule JSON: {}", e)))?;
+        let rule_val = py_to_json(rule_dict.as_any().clone())?;
+        let rule: PolicyRule = serde_json::from_value(rule_val)
+            .map_err(|e| PyValueError::new_err(format!("Invalid rule: {}", e)))?;
 
         self.policy_engine.add_rule(rule);
         Ok(())
@@ -682,21 +761,17 @@ impl PyKernel {
 /// async def evaluate_async(agent_id: str, action: str, context: dict) -> dict:
 ///     # Use run_in_executor for CPU-bound operations
 ///     loop = asyncio.get_event_loop()
-///     import json
-///     context_json = json.dumps(context)
 ///     result = await loop.run_in_executor(
 ///         None,
-///         lambda: kernel.evaluate_policy(agent_id, action, context_json)
+///         lambda: kernel.evaluate_policy(agent_id, action, context)
 ///     )
 ///     return result
 ///
 /// async def execute_tool_async(tool_id: str, agent_id: str, params: dict) -> dict:
 ///     loop = asyncio.get_event_loop()
-///     import json
-///     params_json = json.dumps(params)
 ///     result = await loop.run_in_executor(
 ///         None,
-///         lambda: kernel.execute_tool(tool_id, agent_id, "execute", params_json, 30000, 1024*1024)
+///         lambda: kernel.execute_tool(tool_id, agent_id, "execute", params, 30000, 1024*1024)
 ///     )
 ///     return result
 /// ```
@@ -729,7 +804,7 @@ async def async_policy_check(agent_id: str, action: str, context: dict) -> dict:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
         None,  # Uses default executor
-        lambda: kernel.evaluate_policy(agent_id, action, json.dumps(context))
+        lambda: kernel.evaluate_policy(agent_id, action, context)
     )
 ```
 
@@ -749,7 +824,7 @@ async def evaluate_policy(agent_id: str, action: str, context: dict):
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(
         None,
-        lambda: kernel.evaluate_policy(agent_id, action, json.dumps(context))
+        lambda: kernel.evaluate_policy(agent_id, action, context)
     )
     if result.get("effect") == "deny":
         raise HTTPException(status_code=403, detail=result.get("reason"))
@@ -760,7 +835,7 @@ async def execute_tool(tool_id: str, agent_id: str, params: dict):
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(
         None,
-        lambda: kernel.execute_tool(tool_id, agent_id, "execute", json.dumps(params), 30000, 1024*1024)
+        lambda: kernel.execute_tool(tool_id, agent_id, "execute", params, 30000, 1024*1024)
     )
     return result
 ```
@@ -780,7 +855,7 @@ async def optimized_policy_check(agent_id: str, action: str, context: dict):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
         vak_executor,
-        lambda: kernel.evaluate_policy(agent_id, action, json.dumps(context))
+        lambda: kernel.evaluate_policy(agent_id, action, context)
     )
 ```
 "#;

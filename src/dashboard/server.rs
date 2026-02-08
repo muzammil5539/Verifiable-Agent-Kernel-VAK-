@@ -5,6 +5,7 @@
 
 use super::health::{HealthChecker, HealthStatus};
 use super::metrics::MetricsCollector;
+use crate::swarm::a2a::DiscoveryService;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -81,6 +82,7 @@ pub struct DashboardServer {
     config: DashboardConfig,
     metrics: Arc<MetricsCollector>,
     health: Arc<HealthChecker>,
+    discovery: Arc<DiscoveryService>,
 }
 
 impl std::fmt::Debug for DashboardServer {
@@ -97,11 +99,13 @@ impl DashboardServer {
         config: DashboardConfig,
         metrics: Arc<MetricsCollector>,
         health: Arc<HealthChecker>,
+        discovery: Arc<DiscoveryService>,
     ) -> Self {
         Self {
             config,
             metrics,
             health,
+            discovery,
         }
     }
 
@@ -173,22 +177,32 @@ impl DashboardServer {
     }
 
     /// Handle HTTP request
-    pub fn handle_request(&self, path: &str, method: &str) -> HttpResponse {
+    pub async fn handle_request(&self, path: &str, method: &str) -> HttpResponse {
+        // Try built-in routes first
         match (method, path) {
             ("GET", "/") | ("GET", "/dashboard") if self.config.enable_dashboard => {
-                self.dashboard_response()
+                return self.dashboard_response();
             }
-            ("GET", "/metrics") if self.config.enable_metrics => self.metrics_response(),
-            ("GET", "/metrics.json") if self.config.enable_metrics => self.metrics_json_response(),
-            ("GET", "/health") if self.config.enable_health => self.health_response(),
-            ("GET", "/ready") if self.config.enable_health => self.ready_response(),
-            ("GET", "/live") if self.config.enable_health => self.live_response(),
-            ("GET", "/api/stats") => self.metrics_json_response(),
-            _ => HttpResponse {
-                status: 404,
-                content_type: "application/json".to_string(),
-                body: r#"{"error": "Not found"}"#.to_string(),
-            },
+            ("GET", "/metrics") if self.config.enable_metrics => return self.metrics_response(),
+            ("GET", "/metrics.json") if self.config.enable_metrics => {
+                return self.metrics_json_response()
+            }
+            ("GET", "/health") if self.config.enable_health => return self.health_response(),
+            ("GET", "/ready") if self.config.enable_health => return self.ready_response(),
+            ("GET", "/live") if self.config.enable_health => return self.live_response(),
+            ("GET", "/api/stats") => return self.metrics_json_response(),
+            _ => {}
+        }
+
+        // Try API extensions
+        if let Some(response) = crate::api::a2a::handle_request(&self.discovery, path, method).await {
+            return response;
+        }
+
+        HttpResponse {
+            status: 404,
+            content_type: "application/json".to_string(),
+            body: r#"{"error": "Not found"}"#.to_string(),
         }
     }
 }
@@ -403,8 +417,9 @@ mod tests {
         let config = DashboardConfig::default();
         let metrics = Arc::new(MetricsCollector::default());
         let health = Arc::new(HealthChecker::new());
+        let discovery = Arc::new(DiscoveryService::new());
 
-        let server = DashboardServer::new(config, metrics, health);
+        let server = DashboardServer::new(config, metrics, health, discovery);
 
         let response = server.metrics_response();
         assert_eq!(response.status, 200);
@@ -416,8 +431,9 @@ mod tests {
         let config = DashboardConfig::default();
         let metrics = Arc::new(MetricsCollector::default());
         let health = Arc::new(HealthChecker::new());
+        let discovery = Arc::new(DiscoveryService::new());
 
-        let server = DashboardServer::new(config, metrics, health);
+        let server = DashboardServer::new(config, metrics, health, discovery);
 
         let response = server.health_response();
         assert_eq!(response.status, 200);
@@ -429,8 +445,9 @@ mod tests {
         let config = DashboardConfig::default();
         let metrics = Arc::new(MetricsCollector::default());
         let health = Arc::new(HealthChecker::new());
+        let discovery = Arc::new(DiscoveryService::new());
 
-        let server = DashboardServer::new(config, metrics, health);
+        let server = DashboardServer::new(config, metrics, health, discovery);
 
         // Not ready by default
         let response = server.ready_response();
@@ -442,8 +459,9 @@ mod tests {
         let config = DashboardConfig::default();
         let metrics = Arc::new(MetricsCollector::default());
         let health = Arc::new(HealthChecker::new());
+        let discovery = Arc::new(DiscoveryService::new());
 
-        let server = DashboardServer::new(config, metrics, health);
+        let server = DashboardServer::new(config, metrics, health, discovery);
 
         let response = server.live_response();
         assert_eq!(response.status, 200);
@@ -454,8 +472,9 @@ mod tests {
         let config = DashboardConfig::default();
         let metrics = Arc::new(MetricsCollector::default());
         let health = Arc::new(HealthChecker::new());
+        let discovery = Arc::new(DiscoveryService::new());
 
-        let server = DashboardServer::new(config, metrics, health);
+        let server = DashboardServer::new(config, metrics, health, discovery);
 
         let response = server.dashboard_response();
         assert_eq!(response.status, 200);
@@ -463,21 +482,22 @@ mod tests {
         assert!(response.body.contains("VAK Dashboard"));
     }
 
-    #[test]
-    fn test_handle_request_routing() {
+    #[tokio::test]
+    async fn test_handle_request_routing() {
         let config = DashboardConfig::default();
         let metrics = Arc::new(MetricsCollector::default());
         let health = Arc::new(HealthChecker::new());
+        let discovery = Arc::new(DiscoveryService::new());
 
-        let server = DashboardServer::new(config, metrics, health);
+        let server = DashboardServer::new(config, metrics, health, discovery);
 
-        assert_eq!(server.handle_request("/metrics", "GET").status, 200);
-        assert_eq!(server.handle_request("/health", "GET").status, 200);
-        assert_eq!(server.handle_request("/ready", "GET").status, 503);
-        assert_eq!(server.handle_request("/live", "GET").status, 200);
-        assert_eq!(server.handle_request("/dashboard", "GET").status, 200);
-        assert_eq!(server.handle_request("/", "GET").status, 200);
-        assert_eq!(server.handle_request("/unknown", "GET").status, 404);
+        assert_eq!(server.handle_request("/metrics", "GET").await.status, 200);
+        assert_eq!(server.handle_request("/health", "GET").await.status, 200);
+        assert_eq!(server.handle_request("/ready", "GET").await.status, 503);
+        assert_eq!(server.handle_request("/live", "GET").await.status, 200);
+        assert_eq!(server.handle_request("/dashboard", "GET").await.status, 200);
+        assert_eq!(server.handle_request("/", "GET").await.status, 200);
+        assert_eq!(server.handle_request("/unknown", "GET").await.status, 404);
     }
 
     #[test]
