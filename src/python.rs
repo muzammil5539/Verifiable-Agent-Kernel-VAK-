@@ -55,12 +55,16 @@ use crate::audit::{AuditDecision, AuditLogger};
 #[pyclass(name = "PolicyDecision")]
 #[derive(Clone)]
 pub struct PyPolicyDecision {
+    /// The effect of the decision (allow/deny)
     #[pyo3(get)]
     pub effect: String,
+    /// The ID of the policy that made the decision
     #[pyo3(get)]
     pub policy_id: String,
+    /// The reason for the decision
     #[pyo3(get)]
     pub reason: String,
+    /// List of matched rule IDs
     #[pyo3(get)]
     pub matched_rules: Vec<String>,
 }
@@ -99,18 +103,25 @@ impl PyPolicyDecision {
 #[pyclass(name = "ToolResponse")]
 #[derive(Clone)]
 pub struct PyToolResponse {
+    /// Unique request identifier
     #[pyo3(get)]
     pub request_id: String,
+    /// Whether execution was successful
     #[pyo3(get)]
     pub success: bool,
+    /// The result string (if successful)
     #[pyo3(get)]
     pub result: Option<String>,
+    /// The error message (if failed)
     #[pyo3(get)]
     pub error: Option<String>,
+    /// Execution time in milliseconds
     #[pyo3(get)]
     pub execution_time_ms: f64,
+    /// Memory used in bytes
     #[pyo3(get)]
     pub memory_used_bytes: usize,
+    /// Audit trail for this execution
     #[pyo3(get)]
     pub audit_trail: Vec<String>,
 }

@@ -317,7 +317,9 @@ impl FileAuditBackend {
                 .open(&self.current_file)?;
             self.file_handle = Some(file);
         }
-        Ok(self.file_handle.as_mut().unwrap())
+        self.file_handle
+            .as_mut()
+            .ok_or_else(|| AuditError::BackendNotAvailable("File handle failed to initialize".to_string()))
     }
 
     /// Rotate log file (create new file with timestamp)
@@ -1103,6 +1105,8 @@ impl AuditLogger {
         self.last_entry_cache = Some(entry);
         self.next_id += 1;
 
+        // SAFETY: We just set last_entry_cache to Some(entry)
+        #[allow(clippy::unwrap_used)]
         self.last_entry_cache.as_ref().unwrap()
     }
 
