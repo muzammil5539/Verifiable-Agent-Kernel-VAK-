@@ -688,6 +688,90 @@ impl AutoGPTAdapter {
         agent_id: &str,
         verification_opts: Option<&VerificationOptions>,
     ) -> AdapterResult<FullVerificationResult> {
+        let verifier = TaskVerifier::new(&self.config, &self.stats, self.prm.as_ref());
+        verifier.verify(plan, agent_id, verification_opts).await
+    }
+
+    /// Monitor ongoing execution with real-time verification
+    pub async fn monitor_execution(
+        &self,
+        plan_id: &str,
+        step_number: usize,
+        output: &str,
+    ) -> MonitoringResult {
+        let plans = self.active_plans.read().await;
+
+        let state = plans.get(plan_id);
+        let execution_time = state.map(|s| s.started_at.elapsed().as_secs()).unwrap_or(0);
+
+        // Check for anomalies in output
+        let mut alerts = Vec::new();
+
+        // Check for error patterns
+        if output.to_lowercase().contains("error") || output.to_lowercase().contains("failed") {
+            alerts.push(MonitoringAlert {
+                level: AlertLevel::Medium,
+                message: "Error detected in step output".to_string(),
+                step: step_number,
+            });
+        }
+
+        // Check for timeout
+        if execution_time > self.config.max_execution_time_secs {
+            alerts.push(MonitoringAlert {
+                level: AlertLevel::Critical,
+                message: "Execution time limit exceeded".to_string(),
+                step: step_number,
+            });
+        }
+
+        // Check for sensitive data in output
+        let sensitive_patterns = ["password", "secret", "token", "api_key", "private_key"];
+        for pattern in sensitive_patterns {
+            if output.to_lowercase().contains(pattern) {
+                alerts.push(MonitoringAlert {
+                    level: AlertLevel::High,
+                    message: format!("Sensitive data pattern '{}' detected in output", pattern),
+                    step: step_number,
+                });
+            }
+        }
+
+        let should_continue = alerts.iter().all(|a| a.level < AlertLevel::Critical);
+        MonitoringResult {
+            plan_id: plan_id.to_string(),
+            current_step: step_number,
+            elapsed_secs: execution_time,
+            alerts,
+            should_continue,
+        }
+    }
+}
+
+/// Task verifier that orchestrates analysis phases
+pub struct TaskVerifier<'a> {
+    config: &'a AutoGPTConfig,
+    stats: &'a AutoGPTStats,
+    prm: Option<&'a Arc<dyn ProcessRewardModel>>,
+}
+
+impl<'a> TaskVerifier<'a> {
+    /// Create a new task verifier
+    pub fn new(
+        config: &'a AutoGPTConfig,
+        stats: &'a AutoGPTStats,
+        prm: Option<&'a Arc<dyn ProcessRewardModel>>,
+    ) -> Self {
+        Self { config, stats, prm }
+    }
+
+    /// Perform full task verification
+    pub async fn verify(
+        &self,
+        plan: &TaskPlan,
+        agent_id: &str,
+        verification_opts: Option<&VerificationOptions>,
+    ) -> AdapterResult<FullVerificationResult> {
         self.stats.plans_evaluated.fetch_add(1, Ordering::Relaxed);
         let opts = verification_opts.cloned().unwrap_or_default();
 
@@ -726,7 +810,38 @@ impl AutoGPTAdapter {
         result.resource_analysis = self.analyze_resources(plan);
 
         // Analyze timing
-        result.timing_analysis = TimingAnalysis {
+        result.timing_analysis = self.analyze_timing(plan);
+
+        // PRM Scoring
+        self.score_reasoning(plan, &mut result).await;
+
+        // Generate recommendations
+        result.recommendations = self.generate_recommendations(&result, plan);
+
+        // Final verification decision
+        result.verified = result.overall_risk < RiskLevel::Critical
+            && !result.timing_analysis.exceeds_limit
+            && result
+                .step_analyses
+                .iter()
+                .all(|s| s.blocked_commands.is_empty())
+            // If PRM flagged blocking recommendations, it affects verification
+            && !result.recommendations.iter().any(|r| r.level == RecommendationLevel::Blocking);
+
+        result.verification_time_ms = start.elapsed().as_millis() as u64;
+
+        if result.verified {
+            self.stats.plans_approved.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.stats.plans_rejected.fetch_add(1, Ordering::Relaxed);
+        }
+
+        Ok(result)
+    }
+
+    /// Analyze timing constraints
+    fn analyze_timing(&self, plan: &TaskPlan) -> TimingAnalysis {
+        TimingAnalysis {
             estimated_duration_secs: plan
                 .estimated_time_secs
                 .unwrap_or_else(|| plan.steps.len() as u64 * 30),
@@ -737,10 +852,12 @@ impl AutoGPTAdapter {
                 .unwrap_or(false),
             step_count: plan.steps.len(),
             max_allowed_steps: self.config.max_steps,
-        };
+        }
+    }
 
-        // PRM Scoring
-        if let Some(prm) = &self.prm {
+    /// Score reasoning with PRM
+    async fn score_reasoning(&self, plan: &TaskPlan, result: &mut FullVerificationResult) {
+        if let Some(prm) = self.prm {
             let reasoning_steps: Vec<ReasoningStep> = plan
                 .steps
                 .iter()
@@ -771,29 +888,6 @@ impl AutoGPTAdapter {
                 }
             }
         }
-
-        // Generate recommendations
-        result.recommendations = self.generate_recommendations(&result, plan);
-
-        // Final verification decision
-        result.verified = result.overall_risk < RiskLevel::Critical
-            && !result.timing_analysis.exceeds_limit
-            && result
-                .step_analyses
-                .iter()
-                .all(|s| s.blocked_commands.is_empty())
-            // If PRM flagged blocking recommendations, it affects verification
-            && !result.recommendations.iter().any(|r| r.level == RecommendationLevel::Blocking);
-
-        result.verification_time_ms = start.elapsed().as_millis() as u64;
-
-        if result.verified {
-            self.stats.plans_approved.fetch_add(1, Ordering::Relaxed);
-        } else {
-            self.stats.plans_rejected.fetch_add(1, Ordering::Relaxed);
-        }
-
-        Ok(result)
     }
 
     /// Analyze the goal for risks
@@ -1017,61 +1111,6 @@ impl AutoGPTAdapter {
         }
 
         recommendations
-    }
-
-    /// Monitor ongoing execution with real-time verification
-    pub async fn monitor_execution(
-        &self,
-        plan_id: &str,
-        step_number: usize,
-        output: &str,
-    ) -> MonitoringResult {
-        let plans = self.active_plans.read().await;
-
-        let state = plans.get(plan_id);
-        let execution_time = state.map(|s| s.started_at.elapsed().as_secs()).unwrap_or(0);
-
-        // Check for anomalies in output
-        let mut alerts = Vec::new();
-
-        // Check for error patterns
-        if output.to_lowercase().contains("error") || output.to_lowercase().contains("failed") {
-            alerts.push(MonitoringAlert {
-                level: AlertLevel::Medium,
-                message: "Error detected in step output".to_string(),
-                step: step_number,
-            });
-        }
-
-        // Check for timeout
-        if execution_time > self.config.max_execution_time_secs {
-            alerts.push(MonitoringAlert {
-                level: AlertLevel::Critical,
-                message: "Execution time limit exceeded".to_string(),
-                step: step_number,
-            });
-        }
-
-        // Check for sensitive data in output
-        let sensitive_patterns = ["password", "secret", "token", "api_key", "private_key"];
-        for pattern in sensitive_patterns {
-            if output.to_lowercase().contains(pattern) {
-                alerts.push(MonitoringAlert {
-                    level: AlertLevel::High,
-                    message: format!("Sensitive data pattern '{}' detected in output", pattern),
-                    step: step_number,
-                });
-            }
-        }
-
-        let should_continue = alerts.iter().all(|a| a.level < AlertLevel::Critical);
-        MonitoringResult {
-            plan_id: plan_id.to_string(),
-            current_step: step_number,
-            elapsed_secs: execution_time,
-            alerts,
-            should_continue,
-        }
     }
 }
 
@@ -1378,5 +1417,21 @@ mod tests {
 
         let failure = ExecutionResult::failure("false", 1, "");
         assert!(!failure.is_success());
+    }
+
+    #[tokio::test]
+    async fn test_verify_task_full() {
+        let config = AutoGPTConfig::default();
+        let adapter = AutoGPTAdapter::new(config);
+
+        let plan = TaskPlan::new("Delete all files")
+            .with_command_step("remove everything", "rm -rf /");
+
+        let result = adapter.verify_task_full(&plan, "agent-1", None).await.unwrap();
+
+        assert!(!result.verified);
+        assert!(result.overall_risk >= RiskLevel::High);
+        assert!(result.goal_analysis.is_high_risk);
+        assert!(!result.step_analyses[0].blocked_commands.is_empty());
     }
 }
