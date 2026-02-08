@@ -21,17 +21,9 @@ all-features = true
 # Path to advisory database
 db-path = "~/.cargo/advisory-db"
 # URL of the advisory database
-url = ["https://github.com/rustsec/advisory-db"]
-# How to handle vulnerabilities
-vulnerability = "deny"
-# How to handle unmaintained crates
-unmaintained = "warn"
+db-urls = ["https://github.com/rustsec/advisory-db"]
 # How to handle yanked crates
 yanked = "warn"
-# How to handle crates with security notices
-notice = "warn"
-# Minimum severity to trigger denial
-severity-threshold = "medium"
 # Ignore specific advisories (with justification)
 ignore = [
     # Example: "RUSTSEC-2020-0001", # Reason for ignoring
@@ -41,12 +33,14 @@ ignore = [
 # Licenses - Ensure license compliance
 # ============================================================================
 [licenses]
-# How to handle unlicensed crates
-unlicensed = "deny"
-# How to handle copyleft licenses
-copyleft = "warn"
-# Allow OSI-approved or FSF free licenses
-allow-osi-fsf-free = "either"
+# How to handle unlicensed crates (deprecated key 'unlicensed' removed)
+# Default is usually deny if not allowed.
+
+# How to handle copyleft licenses (deprecated key 'copyleft' removed)
+# We handle this by explicitly denying/allowing licenses below.
+
+# Allow OSI-approved or FSF free licenses (deprecated key 'allow-osi-fsf-free' removed)
+
 # Confidence threshold for license detection
 confidence-threshold = 0.8
 
@@ -66,24 +60,12 @@ allow = [
     "CC0-1.0",
     "BSL-1.0",
     "Unlicense",
+    "CDLA-Permissive-2.0",
 ]
 
 # Explicitly denied licenses (copyleft/incompatible)
-deny = [
-    "AGPL-3.0",
-    "AGPL-3.0-only",
-    "AGPL-3.0-or-later",
-    "GPL-2.0",
-    "GPL-2.0-only",
-    "GPL-2.0-or-later",
-    "GPL-3.0",
-    "GPL-3.0-only",
-    "GPL-3.0-or-later",
-    "LGPL-2.0",
-    "LGPL-2.1",
-    "LGPL-3.0",
-    "SSPL-1.0",
-]
+# The 'deny' key in [licenses] is deprecated in favor of allow-list only or [bans].
+# However, for clarity we can list them here if supported, but let's stick to 'allow' for safety.
 
 # Private crates (internal use only)
 private = { ignore = true }
