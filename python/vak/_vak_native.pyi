@@ -68,7 +68,7 @@ class Kernel:
         """Shutdown the kernel."""
         ...
     
-    def register_agent(self, agent_id: str, name: str, config_json: str) -> None:
+    def register_agent(self, agent_id: str, name: str, config: Dict[str, Any]) -> None:
         """Register an agent with the kernel."""
         ...
     
@@ -80,7 +80,7 @@ class Kernel:
         self,
         agent_id: str,
         action: str,
-        context_json: str,
+        context: Dict[str, Any],
     ) -> Dict[str, str]:
         """Evaluate a policy for an action."""
         ...
@@ -90,7 +90,7 @@ class Kernel:
         tool_id: str,
         agent_id: str,
         action: str,
-        params_json: str,
+        params: Dict[str, Any],
         timeout_ms: int,
         memory_limit: int,
     ) -> Dict[str, str]:
@@ -123,7 +123,7 @@ class Kernel:
         """Get detailed information about a specific skill."""
         ...
     
-    def get_audit_logs(self, filters_json: str) -> List[Dict[str, str]]:
+    def get_audit_logs(self, filters: Dict[str, Any]) -> List[Dict[str, str]]:
         """Get audit logs with optional filtering."""
         ...
     
@@ -131,7 +131,7 @@ class Kernel:
         """Get a specific audit entry."""
         ...
     
-    def create_audit_entry(self, entry_json: str) -> str:
+    def create_audit_entry(self, entry_data: Dict[str, Any]) -> str:
         """Create an audit entry and return its ID."""
         ...
     
@@ -143,7 +143,7 @@ class Kernel:
         """Get the audit chain's current root hash."""
         ...
     
-    def add_policy_rule(self, rule_json: str) -> None:
+    def add_policy_rule(self, rule_dict: Dict[str, Any]) -> None:
         """Add a policy rule."""
         ...
     
