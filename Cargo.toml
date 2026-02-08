@@ -150,6 +150,10 @@ glob.workspace = true
 name = "kernel_benchmarks"
 harness = false
 
+[[bench]]
+name = "audit_benchmarks"
+harness = false
+
 # Build profiles
 [profile.dev]
 opt-level = 0

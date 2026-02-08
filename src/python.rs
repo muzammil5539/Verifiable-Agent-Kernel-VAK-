@@ -591,7 +591,12 @@ impl PyKernel {
 
         // Get audit entries from logger
         let mut results = Vec::new();
-        for entry in self.audit_logger.entries() {
+        let entries = self
+            .audit_logger
+            .load_all_entries()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+
+        for entry in entries {
             if let Some(agent) = agent_filter {
                 if entry.agent_id != agent {
                     continue;
@@ -627,7 +632,11 @@ impl PyKernel {
             .parse()
             .map_err(|_| PyValueError::new_err("Invalid entry ID"))?;
 
-        if let Some(entry) = self.audit_logger.get_entry(id) {
+        if let Some(entry) = self
+            .audit_logger
+            .get_entry(id)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
+        {
             let mut entry_map = HashMap::new();
             entry_map.insert("entry_id".to_string(), entry.id.to_string());
             entry_map.insert("timestamp".to_string(), entry.timestamp.to_string());
@@ -691,7 +700,7 @@ impl PyKernel {
             return Err(PyRuntimeError::new_err("Kernel not initialized"));
         }
 
-        Ok(self.audit_logger.entries().last().map(|e| e.hash.clone()))
+        Ok(self.audit_logger.last_entry().map(|e| e.hash.clone()))
     }
 
     /// Add a policy rule
@@ -738,7 +747,7 @@ impl PyKernel {
             self.initialized,
             self.agents.len(),
             self.skill_registry.len(),
-            self.audit_logger.entries().len()
+            self.audit_logger.count().unwrap_or(0)
         )
     }
 }
