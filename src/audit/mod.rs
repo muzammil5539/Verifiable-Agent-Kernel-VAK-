@@ -169,6 +169,10 @@ pub enum AuditError {
     /// Chain verification failed
     #[error("Chain verification failed: {0}")]
     ChainVerificationFailed(String),
+
+    /// Storage error
+    #[error("Storage error: {0}")]
+    StorageError(String),
 }
 
 // ============================================================================
@@ -294,7 +298,12 @@ impl FileAuditBackend {
                 .open(&self.current_file)?;
             self.file_handle = Some(file);
         }
-        Ok(self.file_handle.as_mut().unwrap())
+        self.file_handle.as_mut().ok_or_else(|| {
+            AuditError::IoError(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "File handle not available",
+            ))
+        })
     }
 
     /// Rotate log file (create new file with timestamp)
@@ -988,7 +997,8 @@ impl AuditLogger {
         self.entries.push(entry);
         self.next_id += 1;
 
-        self.entries.last().unwrap()
+        #[allow(clippy::expect_used)]
+        self.entries.last().expect("Entry was just added")
     }
 
     /// Static hash computation function (for use before self is available)

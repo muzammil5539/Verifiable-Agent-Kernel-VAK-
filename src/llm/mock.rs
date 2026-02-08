@@ -3,6 +3,8 @@
 //! This module provides a mock LLM provider that can be configured to return
 //! specific responses, making it useful for testing code that depends on LLM providers.
 
+#![allow(clippy::unwrap_used)]
+
 use async_trait::async_trait;
 use futures::Stream;
 use std::collections::VecDeque;

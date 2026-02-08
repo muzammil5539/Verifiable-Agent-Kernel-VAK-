@@ -420,7 +420,7 @@ impl IntegratedPolicyEngine {
         }
 
         // Factor 3: Sensitive resource access
-        let sensitive_patterns = vec![
+        let sensitive_patterns = [
             "secret",
             "password",
             "key",
@@ -442,7 +442,7 @@ impl IntegratedPolicyEngine {
         }
 
         // Factor 4: Destructive action
-        let destructive_actions = vec!["delete", "drop", "remove", "truncate", "destroy"];
+        let destructive_actions = ["delete", "drop", "remove", "truncate", "destroy"];
         if destructive_actions
             .iter()
             .any(|a| action.to_lowercase().contains(a))

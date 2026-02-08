@@ -69,6 +69,10 @@ pub enum ConstraintError {
     #[error("Parsing failed: {0}")]
     ParseFailed(String),
 
+    /// Parse error
+    #[error("Parse error: {0}")]
+    ParseError(String),
+
     /// Validation failed
     #[error("Validation failed: {0}")]
     ValidationFailed(String),
@@ -252,7 +256,7 @@ impl DatalogConstraint {
     pub fn with_arity(mut self, predicate: impl Into<String>, arity: usize) -> Self {
         self.allowed_arities
             .entry(predicate.into())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(arity);
         self
     }
@@ -439,8 +443,8 @@ impl DatalogFact {
     }
 
     /// Convert to string representation
-    pub fn to_string(&self) -> String {
-        let args: Vec<String> = self.arguments.iter().map(|a| a.to_string()).collect();
+    pub fn to_string_repr(&self) -> String {
+        let args: Vec<String> = self.arguments.iter().map(|a| a.to_string_repr()).collect();
         format!("{}({})", self.predicate, args.join(", "))
     }
 }
@@ -465,14 +469,14 @@ pub enum DatalogTerm {
 
 impl DatalogTerm {
     /// Convert to string representation
-    pub fn to_string(&self) -> String {
+    pub fn to_string_repr(&self) -> String {
         match self {
             DatalogTerm::String(s) => format!("\"{}\"", s),
             DatalogTerm::Integer(i) => i.to_string(),
             DatalogTerm::Float(f) => f.to_string(),
             DatalogTerm::Variable(v) => v.clone(),
             DatalogTerm::Compound { functor, args } => {
-                let args_str: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+                let args_str: Vec<String> = args.iter().map(|a| a.to_string_repr()).collect();
                 format!("{}({})", functor, args_str.join(", "))
             }
         }
@@ -521,12 +525,13 @@ impl ConstrainedDecoder {
         Self {
             grammar_cache: HashMap::new(),
             // Match patterns like: Predicate(arg1, arg2, ...)
-            datalog_fact_regex: Regex::new(r#"^([A-Z][a-zA-Z0-9_]*)\s*\(\s*(.+)\s*\)$"#).unwrap(),
+            datalog_fact_regex: Regex::new(r#"^([A-Z][a-zA-Z0-9_]*)\s*\(\s*(.+)\s*\)$"#)
+                .expect("Valid regex"),
             // Match patterns like: {"action": "...", "target": "...", ...}
             vak_action_regex: Regex::new(
                 r#"\{\s*"action"\s*:\s*"([^"]+)"\s*,\s*"target"\s*:\s*"([^"]+)".*\}"#,
             )
-            .unwrap(),
+            .expect("Valid regex"),
         }
     }
 
@@ -568,8 +573,15 @@ impl ConstrainedDecoder {
             let line = line.trim_end_matches('.');
 
             if let Some(caps) = self.datalog_fact_regex.captures(line) {
-                let predicate = caps.get(1).unwrap().as_str().to_string();
-                let args_str = caps.get(2).unwrap().as_str();
+                let predicate = caps
+                    .get(1)
+                    .ok_or(ConstraintError::ParseError("Missing predicate".into()))?
+                    .as_str()
+                    .to_string();
+                let args_str = caps
+                    .get(2)
+                    .ok_or(ConstraintError::ParseError("Missing arguments".into()))?
+                    .as_str();
                 let arguments = self.parse_datalog_args(args_str)?;
 
                 facts.push(DatalogFact {
@@ -637,8 +649,16 @@ impl ConstrainedDecoder {
         // Try regex fallback
         if let Some(caps) = self.vak_action_regex.captures(output) {
             return Ok(ParsedVakAction {
-                action_type: caps.get(1).unwrap().as_str().to_string(),
-                target: caps.get(2).unwrap().as_str().to_string(),
+                action_type: caps
+                    .get(1)
+                    .ok_or(ConstraintError::ParseError("Missing action type".into()))?
+                    .as_str()
+                    .to_string(),
+                target: caps
+                    .get(2)
+                    .ok_or(ConstraintError::ParseError("Missing target".into()))?
+                    .as_str()
+                    .to_string(),
                 parameters: HashMap::new(),
                 confidence: None,
                 reasoning: None,

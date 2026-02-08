@@ -241,11 +241,12 @@ impl LiteLlmClient {
                         | LlmError::ContextLengthExceeded { .. } => {
                             return Err(e);
                         }
-                        LlmError::RateLimited { retry_after } => {
-                            if let Some(duration) = retry_after {
-                                retry_delay = *duration;
-                            }
+                        LlmError::RateLimited {
+                            retry_after: Some(duration),
+                        } => {
+                            retry_delay = *duration;
                         }
+                        LlmError::RateLimited { retry_after: None } => {}
                         _ => {}
                     }
 
