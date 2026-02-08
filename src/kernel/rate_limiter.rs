@@ -369,9 +369,9 @@ impl RateLimiter {
     /// Check agent token bucket
     async fn check_agent_bucket(&self, agent_id: &str) -> bool {
         let mut buckets = self.agent_buckets.write().await;
-        let bucket = buckets
-            .entry(agent_id.to_string())
-            .or_insert_with(|| TokenBucket::new(self.config.default_burst, self.config.default_rps));
+        let bucket = buckets.entry(agent_id.to_string()).or_insert_with(|| {
+            TokenBucket::new(self.config.default_burst, self.config.default_rps)
+        });
         bucket.try_consume()
     }
 
