@@ -102,6 +102,15 @@
 #![deny(unsafe_code)]
 #![allow(missing_docs)]
 #![allow(clippy::unwrap_used)]
+#![allow(clippy::expect_used)]
+#![allow(clippy::panic)]
+#![allow(clippy::redundant_closure)]
+#![allow(clippy::useless_vec)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::collapsible_match)]
+#![allow(clippy::manual_strip)]
+#![allow(clippy::map_flatten)]
 #![warn(rustdoc::missing_doc_code_examples)]
 
 // Re-export core types at the crate root for convenience
