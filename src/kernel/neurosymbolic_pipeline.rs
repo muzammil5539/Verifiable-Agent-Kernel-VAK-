@@ -719,13 +719,42 @@ pub trait PrmScorer: Send + Sync {
     fn score(&self, action: &ProposedAction, context: &HashMap<String, String>) -> PrmScore;
 }
 
-/// Default PRM scorer
-pub struct DefaultPrmScorer {
+/// Configuration for the PRM scorer
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrmScorerConfig {
     /// Weights for different components
-    weights: HashMap<String, f64>,
+    pub weights: HashMap<String, f64>,
+    /// High threshold for reasoning length (characters)
+    pub reasoning_length_high: usize,
+    /// Medium threshold for reasoning length (characters)
+    pub reasoning_length_medium: usize,
+    /// Score for high reasoning quality
+    pub reasoning_score_high: f64,
+    /// Score for medium reasoning quality
+    pub reasoning_score_medium: f64,
+    /// Score for low reasoning quality
+    pub reasoning_score_low: f64,
+    /// High threshold for parameter count
+    pub param_count_high: usize,
+    /// Medium threshold for parameter count
+    pub param_count_medium: usize,
+    /// Score for high specificity
+    pub specificity_score_high: f64,
+    /// Score for medium specificity
+    pub specificity_score_medium: f64,
+    /// Score for low specificity
+    pub specificity_score_low: f64,
+    /// Keywords indicating safety risk
+    pub safety_keywords: Vec<String>,
+    /// Score for low safety (risk detected)
+    pub safety_score_low: f64,
+    /// Score for high safety (no risk detected)
+    pub safety_score_high: f64,
+    /// Threshold for providing feedback
+    pub feedback_threshold: f64,
 }
 
-impl Default for DefaultPrmScorer {
+impl Default for PrmScorerConfig {
     fn default() -> Self {
         Self {
             weights: HashMap::from([
@@ -734,7 +763,42 @@ impl Default for DefaultPrmScorer {
                 ("action_specificity".to_string(), 0.2),
                 ("safety".to_string(), 0.2),
             ]),
+            reasoning_length_high: 50,
+            reasoning_length_medium: 10,
+            reasoning_score_high: 0.8,
+            reasoning_score_medium: 0.5,
+            reasoning_score_low: 0.2,
+            param_count_high: 2,
+            param_count_medium: 0,
+            specificity_score_high: 0.9,
+            specificity_score_medium: 0.6,
+            specificity_score_low: 0.3,
+            safety_keywords: vec!["sensitive".to_string(), "secret".to_string()],
+            safety_score_low: 0.3,
+            safety_score_high: 0.9,
+            feedback_threshold: 0.5,
         }
+    }
+}
+
+/// Default PRM scorer
+pub struct DefaultPrmScorer {
+    /// Configuration
+    config: PrmScorerConfig,
+}
+
+impl Default for DefaultPrmScorer {
+    fn default() -> Self {
+        Self {
+            config: PrmScorerConfig::default(),
+        }
+    }
+}
+
+impl DefaultPrmScorer {
+    /// Create a new scorer with custom configuration
+    pub fn new(config: PrmScorerConfig) -> Self {
+        Self { config }
     }
 }
 
@@ -746,42 +810,42 @@ impl PrmScorer for DefaultPrmScorer {
         components.insert("confidence".to_string(), action.confidence);
 
         // Reasoning quality (based on length and content)
-        let reasoning_score = if action.reasoning.len() > 50 {
-            0.8
-        } else if action.reasoning.len() > 10 {
-            0.5
+        let reasoning_score = if action.reasoning.len() > self.config.reasoning_length_high {
+            self.config.reasoning_score_high
+        } else if action.reasoning.len() > self.config.reasoning_length_medium {
+            self.config.reasoning_score_medium
         } else {
-            0.2
+            self.config.reasoning_score_low
         };
         components.insert("reasoning_quality".to_string(), reasoning_score);
 
         // Action specificity (based on parameters)
-        let specificity = if action.parameters.len() > 2 {
-            0.9
-        } else if action.parameters.len() > 0 {
-            0.6
+        let specificity = if action.parameters.len() > self.config.param_count_high {
+            self.config.specificity_score_high
+        } else if action.parameters.len() > self.config.param_count_medium {
+            self.config.specificity_score_medium
         } else {
-            0.3
+            self.config.specificity_score_low
         };
         components.insert("action_specificity".to_string(), specificity);
 
         // Safety score (inverse of risk indicators)
-        let safety = if action.target.contains("sensitive") || action.target.contains("secret") {
-            0.3
+        let safety = if self.config.safety_keywords.iter().any(|k| action.target.contains(k)) {
+            self.config.safety_score_low
         } else {
-            0.9
+            self.config.safety_score_high
         };
         components.insert("safety".to_string(), safety);
 
         // Calculate weighted score
         let mut score = 0.0;
         for (component, value) in &components {
-            if let Some(weight) = self.weights.get(component) {
+            if let Some(weight) = self.config.weights.get(component) {
                 score += value * weight;
             }
         }
 
-        let feedback = if score < 0.5 {
+        let feedback = if score < self.config.feedback_threshold {
             Some("Consider providing more detailed reasoning and explicit parameters".to_string())
         } else {
             None
@@ -1219,5 +1283,32 @@ mod tests {
 
         let score = scorer.score(&action, &context);
         assert!(score.score < 0.5);
+    }
+
+    #[test]
+    fn test_custom_prm_scorer_config() {
+        let mut config = PrmScorerConfig::default();
+        // Make strict requirements
+        config.reasoning_length_high = 100;
+        config.reasoning_score_high = 1.0;
+        config.reasoning_score_medium = 0.5;
+        config.reasoning_score_low = 0.0;
+
+        let scorer = DefaultPrmScorer::new(config);
+        let context = HashMap::new();
+
+        // Action with reasoning length 60 (which is > 50 but < 100)
+        // Original scorer would give 0.8 (high), but new config should give 0.5 (medium)
+        let action = ProposedAction::new(
+            "read_file",
+            "/data/config.json",
+            "This reasoning is definitely longer than fifty characters but shorter than one hundred characters.",
+        )
+        .with_confidence(1.0);
+
+        let score = scorer.score(&action, &context);
+
+        // Check reasoning quality component specifically
+        assert_eq!(score.components.get("reasoning_quality"), Some(&0.5));
     }
 }
