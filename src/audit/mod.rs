@@ -1043,32 +1043,42 @@ impl AuditLogger {
                 &self.entries[i - 1].hash
             };
 
-            if entry.prev_hash != *expected_prev {
-                return Err(AuditVerificationError::BrokenChain {
-                    entry_id: entry.id,
-                    expected: expected_prev.clone(),
-                    found: entry.prev_hash.clone(),
-                });
-            }
+            Self::verify_entry_link(entry, expected_prev)?;
+        }
 
-            // Verify entry hash
-            let computed_hash = Self::compute_hash_static(
-                entry.id,
-                entry.timestamp,
-                &entry.agent_id,
-                &entry.action,
-                &entry.resource,
-                &entry.decision,
-                &entry.prev_hash,
-            );
+        Ok(())
+    }
 
-            if entry.hash != computed_hash {
-                return Err(AuditVerificationError::InvalidHash {
-                    entry_id: entry.id,
-                    expected: computed_hash,
-                    found: entry.hash.clone(),
-                });
-            }
+    /// Verifies a single entry's link in the chain
+    fn verify_entry_link(
+        entry: &AuditEntry,
+        expected_prev_hash: &str,
+    ) -> Result<(), AuditVerificationError> {
+        if entry.prev_hash != expected_prev_hash {
+            return Err(AuditVerificationError::BrokenChain {
+                entry_id: entry.id,
+                expected: expected_prev_hash.to_string(),
+                found: entry.prev_hash.clone(),
+            });
+        }
+
+        // Verify entry hash
+        let computed_hash = Self::compute_hash_static(
+            entry.id,
+            entry.timestamp,
+            &entry.agent_id,
+            &entry.action,
+            &entry.resource,
+            &entry.decision,
+            &entry.prev_hash,
+        );
+
+        if entry.hash != computed_hash {
+            return Err(AuditVerificationError::InvalidHash {
+                entry_id: entry.id,
+                expected: computed_hash,
+                found: entry.hash.clone(),
+            });
         }
 
         Ok(())
