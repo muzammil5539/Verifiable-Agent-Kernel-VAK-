@@ -102,6 +102,9 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 #![warn(rustdoc::missing_doc_code_examples)]
+// Allow unwrap_used and expect_used for legacy code pending refactor (ISSUE-123)
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::expect_used)]
 
 // Re-export core types at the crate root for convenience
 pub use kernel::types::{
