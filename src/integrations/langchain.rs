@@ -39,12 +39,13 @@ use crate::integrations::common::{
     ActionContext, ActionType, AdapterError, AdapterResult, BaseAdapterConfig, HookDecision,
     InterceptionHook, InterceptionResult, VakConnection,
 };
+use crate::kernel::rate_limiter::{RateLimiter, ResourceKey};
+use crate::reasoner::{ProcessRewardModel, ReasoningStep};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::RwLock;
 
 // ============================================================================
 // Configuration
@@ -250,8 +251,10 @@ pub struct LangChainAdapter {
     hooks: Vec<Arc<dyn InterceptionHook>>,
     /// Statistics
     stats: AdapterStats,
-    /// Rate limiting state
-    rate_limits: RwLock<HashMap<String, RateLimitState>>,
+    /// Rate limiter (optional)
+    rate_limiter: Option<Arc<RateLimiter>>,
+    /// PRM model (optional)
+    prm: Option<Arc<dyn ProcessRewardModel>>,
 }
 
 /// Adapter statistics
@@ -265,13 +268,6 @@ pub struct AdapterStats {
     pub prm_rejections: AtomicU64,
 }
 
-/// Rate limit state for an agent
-#[derive(Debug, Default)]
-struct RateLimitState {
-    tokens: f64,
-    last_update: Option<Instant>,
-}
-
 impl LangChainAdapter {
     /// Create a new LangChain adapter
     pub fn new(config: LangChainConfig) -> Self {
@@ -280,13 +276,26 @@ impl LangChainAdapter {
             vak_connection: VakConnection::local(),
             hooks: Vec::new(),
             stats: AdapterStats::default(),
-            rate_limits: RwLock::new(HashMap::new()),
+            rate_limiter: None,
+            prm: None,
         }
     }
 
     /// Create with VAK connection
     pub fn with_connection(mut self, connection: VakConnection) -> Self {
         self.vak_connection = connection;
+        self
+    }
+
+    /// Set rate limiter
+    pub fn with_rate_limiter(mut self, rate_limiter: Arc<RateLimiter>) -> Self {
+        self.rate_limiter = Some(rate_limiter);
+        self
+    }
+
+    /// Set PRM model
+    pub fn with_prm(mut self, prm: Arc<dyn ProcessRewardModel>) -> Self {
+        self.prm = Some(prm);
         self
     }
 
@@ -303,35 +312,19 @@ impl LangChainAdapter {
 
     /// Check rate limit for an agent
     async fn check_rate_limit(&self, agent_id: &str) -> AdapterResult<()> {
-        if let Some(limit) = self.config.base.rate_limit_per_minute {
-            let mut limits = self.rate_limits.write().await;
-            let state = limits.entry(agent_id.to_string()).or_default();
-
-            let now = Instant::now();
-            let rate = limit as f64 / 60.0; // Tokens per second
-
-            // Refill tokens based on elapsed time
-            if let Some(last) = state.last_update {
-                let elapsed = now.duration_since(last).as_secs_f64();
-                state.tokens = (state.tokens + elapsed * rate).min(limit as f64);
-            } else {
-                state.tokens = limit as f64;
+        if let Some(limiter) = &self.rate_limiter {
+            // Check global agent limit
+            let key = ResourceKey::new(agent_id, "execute", "tool");
+            let result = limiter.check(&key).await;
+            if !result.allowed {
+                return Err(AdapterError::RateLimited(format!(
+                    "Agent {} exceeded rate limit. Retry after {}s",
+                    agent_id,
+                    result.retry_after_secs.unwrap_or(1)
+                )));
             }
-            state.last_update = Some(now);
-
-            // Check if we have tokens
-            if state.tokens >= 1.0 {
-                state.tokens -= 1.0;
-                Ok(())
-            } else {
-                Err(AdapterError::RateLimited(format!(
-                    "Agent {} exceeded rate limit",
-                    agent_id
-                )))
-            }
-        } else {
-            Ok(())
         }
+        Ok(())
     }
 
     /// Intercept a tool call
@@ -631,7 +624,24 @@ impl LangChainAdapter {
 
     /// Evaluate PRM score for a reasoning context
     async fn evaluate_prm_score(&self, ctx: &ReasoningContext, action: &str) -> f64 {
-        // Simplified PRM scoring based on reasoning quality indicators
+        // Use real PRM if available
+        if let Some(prm) = &self.prm {
+            let step_num = ctx.reasoning_steps.len() + 1;
+            let thought = ctx.reasoning_steps.last().cloned().unwrap_or_default();
+            let step = ReasoningStep::new(step_num, thought).with_action(action);
+
+            let context_str = ctx.goal.clone().unwrap_or_else(|| "Unknown goal".to_string());
+
+            match prm.score_step(&step, &context_str).await {
+                Ok(score) => return score.score,
+                Err(e) => {
+                    tracing::warn!("PRM scoring failed: {}", e);
+                    // Fallback to heuristic
+                }
+            }
+        }
+
+        // Simplified PRM scoring based on reasoning quality indicators (fallback)
         let mut score = 0.5; // Base score
 
         // Check reasoning chain length (longer chains may indicate more thorough reasoning)

@@ -146,6 +146,11 @@ pub mod swarm;
 /// agent frameworks to use VAK as a verification layer.
 pub mod integrations;
 
+/// API module.
+///
+/// Provides HTTP API endpoints for VAK features.
+pub mod api;
+
 /// CLI tools module.
 ///
 /// Provides command-line utilities for VAK operations including
