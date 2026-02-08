@@ -70,7 +70,11 @@ impl FileAuditBackend {
                 .open(&self.current_file)?;
             self.file_handle = Some(file);
         }
-        Ok(self.file_handle.as_mut().unwrap())
+
+        match self.file_handle.as_mut() {
+            Some(file) => Ok(file),
+            None => Err(AuditError::BackendNotAvailable("Failed to create or open log file".to_string())),
+        }
     }
 
     /// Rotate log file (create new file with timestamp)
@@ -180,6 +184,8 @@ impl AuditBackend for FileAuditBackend {
 }
 
 #[cfg(test)]
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use tempfile::tempdir;

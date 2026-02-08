@@ -194,7 +194,8 @@ impl AuditLogger {
         self.entries.push(entry);
         self.next_id += 1;
 
-        self.entries.last().unwrap()
+        // self.entries.last() should never be None here
+        self.entries.last().expect("Entry pushed but not found")
     }
 
     /// Static hash computation function (for use before self is available)
@@ -369,6 +370,8 @@ impl Default for AuditLogger {
 }
 
 #[cfg(test)]
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use tempfile::tempdir;

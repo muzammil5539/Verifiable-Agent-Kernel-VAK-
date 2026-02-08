@@ -63,6 +63,8 @@ impl AuditBackend for MemoryAuditBackend {
 }
 
 #[cfg(test)]
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::audit::types::AuditDecision;

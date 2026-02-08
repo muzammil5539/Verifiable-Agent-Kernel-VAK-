@@ -23,7 +23,7 @@ serde_json = "1.0"
 serde_yaml = "0.9"
 
 # Error handling
-thiserror = "1.0"
+thiserror = "2.0" # Updated to match lock file/usage
 anyhow = "1.0"
 
 # Logging and observability
@@ -39,8 +39,8 @@ rand = "0.8"
 # Database (Issue #4)
 rusqlite = { version = "0.32", features = ["bundled"] }
 
-# WASM runtime
-wasmtime = "27.0"
+# WASM runtime - Security update RUSTSEC-2025-0118, RUSTSEC-2025-0046
+wasmtime = "28.0" # Updated from 27.0
 
 # Identifiers
 uuid = { version = "1.6", features = ["v4", "v7", "serde"] }
@@ -61,7 +61,8 @@ arc-swap = "1.7"
 rs_merkle = "1.5"
 
 # HTTP client (using rustls for TLS to avoid system OpenSSL dependency)
-reqwest = { version = "0.11", default-features = false, features = ["json", "stream", "rustls-tls"] }
+# reqwest 0.11 uses rustls-pemfile 1.0.4 which is unmaintained. Updating to 0.12.
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 
 # Streaming
 futures = "0.3"
@@ -76,8 +77,8 @@ regex = "1.10"
 # Graph data structure for knowledge graphs
 petgraph = "0.6"
 
-# Python bindings
-pyo3 = { version = "0.23", features = ["extension-module"] }
+# Python bindings - Security update RUSTSEC-2025-0020
+pyo3 = { version = "0.24", features = ["extension-module"] }
 
 # Compression
 flate2 = "1.0"
