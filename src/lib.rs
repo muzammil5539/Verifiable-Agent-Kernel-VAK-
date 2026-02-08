@@ -102,6 +102,8 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 #![warn(rustdoc::missing_doc_code_examples)]
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+#![cfg_attr(test, allow(clippy::expect_used))]
 
 // Re-export core types at the crate root for convenience
 pub use kernel::types::{
@@ -145,6 +147,11 @@ pub mod swarm;
 /// Provides middleware adapters for LangChain, AutoGPT, and other
 /// agent frameworks to use VAK as a verification layer.
 pub mod integrations;
+
+/// API module.
+///
+/// Provides HTTP API endpoints for VAK features.
+pub mod api;
 
 /// CLI tools module.
 ///

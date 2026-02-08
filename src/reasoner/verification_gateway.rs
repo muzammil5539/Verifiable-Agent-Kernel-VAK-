@@ -178,6 +178,8 @@ pub enum ActionCategory {
     /// Database operations
     Database,
     /// Financial transactions
+    Financial,
+    /// Authentication operations
     Auth,
     /// System administration
     System,

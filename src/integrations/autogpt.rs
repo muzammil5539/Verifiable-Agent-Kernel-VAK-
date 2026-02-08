@@ -37,6 +37,8 @@ use crate::integrations::common::{
     ActionContext, ActionType, AdapterResult, AlertLevel, BaseAdapterConfig, HookDecision,
     InterceptionHook, InterceptionResult, VakConnection,
 };
+use crate::kernel::rate_limiter::{RateLimiter, ResourceKey};
+use crate::reasoner::{ProcessRewardModel, ReasoningStep};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -343,6 +345,12 @@ pub struct AutoGPTAdapter {
     stats: AutoGPTStats,
     /// Active plans being tracked
     active_plans: RwLock<HashMap<String, PlanExecutionState>>,
+    /// Rate limiter (optional)
+    rate_limiter: Option<Arc<RateLimiter>>,
+    /// PRM model (optional)
+    prm: Option<Arc<dyn ProcessRewardModel>>,
+    /// Blocked commands regex set
+    blocked_commands_set: regex::RegexSet,
 }
 
 /// Statistics for AutoGPT adapter
@@ -397,18 +405,45 @@ impl PlanExecutionState {
 impl AutoGPTAdapter {
     /// Create a new AutoGPT adapter
     pub fn new(config: AutoGPTConfig) -> Self {
+        // Compile regex set for blocked commands
+        // We use (?i) to make it case insensitive and escape the command to treat it as a literal
+        let patterns: Vec<String> = config
+            .blocked_commands
+            .iter()
+            .map(|cmd| format!("(?i){}", regex::escape(cmd)))
+            .collect();
+
+        // Unwrap is safe here because we are escaping all inputs
+        let blocked_commands_set = regex::RegexSet::new(patterns)
+            .expect("Failed to compile blocked commands regex set");
+
         Self {
             config,
             vak_connection: VakConnection::local(),
             hooks: Vec::new(),
             stats: AutoGPTStats::default(),
             active_plans: RwLock::new(HashMap::new()),
+            rate_limiter: None,
+            prm: None,
+            blocked_commands_set,
         }
     }
 
     /// Create with VAK connection
     pub fn with_connection(mut self, connection: VakConnection) -> Self {
         self.vak_connection = connection;
+        self
+    }
+
+    /// Set rate limiter
+    pub fn with_rate_limiter(mut self, rate_limiter: Arc<RateLimiter>) -> Self {
+        self.rate_limiter = Some(rate_limiter);
+        self
+    }
+
+    /// Set PRM model
+    pub fn with_prm(mut self, prm: Arc<dyn ProcessRewardModel>) -> Self {
+        self.prm = Some(prm);
         self
     }
 
@@ -429,11 +464,7 @@ impl AutoGPTAdapter {
 
     /// Check if a command is blocked
     fn is_blocked_command(&self, command: &str) -> bool {
-        let cmd_lower = command.to_lowercase();
-        self.config
-            .blocked_commands
-            .iter()
-            .any(|b| cmd_lower.contains(&b.to_lowercase()))
+        self.blocked_commands_set.is_match(command)
     }
 
     /// Evaluate a task plan
@@ -465,7 +496,19 @@ impl AutoGPTAdapter {
         }
 
         // Check for blocked commands
-        let blocked_steps = plan.has_blocked_commands(&self.config.blocked_commands);
+        let blocked_steps: Vec<usize> = plan
+            .steps
+            .iter()
+            .filter_map(|step| {
+                if let Some(ref cmd) = step.command {
+                    if self.blocked_commands_set.is_match(cmd) {
+                        return Some(step.step_number);
+                    }
+                }
+                None
+            })
+            .collect();
+
         if !blocked_steps.is_empty() {
             issues.push(format!(
                 "Steps {:?} contain blocked commands",
@@ -526,6 +569,20 @@ impl AutoGPTAdapter {
         self.stats
             .commands_intercepted
             .fetch_add(1, Ordering::Relaxed);
+
+        // Check rate limit
+        if let Some(limiter) = &self.rate_limiter {
+            let key = ResourceKey::new(agent_id, "execute", "command");
+            let result = limiter.check(&key).await;
+            if !result.allowed {
+                use crate::integrations::common::AdapterError;
+                return Err(AdapterError::RateLimited(format!(
+                    "Agent {} exceeded rate limit. Retry after {}s",
+                    agent_id,
+                    result.retry_after_secs.unwrap_or(1)
+                )));
+            }
+        }
 
         let context = ActionContext::new(ActionType::CommandExecution, command, agent_id);
 
@@ -705,6 +762,39 @@ impl AutoGPTAdapter {
             max_allowed_steps: self.config.max_steps,
         };
 
+        // PRM Scoring
+        if let Some(prm) = &self.prm {
+            let reasoning_steps: Vec<ReasoningStep> = plan
+                .steps
+                .iter()
+                .map(|s| {
+                    ReasoningStep::new(s.step_number, &s.description)
+                        .with_action(s.command.clone().unwrap_or_default())
+                })
+                .collect();
+
+            match prm.score_trajectory(&reasoning_steps, &plan.goal).await {
+                Ok(scores) => {
+                    let avg_score: f64 = scores.iter().map(|s| s.score).sum::<f64>() / scores.len() as f64;
+                    if avg_score < self.config.base.prm_threshold {
+                        result.overall_risk = result.overall_risk.max(RiskLevel::High);
+                        result.recommendations.push(VerificationRecommendation {
+                            level: RecommendationLevel::Blocking,
+                            category: "reasoning".to_string(),
+                            message: format!(
+                                "Plan reasoning quality low (score: {:.2}). Consider revising.",
+                                avg_score
+                            ),
+                            action: Some("revise_plan".to_string()),
+                        });
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("PRM scoring failed: {}", e);
+                }
+            }
+        }
+
         // Generate recommendations
         result.recommendations = self.generate_recommendations(&result, plan);
 
@@ -714,7 +804,9 @@ impl AutoGPTAdapter {
             && result
                 .step_analyses
                 .iter()
-                .all(|s| s.blocked_commands.is_empty());
+                .all(|s| s.blocked_commands.is_empty())
+            // If PRM flagged blocking recommendations, it affects verification
+            && !result.recommendations.iter().any(|r| r.level == RecommendationLevel::Blocking);
 
         result.verification_time_ms = start.elapsed().as_millis() as u64;
 
@@ -793,15 +885,14 @@ impl AutoGPTAdapter {
 
         if let Some(ref command) = step.command {
             // Check for blocked commands
-            for blocked in &self.config.blocked_commands {
-                if command.to_lowercase().contains(&blocked.to_lowercase()) {
-                    analysis.blocked_commands.push(BlockedCommandInfo {
-                        pattern: blocked.clone(),
-                        found_in: command.clone(),
-                        reason: format!("Command pattern '{}' is blocked", blocked),
-                    });
-                    analysis.risk_level = RiskLevel::Critical;
-                }
+            for match_index in self.blocked_commands_set.matches(command).iter() {
+                let blocked = &self.config.blocked_commands[match_index];
+                analysis.blocked_commands.push(BlockedCommandInfo {
+                    pattern: blocked.clone(),
+                    found_in: command.clone(),
+                    reason: format!("Command pattern '{}' is blocked", blocked),
+                });
+                analysis.risk_level = RiskLevel::Critical;
             }
 
             // Analyze command patterns

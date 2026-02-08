@@ -210,6 +210,8 @@ pub struct FlightEvent {
     pub metadata: Option<serde_json::Value>,
     /// Whether this is a shadow mode event
     pub shadow_mode: bool,
+    /// State hash (for deterministic replay)
+    pub state_hash: Option<String>,
     /// Hash of this event (for chain integrity)
     pub hash: String,
     /// Hash of previous event (chain linkage)
@@ -247,6 +249,7 @@ impl FlightEvent {
             error: None,
             metadata: None,
             shadow_mode: false,
+            state_hash: None,
             hash: String::new(),
             prev_hash: String::new(),
         }
@@ -324,13 +327,19 @@ impl FlightEvent {
         self
     }
 
+    /// Builder: set state hash
+    pub fn with_state_hash(mut self, state_hash: impl Into<String>) -> Self {
+        self.state_hash = Some(state_hash.into());
+        self
+    }
+
     /// Calculate and set the hash for this event
     pub fn compute_hash(&mut self, prev_hash: &str) {
         self.prev_hash = prev_hash.to_string();
 
         // Hash the event content (excluding hash fields)
         let content = format!(
-            "{}:{}:{}:{}:{}:{:?}:{:?}:{:?}:{:?}:{}",
+            "{}:{}:{}:{}:{}:{:?}:{:?}:{:?}:{:?}:{}:{:?}",
             self.event_id,
             self.trace_id,
             self.timestamp,
@@ -341,6 +350,7 @@ impl FlightEvent {
             self.decision,
             self.shadow_mode,
             self.prev_hash,
+            self.state_hash
         );
 
         let mut hasher = Sha256::new();
@@ -968,6 +978,88 @@ impl ReplayEngine {
         summary.trace_count = self.trace_ids().len();
         summary
     }
+
+    /// Replay a trace using a provided executor
+    ///
+    /// This method allows deterministic replay of a recorded trace by executing
+    /// the actions again and comparing the results with the recorded outputs.
+    ///
+    /// # Arguments
+    /// * `trace_id` - The trace to replay
+    /// * `executor` - Async closure that takes an event and returns the execution result
+    pub async fn replay_trace<F, Fut>(
+        &self,
+        trace_id: &str,
+        mut executor: F,
+    ) -> Result<ReplayReport, String>
+    where
+        F: FnMut(&FlightEvent) -> Fut,
+        Fut: std::future::Future<Output = Result<Option<serde_json::Value>, String>>,
+    {
+        let events = self.get_trace(trace_id);
+        if events.is_empty() {
+            return Err(format!("Trace {} not found", trace_id));
+        }
+
+        let mut report = ReplayReport {
+            trace_id: trace_id.to_string(),
+            events_replayed: 0,
+            matches: 0,
+            mismatches: 0,
+            errors: 0,
+            mismatch_details: Vec::new(),
+        };
+
+        for event in events {
+            // Only replay events that imply action/computation
+            match event.event_type {
+                EventType::ToolExecution | EventType::PolicyEvaluation | EventType::Request => {
+                    report.events_replayed += 1;
+                    match executor(event).await {
+                        Ok(actual_output) => {
+                            // Compare output if recorded
+                            if let Some(recorded_output) = &event.output {
+                                if let Some(actual) = &actual_output {
+                                    if recorded_output == actual {
+                                        report.matches += 1;
+                                    } else {
+                                        report.mismatches += 1;
+                                        report.mismatch_details.push(MismatchDetail {
+                                            event_id: event.event_id.clone(),
+                                            expected: recorded_output.clone(),
+                                            actual: actual.clone(),
+                                        });
+                                    }
+                                } else {
+                                    // Recorded output exists but actual is None
+                                    report.mismatches += 1;
+                                    report.mismatch_details.push(MismatchDetail {
+                                        event_id: event.event_id.clone(),
+                                        expected: recorded_output.clone(),
+                                        actual: serde_json::Value::Null,
+                                    });
+                                }
+                            } else {
+                                // No recorded output to compare
+                                report.matches += 1;
+                            }
+                        }
+                        Err(e) => {
+                            report.errors += 1;
+                            report.mismatch_details.push(MismatchDetail {
+                                event_id: event.event_id.clone(),
+                                expected: serde_json::Value::String("Success".to_string()),
+                                actual: serde_json::Value::String(format!("Error: {}", e)),
+                            });
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Ok(report)
+    }
 }
 
 /// Summary of replay statistics
@@ -982,6 +1074,25 @@ pub struct ReplaySummary {
     pub tool_executions: usize,
     pub error_count: usize,
     pub decisions: HashMap<String, usize>,
+}
+
+/// Report from a replay execution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayReport {
+    pub trace_id: String,
+    pub events_replayed: usize,
+    pub matches: usize,
+    pub mismatches: usize,
+    pub errors: usize,
+    pub mismatch_details: Vec<MismatchDetail>,
+}
+
+/// Detail of a replay mismatch
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MismatchDetail {
+    pub event_id: String,
+    pub expected: serde_json::Value,
+    pub actual: serde_json::Value,
 }
 
 // ============================================================================

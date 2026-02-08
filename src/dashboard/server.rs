@@ -5,6 +5,7 @@
 
 use super::health::{HealthChecker, HealthStatus};
 use super::metrics::MetricsCollector;
+use crate::swarm::a2a::DiscoveryService;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -81,6 +82,7 @@ pub struct DashboardServer {
     config: DashboardConfig,
     metrics: Arc<MetricsCollector>,
     health: Arc<HealthChecker>,
+    discovery: Arc<DiscoveryService>,
 }
 
 impl std::fmt::Debug for DashboardServer {
@@ -97,11 +99,13 @@ impl DashboardServer {
         config: DashboardConfig,
         metrics: Arc<MetricsCollector>,
         health: Arc<HealthChecker>,
+        discovery: Arc<DiscoveryService>,
     ) -> Self {
         Self {
             config,
             metrics,
             health,
+            discovery,
         }
     }
 
@@ -173,22 +177,32 @@ impl DashboardServer {
     }
 
     /// Handle HTTP request
-    pub fn handle_request(&self, path: &str, method: &str) -> HttpResponse {
+    pub async fn handle_request(&self, path: &str, method: &str) -> HttpResponse {
+        // Try built-in routes first
         match (method, path) {
             ("GET", "/") | ("GET", "/dashboard") if self.config.enable_dashboard => {
-                self.dashboard_response()
+                return self.dashboard_response();
             }
-            ("GET", "/metrics") if self.config.enable_metrics => self.metrics_response(),
-            ("GET", "/metrics.json") if self.config.enable_metrics => self.metrics_json_response(),
-            ("GET", "/health") if self.config.enable_health => self.health_response(),
-            ("GET", "/ready") if self.config.enable_health => self.ready_response(),
-            ("GET", "/live") if self.config.enable_health => self.live_response(),
-            ("GET", "/api/stats") => self.metrics_json_response(),
-            _ => HttpResponse {
-                status: 404,
-                content_type: "application/json".to_string(),
-                body: r#"{"error": "Not found"}"#.to_string(),
-            },
+            ("GET", "/metrics") if self.config.enable_metrics => return self.metrics_response(),
+            ("GET", "/metrics.json") if self.config.enable_metrics => {
+                return self.metrics_json_response()
+            }
+            ("GET", "/health") if self.config.enable_health => return self.health_response(),
+            ("GET", "/ready") if self.config.enable_health => return self.ready_response(),
+            ("GET", "/live") if self.config.enable_health => return self.live_response(),
+            ("GET", "/api/stats") => return self.metrics_json_response(),
+            _ => {}
+        }
+
+        // Try API extensions
+        if let Some(response) = crate::api::a2a::handle_request(&self.discovery, path, method).await {
+            return response;
+        }
+
+        HttpResponse {
+            status: 404,
+            content_type: "application/json".to_string(),
+            body: r#"{"error": "Not found"}"#.to_string(),
         }
     }
 }
@@ -244,300 +258,7 @@ fn generate_dashboard_html(
     let metrics_json = metrics.to_json();
 
     format!(
-        r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="refresh" content="{refresh}">
-    <title>{title}</title>
-    <style>
-        :root {{
-            --bg-primary: #0f172a;
-            --bg-secondary: #1e293b;
-            --bg-tertiary: #334155;
-            --text-primary: #f1f5f9;
-            --text-secondary: #94a3b8;
-            --accent-green: #22c55e;
-            --accent-yellow: #eab308;
-            --accent-red: #ef4444;
-            --accent-blue: #3b82f6;
-            --accent-purple: #a855f7;
-        }}
-        
-        * {{
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }}
-        
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            background: var(--bg-primary);
-            color: var(--text-primary);
-            min-height: 100vh;
-            padding: 2rem;
-        }}
-        
-        .container {{
-            max-width: 1400px;
-            margin: 0 auto;
-        }}
-        
-        header {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 2rem;
-            padding-bottom: 1rem;
-            border-bottom: 1px solid var(--bg-tertiary);
-        }}
-        
-        h1 {{
-            font-size: 1.75rem;
-            font-weight: 600;
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }}
-        
-        .logo {{
-            width: 32px;
-            height: 32px;
-            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
-            border-radius: 8px;
-        }}
-        
-        .status-badge {{
-            padding: 0.5rem 1rem;
-            border-radius: 9999px;
-            font-size: 0.875rem;
-            font-weight: 500;
-        }}
-        
-        .status-healthy {{
-            background: rgba(34, 197, 94, 0.2);
-            color: var(--accent-green);
-        }}
-        
-        .status-degraded {{
-            background: rgba(234, 179, 8, 0.2);
-            color: var(--accent-yellow);
-        }}
-        
-        .status-unhealthy {{
-            background: rgba(239, 68, 68, 0.2);
-            color: var(--accent-red);
-        }}
-        
-        .grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 1.5rem;
-            margin-bottom: 2rem;
-        }}
-        
-        .card {{
-            background: var(--bg-secondary);
-            border-radius: 12px;
-            padding: 1.5rem;
-            border: 1px solid var(--bg-tertiary);
-        }}
-        
-        .card-title {{
-            font-size: 0.875rem;
-            color: var(--text-secondary);
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            margin-bottom: 0.75rem;
-        }}
-        
-        .card-value {{
-            font-size: 2.25rem;
-            font-weight: 700;
-            color: var(--text-primary);
-        }}
-        
-        .card-subtitle {{
-            font-size: 0.75rem;
-            color: var(--text-secondary);
-            margin-top: 0.25rem;
-        }}
-        
-        .metrics-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-        }}
-        
-        .metric {{
-            background: var(--bg-tertiary);
-            padding: 1rem;
-            border-radius: 8px;
-        }}
-        
-        .metric-label {{
-            font-size: 0.75rem;
-            color: var(--text-secondary);
-            margin-bottom: 0.25rem;
-        }}
-        
-        .metric-value {{
-            font-size: 1.25rem;
-            font-weight: 600;
-        }}
-        
-        .components {{
-            margin-top: 2rem;
-        }}
-        
-        .component {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 1rem;
-            background: var(--bg-tertiary);
-            border-radius: 8px;
-            margin-bottom: 0.5rem;
-        }}
-        
-        .component-name {{
-            font-weight: 500;
-        }}
-        
-        .component-status {{
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }}
-        
-        .status-dot {{
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-        }}
-        
-        .status-dot.healthy {{
-            background: var(--accent-green);
-        }}
-        
-        .status-dot.degraded {{
-            background: var(--accent-yellow);
-        }}
-        
-        .status-dot.unhealthy {{
-            background: var(--accent-red);
-        }}
-        
-        footer {{
-            margin-top: 2rem;
-            padding-top: 1rem;
-            border-top: 1px solid var(--bg-tertiary);
-            display: flex;
-            justify-content: space-between;
-            color: var(--text-secondary);
-            font-size: 0.75rem;
-        }}
-        
-        .links a {{
-            color: var(--accent-blue);
-            text-decoration: none;
-            margin-left: 1rem;
-        }}
-        
-        .links a:hover {{
-            text-decoration: underline;
-        }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <header>
-            <h1>
-                <div class="logo"></div>
-                {title}
-            </h1>
-            <span class="status-badge status-{status_class}">{status}</span>
-        </header>
-        
-        <div class="grid">
-            <div class="card">
-                <div class="card-title">Uptime</div>
-                <div class="card-value">{uptime}</div>
-                <div class="card-subtitle">Since last restart</div>
-            </div>
-            
-            <div class="card">
-                <div class="card-title">Policy Evaluations</div>
-                <div class="card-value">{policy_total}</div>
-                <div class="card-subtitle">{policy_allowed} allowed / {policy_denied} denied</div>
-            </div>
-            
-            <div class="card">
-                <div class="card-title">Tool Executions</div>
-                <div class="card-value">{tool_total}</div>
-                <div class="card-subtitle">{tool_success} success / {tool_failure} failure</div>
-            </div>
-            
-            <div class="card">
-                <div class="card-title">Active Agents</div>
-                <div class="card-value">{active_agents}</div>
-                <div class="card-subtitle">{active_sessions} active sessions</div>
-            </div>
-        </div>
-        
-        <div class="card">
-            <div class="card-title">Metrics Overview</div>
-            <div class="metrics-grid">
-                <div class="metric">
-                    <div class="metric-label">Audit Entries</div>
-                    <div class="metric-value">{audit_entries}</div>
-                </div>
-                <div class="metric">
-                    <div class="metric-label">PRM Evaluations</div>
-                    <div class="metric-value">{prm_evaluations}</div>
-                </div>
-                <div class="metric">
-                    <div class="metric-label">Backtrack Triggers</div>
-                    <div class="metric-value">{prm_backtracks}</div>
-                </div>
-                <div class="metric">
-                    <div class="metric-label">WASM Executions</div>
-                    <div class="metric-value">{wasm_executions}</div>
-                </div>
-                <div class="metric">
-                    <div class="metric-label">Skills Loaded</div>
-                    <div class="metric-value">{skills_loaded}</div>
-                </div>
-                <div class="metric">
-                    <div class="metric-label">Memory Usage</div>
-                    <div class="metric-value">{memory_usage}</div>
-                </div>
-            </div>
-        </div>
-        
-        <div class="card components">
-            <div class="card-title">Component Health</div>
-            {components_html}
-        </div>
-        
-        <footer>
-            <div>VAK v{version} • Auto-refresh every {refresh}s</div>
-            <div class="links">
-                <a href="/metrics">Prometheus Metrics</a>
-                <a href="/health">Health JSON</a>
-                <a href="/ready">Readiness</a>
-                <a href="/api/stats">API Stats</a>
-            </div>
-        </footer>
-    </div>
-    
-    <script>
-        // Auto-refresh handled by meta tag
-        console.log('VAK Dashboard loaded');
-    </script>
-</body>
-</html>"#,
+        include_str!("dashboard.html"),
         refresh = config.refresh_interval_secs,
         title = config.title,
         status = format!("{:?}", health_check.status),
@@ -585,13 +306,7 @@ fn generate_components_html(
         let message = component.message.as_deref().unwrap_or("");
 
         html.push_str(&format!(
-            r#"<div class="component">
-                <span class="component-name">{name}</span>
-                <div class="component-status">
-                    {message}
-                    <span class="status-dot {status_class}"></span>
-                </div>
-            </div>"#,
+            include_str!("component.html"),
             name = name,
             message = if message.is_empty() {
                 "".to_string()
@@ -702,8 +417,9 @@ mod tests {
         let config = DashboardConfig::default();
         let metrics = Arc::new(MetricsCollector::default());
         let health = Arc::new(HealthChecker::new());
+        let discovery = Arc::new(DiscoveryService::new());
 
-        let server = DashboardServer::new(config, metrics, health);
+        let server = DashboardServer::new(config, metrics, health, discovery);
 
         let response = server.metrics_response();
         assert_eq!(response.status, 200);
@@ -715,8 +431,9 @@ mod tests {
         let config = DashboardConfig::default();
         let metrics = Arc::new(MetricsCollector::default());
         let health = Arc::new(HealthChecker::new());
+        let discovery = Arc::new(DiscoveryService::new());
 
-        let server = DashboardServer::new(config, metrics, health);
+        let server = DashboardServer::new(config, metrics, health, discovery);
 
         let response = server.health_response();
         assert_eq!(response.status, 200);
@@ -728,8 +445,9 @@ mod tests {
         let config = DashboardConfig::default();
         let metrics = Arc::new(MetricsCollector::default());
         let health = Arc::new(HealthChecker::new());
+        let discovery = Arc::new(DiscoveryService::new());
 
-        let server = DashboardServer::new(config, metrics, health);
+        let server = DashboardServer::new(config, metrics, health, discovery);
 
         // Not ready by default
         let response = server.ready_response();
@@ -741,8 +459,9 @@ mod tests {
         let config = DashboardConfig::default();
         let metrics = Arc::new(MetricsCollector::default());
         let health = Arc::new(HealthChecker::new());
+        let discovery = Arc::new(DiscoveryService::new());
 
-        let server = DashboardServer::new(config, metrics, health);
+        let server = DashboardServer::new(config, metrics, health, discovery);
 
         let response = server.live_response();
         assert_eq!(response.status, 200);
@@ -753,8 +472,9 @@ mod tests {
         let config = DashboardConfig::default();
         let metrics = Arc::new(MetricsCollector::default());
         let health = Arc::new(HealthChecker::new());
+        let discovery = Arc::new(DiscoveryService::new());
 
-        let server = DashboardServer::new(config, metrics, health);
+        let server = DashboardServer::new(config, metrics, health, discovery);
 
         let response = server.dashboard_response();
         assert_eq!(response.status, 200);
@@ -762,21 +482,22 @@ mod tests {
         assert!(response.body.contains("VAK Dashboard"));
     }
 
-    #[test]
-    fn test_handle_request_routing() {
+    #[tokio::test]
+    async fn test_handle_request_routing() {
         let config = DashboardConfig::default();
         let metrics = Arc::new(MetricsCollector::default());
         let health = Arc::new(HealthChecker::new());
+        let discovery = Arc::new(DiscoveryService::new());
 
-        let server = DashboardServer::new(config, metrics, health);
+        let server = DashboardServer::new(config, metrics, health, discovery);
 
-        assert_eq!(server.handle_request("/metrics", "GET").status, 200);
-        assert_eq!(server.handle_request("/health", "GET").status, 200);
-        assert_eq!(server.handle_request("/ready", "GET").status, 503);
-        assert_eq!(server.handle_request("/live", "GET").status, 200);
-        assert_eq!(server.handle_request("/dashboard", "GET").status, 200);
-        assert_eq!(server.handle_request("/", "GET").status, 200);
-        assert_eq!(server.handle_request("/unknown", "GET").status, 404);
+        assert_eq!(server.handle_request("/metrics", "GET").await.status, 200);
+        assert_eq!(server.handle_request("/health", "GET").await.status, 200);
+        assert_eq!(server.handle_request("/ready", "GET").await.status, 503);
+        assert_eq!(server.handle_request("/live", "GET").await.status, 200);
+        assert_eq!(server.handle_request("/dashboard", "GET").await.status, 200);
+        assert_eq!(server.handle_request("/", "GET").await.status, 200);
+        assert_eq!(server.handle_request("/unknown", "GET").await.status, 404);
     }
 
     #[test]

@@ -55,12 +55,16 @@ use crate::audit::{AuditDecision, AuditLogger};
 #[pyclass(name = "PolicyDecision")]
 #[derive(Clone)]
 pub struct PyPolicyDecision {
+    /// The effect of the decision (allow/deny)
     #[pyo3(get)]
     pub effect: String,
+    /// The ID of the policy that made the decision
     #[pyo3(get)]
     pub policy_id: String,
+    /// The reason for the decision
     #[pyo3(get)]
     pub reason: String,
+    /// List of matched rule IDs
     #[pyo3(get)]
     pub matched_rules: Vec<String>,
 }
@@ -99,18 +103,25 @@ impl PyPolicyDecision {
 #[pyclass(name = "ToolResponse")]
 #[derive(Clone)]
 pub struct PyToolResponse {
+    /// Unique request identifier
     #[pyo3(get)]
     pub request_id: String,
+    /// Whether execution was successful
     #[pyo3(get)]
     pub success: bool,
+    /// The result string (if successful)
     #[pyo3(get)]
     pub result: Option<String>,
+    /// The error message (if failed)
     #[pyo3(get)]
     pub error: Option<String>,
+    /// Execution time in milliseconds
     #[pyo3(get)]
     pub execution_time_ms: f64,
+    /// Memory used in bytes
     #[pyo3(get)]
     pub memory_used_bytes: usize,
+    /// Audit trail for this execution
     #[pyo3(get)]
     pub audit_trail: Vec<String>,
 }
@@ -625,7 +636,12 @@ impl PyKernel {
 
         // Get audit entries from logger
         let mut results = Vec::new();
-        for entry in self.audit_logger.entries() {
+        let entries = self
+            .audit_logger
+            .load_all_entries()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+
+        for entry in entries {
             if let Some(agent) = agent_filter {
                 if entry.agent_id != agent {
                     continue;
@@ -661,7 +677,11 @@ impl PyKernel {
             .parse()
             .map_err(|_| PyValueError::new_err("Invalid entry ID"))?;
 
-        if let Some(entry) = self.audit_logger.get_entry(id) {
+        if let Some(entry) = self
+            .audit_logger
+            .get_entry(id)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
+        {
             let mut entry_map = HashMap::new();
             entry_map.insert("entry_id".to_string(), entry.id.to_string());
             entry_map.insert("timestamp".to_string(), entry.timestamp.to_string());
@@ -725,7 +745,7 @@ impl PyKernel {
             return Err(PyRuntimeError::new_err("Kernel not initialized"));
         }
 
-        Ok(self.audit_logger.entries().last().map(|e| e.hash.clone()))
+        Ok(self.audit_logger.last_entry().map(|e| e.hash.clone()))
     }
 
     /// Add a policy rule
@@ -772,7 +792,7 @@ impl PyKernel {
             self.initialized,
             self.agents.len(),
             self.skill_registry.len(),
-            self.audit_logger.entries().len()
+            self.audit_logger.count().unwrap_or(0)
         )
     }
 }
