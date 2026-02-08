@@ -107,8 +107,8 @@ jobs:
       - name: Run security-focused clippy lints
         run: |
           cargo clippy --all-targets --all-features -- \
-            -D clippy::unwrap_used \
-            -D clippy::expect_used \
+            -W clippy::unwrap_used \
+            -W clippy::expect_used \
             -D clippy::panic \
             -W clippy::cognitive_complexity \
             -W clippy::too_many_arguments

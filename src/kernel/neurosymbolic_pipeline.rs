@@ -925,15 +925,16 @@ impl NeuroSymbolicPipeline {
                 }
             }
 
-            let check = self
-                .policy_checker
-                .check(&plan.agent_id, plan.actions.first().unwrap());
-            stage_timings.insert(
-                "policy_check".to_string(),
-                stage_start.elapsed().as_millis() as u64,
-            );
-
-            Some(check)
+            if let Some(first_action) = plan.actions.first() {
+                let check = self.policy_checker.check(&plan.agent_id, first_action);
+                stage_timings.insert(
+                    "policy_check".to_string(),
+                    stage_start.elapsed().as_millis() as u64,
+                );
+                Some(check)
+            } else {
+                None
+            }
         } else {
             None
         };

@@ -40,7 +40,7 @@ rand = "0.8"
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 # WASM runtime
-wasmtime = "27.0"
+wasmtime = "35.0"
 
 # Identifiers
 uuid = { version = "1.6", features = ["v4", "v7", "serde"] }
@@ -77,7 +77,7 @@ regex = "1.10"
 petgraph = "0.6"
 
 # Python bindings
-pyo3 = { version = "0.23", features = ["extension-module"] }
+pyo3 = { version = "0.24.1", features = ["extension-module"] }
 
 # Compression
 flate2 = "1.0"
