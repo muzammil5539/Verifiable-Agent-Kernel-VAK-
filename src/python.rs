@@ -36,7 +36,7 @@
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 #[cfg(feature = "python")]
-use pyo3::types::{PyAny, PyDict, PyList};
+use pyo3::types::{PyAny, PyDict, PyList, PyTuple};
 
 #[cfg(feature = "python")]
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
@@ -203,7 +203,8 @@ fn py_to_json(obj: Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
     if let Ok(dict) = obj.downcast::<PyDict>() {
         let mut map = serde_json::Map::new();
         for (k, v) in dict.iter() {
-            let key = k.extract::<String>()?;
+            // Mirror Python's json.dumps behavior: coerce dict keys via str(k)
+            let key = k.str()?.to_string_lossy().into_owned();
             let value = py_to_json(v)?;
             map.insert(key, value);
         }
@@ -218,6 +219,15 @@ fn py_to_json(obj: Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
         return Ok(serde_json::Value::Array(vec));
     }
 
+    // Handle tuples like lists (matching json.dumps behavior)
+    if let Ok(tuple) = obj.downcast::<PyTuple>() {
+        let mut vec = Vec::new();
+        for v in tuple.iter() {
+            vec.push(py_to_json(v)?);
+        }
+        return Ok(serde_json::Value::Array(vec));
+    }
+
     if let Ok(s) = obj.extract::<String>() {
         return Ok(serde_json::Value::String(s));
     }
@@ -226,12 +236,22 @@ fn py_to_json(obj: Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
         return Ok(serde_json::Value::Number(i.into()));
     }
 
+    // Try u64 for large positive integers before falling back to f64
+    if let Ok(u) = obj.extract::<u64>() {
+        return Ok(serde_json::Value::Number(u.into()));
+    }
+
     if let Ok(f) = obj.extract::<f64>() {
-        if let Some(n) = serde_json::Number::from_f64(f) {
-            return Ok(serde_json::Value::Number(n));
-        } else {
-            return Ok(serde_json::Value::Null);
+        if f.is_finite() {
+            if let Some(n) = serde_json::Number::from_f64(f) {
+                return Ok(serde_json::Value::Number(n));
+            }
         }
+        // Raise error for non-finite floats instead of silently converting to null
+        return Err(PyValueError::new_err(format!(
+            "Non-finite float value ({}) cannot be converted to JSON",
+            f
+        )));
     }
 
     Err(PyValueError::new_err(format!(
@@ -339,7 +359,9 @@ impl PyKernel {
 
         // Convert Python dictionary to JSON string for internal storage
         let config_val = py_to_json(config.as_any().clone())?;
-        let config_json = serde_json::to_string(&config_val).unwrap_or_else(|_| "{}".to_string());
+        let config_json = serde_json::to_string(&config_val).map_err(|e| {
+            PyValueError::new_err(format!("Failed to serialize agent config to JSON: {}", e))
+        })?;
 
         let mut agent_data = HashMap::new();
         agent_data.insert("name".to_string(), name.to_string());
@@ -475,7 +497,8 @@ impl PyKernel {
 
         // Convert Python dictionary to serde_json::Value
         let params_val = py_to_json(params.as_any().clone())?;
-        let params_json = serde_json::to_string(&params_val).unwrap_or_else(|_| "{}".to_string());
+        let params_json = serde_json::to_string(&params_val)
+            .map_err(|e| PyValueError::new_err(format!("Failed to serialize params: {}", e)))?;
 
         let mut result = HashMap::new();
         result.insert("request_id".to_string(), request_id);
@@ -834,7 +857,6 @@ async def async_policy_check(agent_id: str, action: str, context: dict) -> dict:
 from fastapi import FastAPI, HTTPException
 from vak import VakKernel
 import asyncio
-import json
 
 app = FastAPI()
 kernel = VakKernel.default()
@@ -925,14 +947,19 @@ mod tests {
 
     #[test]
     fn test_py_kernel_agent_registration() {
-        let mut kernel = PyKernel::default().unwrap();
+        pyo3::prepare_freethreaded_python();
+        
+        Python::with_gil(|py| {
+            let mut kernel = PyKernel::default().unwrap();
+            let empty_dict = PyDict::new(py);
 
-        kernel
-            .register_agent("test-agent", "Test Agent", "{}")
-            .unwrap();
-        assert!(kernel.agents.contains_key("test-agent"));
+            kernel
+                .register_agent("test-agent", "Test Agent", empty_dict.bind(py).clone())
+                .unwrap();
+            assert!(kernel.agents.contains_key("test-agent"));
 
-        kernel.unregister_agent("test-agent").unwrap();
-        assert!(!kernel.agents.contains_key("test-agent"));
+            kernel.unregister_agent("test-agent").unwrap();
+            assert!(!kernel.agents.contains_key("test-agent"));
+        });
     }
 }
