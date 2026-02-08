@@ -608,38 +608,19 @@ impl HostFuncLinker {
             .func_wrap(
                 "vak",
                 "fs_read",
-                move |mut caller: Caller<'_, HostFuncState>,
+                move |caller: Caller<'_, HostFuncState>,
                       path_ptr: i32,
                       path_len: i32|
                       -> AnyhowResult<i64> {
-                    let state = caller.data().clone();
-
-                    // Read the path from WASM memory
-                    let resource = match read_string_from_wasm(&mut caller, path_ptr, path_len) {
-                        Ok(path) => path,
-                        Err(e) => {
-                            warn!(error = %e, "Failed to read path from WASM memory");
-                            return Ok(-1i64); // Memory error
-                        }
-                    };
-
-                    let operation = || {
-                        if enforce_policy && !permissions_read.is_allowed("fs_read", &resource) {
-                            return Err(HostFuncError::PermissionDenied {
-                                action: "fs_read".to_string(),
-                                resource: resource.clone(),
-                            });
-                        }
-
-                        debug!(agent_id = %state.agent_id, resource = %resource, "fs_read executed");
-                        Ok(0i64)
-                    };
-
-                    if catch_panics {
-                        with_panic_boundary(operation).map_err(|e| anyhow!(e))
-                    } else {
-                        operation().map_err(|e| anyhow!(e))
-                    }
+                    Self::handle_fs_op(
+                        caller,
+                        path_ptr,
+                        path_len,
+                        &permissions_read,
+                        "fs_read",
+                        enforce_policy,
+                        catch_panics,
+                    )
                 },
             )
             .map_err(|e| HostFuncError::Internal(e.to_string()))?;
@@ -653,45 +634,71 @@ impl HostFuncLinker {
             .func_wrap(
                 "vak",
                 "fs_write",
-                move |mut caller: Caller<'_, HostFuncState>,
+                move |caller: Caller<'_, HostFuncState>,
                       path_ptr: i32,
                       path_len: i32,
                       _data_ptr: i32,
                       _data_len: i32|
                       -> AnyhowResult<i64> {
-                    let state = caller.data().clone();
-
-                    // Read the path from WASM memory
-                    let resource = match read_string_from_wasm(&mut caller, path_ptr, path_len) {
-                        Ok(path) => path,
-                        Err(e) => {
-                            warn!(error = %e, "Failed to read path from WASM memory");
-                            return Ok(-1i64); // Memory error
-                        }
-                    };
-
-                    let operation = || {
-                        if enforce_policy && !permissions_write.is_allowed("fs_write", &resource) {
-                            return Err(HostFuncError::PermissionDenied {
-                                action: "fs_write".to_string(),
-                                resource: resource.clone(),
-                            });
-                        }
-
-                        debug!(agent_id = %state.agent_id, resource = %resource, "fs_write executed");
-                        Ok(0i64)
-                    };
-
-                    if catch_panics {
-                        with_panic_boundary(operation).map_err(|e| anyhow!(e))
-                    } else {
-                        operation().map_err(|e| anyhow!(e))
-                    }
+                    Self::handle_fs_op(
+                        caller,
+                        path_ptr,
+                        path_len,
+                        &permissions_write,
+                        "fs_write",
+                        enforce_policy,
+                        catch_panics,
+                    )
                 },
             )
             .map_err(|e| HostFuncError::Internal(e.to_string()))?;
 
         Ok(())
+    }
+
+    /// Helper for handling file system operations
+    fn handle_fs_op(
+        mut caller: Caller<'_, HostFuncState>,
+        path_ptr: i32,
+        path_len: i32,
+        permissions: &PermissionCache,
+        action: &str,
+        enforce_policy: bool,
+        catch_panics: bool,
+    ) -> AnyhowResult<i64> {
+        let state = caller.data().clone();
+
+        // Read the path from WASM memory
+        let resource = match read_string_from_wasm(&mut caller, path_ptr, path_len) {
+            Ok(path) => path,
+            Err(e) => {
+                warn!(error = %e, "Failed to read path from WASM memory");
+                return Ok(-1i64); // Memory error
+            }
+        };
+
+        let operation = || {
+            if enforce_policy && !permissions.is_allowed(action, &resource) {
+                return Err(HostFuncError::PermissionDenied {
+                    action: action.to_string(),
+                    resource: resource.clone(),
+                });
+            }
+
+            debug!(
+                agent_id = %state.agent_id,
+                resource = %resource,
+                action = %action,
+                "fs operation executed"
+            );
+            Ok(0i64)
+        };
+
+        if catch_panics {
+            with_panic_boundary(operation).map_err(|e| anyhow!(e))
+        } else {
+            operation().map_err(|e| anyhow!(e))
+        }
     }
 
     /// Register environment host functions
@@ -855,5 +862,47 @@ mod tests {
 
         assert!(!cache.is_allowed("fs_write", "/protected"));
         assert!(cache.is_allowed("fs_write", "/other"));
+    }
+
+    #[test]
+    fn test_host_func_linker_fs_ops() -> AnyhowResult<()> {
+        let engine = Engine::default();
+        let config = HostFuncConfig::permissive();
+        let permissions = PermissionCache::allow_all();
+        let mut linker = HostFuncLinker::new(&engine, permissions, config)?;
+
+        // A simple WASM module that imports vak.fs_read and vak.fs_write
+        // and exports functions that call them.
+        let wat = r#"
+            (module
+                (import "vak" "fs_read" (func $fs_read (param i32 i32) (result i64)))
+                (import "vak" "fs_write" (func $fs_write (param i32 i32 i32 i32) (result i64)))
+                (memory (export "memory") 1)
+                (data (i32.const 0) "/tmp/test.txt")
+
+                (func (export "test_read") (result i64)
+                    (call $fs_read (i32.const 0) (i32.const 13))
+                )
+
+                (func (export "test_write") (result i64)
+                    (call $fs_write (i32.const 0) (i32.const 13) (i32.const 0) (i32.const 0))
+                )
+            )
+        "#;
+
+        let module = wasmtime::Module::new(&engine, wat)?;
+        let mut store =
+            wasmtime::Store::new(&engine, HostFuncState::new("test-agent", "session-1"));
+        let instance = linker.linker().instantiate(&mut store, &module)?;
+
+        let test_read = instance.get_typed_func::<(), i64>(&mut store, "test_read")?;
+        let result = test_read.call(&mut store, ())?;
+        assert_eq!(result, 0);
+
+        let test_write = instance.get_typed_func::<(), i64>(&mut store, "test_write")?;
+        let result = test_write.call(&mut store, ())?;
+        assert_eq!(result, 0);
+
+        Ok(())
     }
 }
