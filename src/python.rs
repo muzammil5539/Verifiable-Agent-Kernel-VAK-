@@ -45,7 +45,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use std::collections::HashMap;
 
 #[cfg(feature = "python")]
-use crate::policy::{PolicyContext, PolicyEffect, PolicyEngine, PolicyRule};
+use crate::policy::{PolicyContext, PolicyEngine, PolicyRule};
 
 #[cfg(feature = "python")]
 use crate::audit::{AuditDecision, AuditLogger};
