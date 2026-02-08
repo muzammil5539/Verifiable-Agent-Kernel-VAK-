@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use async_trait::async_trait;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn, error, instrument};
 use chrono::{DateTime, Utc};
@@ -102,11 +103,136 @@ pub struct AgentInfo {
     pub capabilities: Vec<String>,
 }
 
+/// Tool handler trait for implementing tool execution logic
+#[async_trait]
+pub trait ToolHandler: Send + Sync {
+    async fn execute(&self, agent_id: AgentId, tool_call: ToolCall) -> Result<ToolResult, SimpleKernelError>;
+}
+
+/// Registry for tool handlers
+#[derive(Default)]
+pub struct ToolRegistry {
+    tools: HashMap<String, Box<dyn ToolHandler>>,
+}
+
+impl ToolRegistry {
+    pub fn new() -> Self {
+        Self {
+            tools: HashMap::new(),
+        }
+    }
+
+    pub fn register(&mut self, name: impl Into<String>, handler: Box<dyn ToolHandler>) {
+        self.tools.insert(name.into(), handler);
+    }
+
+    pub fn get(&self, name: &str) -> Option<&Box<dyn ToolHandler>> {
+        self.tools.get(name)
+    }
+}
+
+/// Echo tool handler
+pub struct EchoTool;
+
+#[async_trait]
+impl ToolHandler for EchoTool {
+    async fn execute(&self, _agent_id: AgentId, tool_call: ToolCall) -> Result<ToolResult, SimpleKernelError> {
+        Ok(ToolResult {
+            tool_name: tool_call.tool_name.clone(),
+            output: tool_call.parameters.clone(),
+            success: true,
+        })
+    }
+}
+
+/// Calculator tool handler
+pub struct CalculatorTool;
+
+#[async_trait]
+impl ToolHandler for CalculatorTool {
+    async fn execute(&self, _agent_id: AgentId, tool_call: ToolCall) -> Result<ToolResult, SimpleKernelError> {
+        let operation = tool_call.parameters.get("operation")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+
+        let a = tool_call.parameters.get("a")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+
+        let b = tool_call.parameters.get("b")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+
+        let result = match operation {
+            "add" => Ok(a + b),
+            "subtract" => Ok(a - b),
+            "multiply" => Ok(a * b),
+            "divide" => {
+                if b == 0.0 {
+                    Err("Division by zero".to_string())
+                } else {
+                    Ok(a / b)
+                }
+            }
+            _ => Err("Unknown operation".to_string()),
+        };
+
+        match result {
+            Ok(value) => Ok(ToolResult {
+                tool_name: tool_call.tool_name.clone(),
+                output: serde_json::json!({
+                    "operation": operation,
+                    "a": a,
+                    "b": b,
+                    "result": value
+                }),
+                success: true,
+            }),
+            Err(err) => Ok(ToolResult {
+                tool_name: tool_call.tool_name.clone(),
+                output: serde_json::json!({
+                    "error": err,
+                    "operation": operation
+                }),
+                success: false,
+            }),
+        }
+    }
+}
+
+/// Status tool handler
+pub struct StatusTool {
+    state: Arc<RwLock<KernelState>>,
+}
+
+impl StatusTool {
+    pub fn new(state: Arc<RwLock<KernelState>>) -> Self {
+        Self { state }
+    }
+}
+
+#[async_trait]
+impl ToolHandler for StatusTool {
+    async fn execute(&self, _agent_id: AgentId, tool_call: ToolCall) -> Result<ToolResult, SimpleKernelError> {
+        let state = self.state.read().await;
+        Ok(ToolResult {
+            tool_name: tool_call.tool_name.clone(),
+            output: serde_json::json!({
+                "running": state.running,
+                "agent_count": state.agents.len(),
+                "status": "operational"
+            }),
+            success: true,
+        })
+    }
+}
+
 /// Alternative Kernel implementation for simpler use cases
 pub struct SimpleKernel {
     policy_engine: Arc<RwLock<PolicyEngine>>,
     audit_logger: Arc<RwLock<AuditLogger>>,
     state: Arc<RwLock<KernelState>>,
+    tool_registry: Arc<RwLock<ToolRegistry>>,
 }
 
 impl SimpleKernel {
@@ -122,12 +248,18 @@ impl SimpleKernel {
             running: true,
         }));
 
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register("echo", Box::new(EchoTool));
+        tool_registry.register("calculator", Box::new(CalculatorTool));
+        tool_registry.register("status", Box::new(StatusTool::new(Arc::clone(&state))));
+
         info!("Kernel initialized successfully");
 
         Self {
             policy_engine,
             audit_logger,
             state,
+            tool_registry: Arc::new(RwLock::new(tool_registry)),
         }
     }
 
@@ -214,73 +346,51 @@ impl SimpleKernel {
         // Execute the tool using the tool registry
         info!("Executing tool");
         
+        let tool_name = tool_call.tool_name.clone();
+
         // Dispatch to appropriate tool handler based on tool name
-        let result = match tool_call.tool_name.as_str() {
-            "echo" => {
-                // Echo tool: returns the input parameters
-                ToolResult {
-                    tool_name: tool_call.tool_name.clone(),
-                    output: tool_call.parameters.clone(),
-                    success: true,
-                }
-            }
-            "calculator" => {
-                // Calculator tool: perform basic arithmetic
-                self.execute_calculator(&tool_call)
-            }
-            "status" => {
-                // Status tool: return kernel state information
-                let state = self.state.read().await;
-                ToolResult {
-                    tool_name: tool_call.tool_name.clone(),
-                    output: serde_json::json!({
-                        "running": state.running,
-                        "agent_count": state.agents.len(),
-                        "status": "operational"
-                    }),
-                    success: true,
-                }
-            }
-            _ => {
-                // Custom operation handler registry
-                //
-                // This default handler provides a placeholder for tools not built into
-                // the kernel. Future implementation should include:
-                //
-                // 1. Custom Tool Registry: Register external tool handlers at runtime
-                //    ```rust,ignore
-                //    if let Some(handler) = self.custom_handlers.get(&tool_call.tool_name) {
-                //        return handler.execute(&tool_call, &agent_id).await;
-                //    }
-                //    ```
-                //
-                // 2. WASM Skill Execution: Load and execute WASM-based skills
-                //    - Located in skills/ directory
-                //    - Sandboxed execution with policy enforcement
-                //
-                // 3. External Service Integration: Call external APIs/services
-                //    - MCP tool bridging
-                //    - LangChain/AutoGPT adapter integration
-                //
-                // Security considerations for custom handlers:
-                // - All custom tools must pass policy validation (done above)
-                // - Tool execution should be sandboxed (use WASM sandbox)
-                // - Results must be sanitized before returning
-                // - Execution time should be bounded (epoch deadline)
-                // - Audit logging required for all tool executions
-                //
-                debug!(tool = %tool_call.tool_name, "Using default handler for unregistered tool");
-                
-                ToolResult {
-                    tool_name: tool_call.tool_name.clone(),
-                    output: serde_json::json!({
-                        "status": "executed",
-                        "handler": "default",
-                        "message": format!("Tool '{}' executed with default handler", tool_call.tool_name),
-                        "note": "Register custom handler for full functionality"
-                    }),
-                    success: true,
-                }
+        let tool_registry = self.tool_registry.read().await;
+        let result = if let Some(handler) = tool_registry.get(&tool_name) {
+            handler.execute(agent_id, tool_call).await?
+        } else {
+            // Custom operation handler registry
+            //
+            // This default handler provides a placeholder for tools not built into
+            // the kernel. Future implementation should include:
+            //
+            // 1. Custom Tool Registry: Register external tool handlers at runtime
+            //    ```rust,ignore
+            //    if let Some(handler) = self.custom_handlers.get(&tool_call.tool_name) {
+            //        return handler.execute(&tool_call, &agent_id).await;
+            //    }
+            //    ```
+            //
+            // 2. WASM Skill Execution: Load and execute WASM-based skills
+            //    - Located in skills/ directory
+            //    - Sandboxed execution with policy enforcement
+            //
+            // 3. External Service Integration: Call external APIs/services
+            //    - MCP tool bridging
+            //    - LangChain/AutoGPT adapter integration
+            //
+            // Security considerations for custom handlers:
+            // - All custom tools must pass policy validation (done above)
+            // - Tool execution should be sandboxed (use WASM sandbox)
+            // - Results must be sanitized before returning
+            // - Execution time should be bounded (epoch deadline)
+            // - Audit logging required for all tool executions
+            //
+            debug!(tool = %tool_name, "Using default handler for unregistered tool");
+
+            ToolResult {
+                tool_name: tool_name.clone(),
+                output: serde_json::json!({
+                    "status": "executed",
+                    "handler": "default",
+                    "message": format!("Tool '{}' executed with default handler", tool_name),
+                    "note": "Register custom handler for full functionality"
+                }),
+                success: true,
             }
         };
 
@@ -289,7 +399,7 @@ impl SimpleKernel {
         logger.log(SimpleAuditEntry {
             timestamp: chrono::Utc::now(),
             agent_id,
-            action: format!("execute:{}", tool_call.tool_name),
+            action: format!("execute:{}", tool_name),
             details: "Tool executed successfully".to_string(),
             success: true,
         });
@@ -318,56 +428,6 @@ impl SimpleKernel {
 
         info!("Kernel shutdown complete");
         Ok(())
-    }
-
-    /// Execute a calculator operation
-    fn execute_calculator(&self, tool_call: &ToolCall) -> ToolResult {
-        let operation = tool_call.parameters.get("operation")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-
-        let a = tool_call.parameters.get("a")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-
-        let b = tool_call.parameters.get("b")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-
-        let result = match operation {
-            "add" => Ok(a + b),
-            "subtract" => Ok(a - b),
-            "multiply" => Ok(a * b),
-            "divide" => {
-                if b == 0.0 {
-                    Err("Division by zero")
-                } else {
-                    Ok(a / b)
-                }
-            }
-            _ => Err("Unknown operation"),
-        };
-
-        match result {
-            Ok(value) => ToolResult {
-                tool_name: tool_call.tool_name.clone(),
-                output: serde_json::json!({
-                    "operation": operation,
-                    "a": a,
-                    "b": b,
-                    "result": value
-                }),
-                success: true,
-            },
-            Err(err) => ToolResult {
-                tool_name: tool_call.tool_name.clone(),
-                output: serde_json::json!({
-                    "error": err,
-                    "operation": operation
-                }),
-                success: false,
-            },
-        }
     }
 
     /// Get the policy engine for configuration
@@ -418,8 +478,36 @@ mod tests {
             parameters: serde_json::json!({}),
         };
         
-        let result = kernel.execute_tool(agent_id, tool_call).await;
+        let result = kernel.execute_tool(agent_id.clone(), tool_call).await;
         assert!(result.is_ok());
+
+        // Test Echo Tool
+        let echo_call = ToolCall {
+            tool_name: "echo".to_string(),
+            parameters: serde_json::json!({"msg": "hello"}),
+        };
+        let echo_result = kernel.execute_tool(agent_id.clone(), echo_call).await.unwrap();
+        assert!(echo_result.success);
+        assert_eq!(echo_result.output["msg"], "hello");
+
+        // Test Calculator Tool
+        let calc_call = ToolCall {
+            tool_name: "calculator".to_string(),
+            parameters: serde_json::json!({"operation": "add", "a": 2.0, "b": 3.0}),
+        };
+        let calc_result = kernel.execute_tool(agent_id.clone(), calc_call).await.unwrap();
+        assert!(calc_result.success);
+        assert_eq!(calc_result.output["result"], 5.0);
+
+        // Test Status Tool
+        let status_call = ToolCall {
+            tool_name: "status".to_string(),
+            parameters: serde_json::json!({}),
+        };
+        let status_result = kernel.execute_tool(agent_id.clone(), status_call).await.unwrap();
+        assert!(status_result.success);
+        assert_eq!(status_result.output["running"], true);
+        assert_eq!(status_result.output["agent_count"], 1);
 
         // Shutdown
         kernel.shutdown().await.unwrap();

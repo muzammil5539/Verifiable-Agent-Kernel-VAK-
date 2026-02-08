@@ -32,6 +32,7 @@ pub mod async_pipeline;
 pub mod config;
 pub mod custom_handlers;
 pub mod error;
+pub mod kernel;
 pub mod neurosymbolic_pipeline;
 pub mod rate_limiter;
 pub mod traits;
