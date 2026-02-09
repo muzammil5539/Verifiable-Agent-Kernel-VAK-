@@ -148,19 +148,25 @@ impl Gauge {
     }
 
     pub fn set(&self, v: f64) {
-        *self.value.write().unwrap() = v;
+        if let Ok(mut value) = self.value.write() {
+            *value = v;
+        }
     }
 
     pub fn inc(&self) {
-        *self.value.write().unwrap() += 1.0;
+        if let Ok(mut value) = self.value.write() {
+            *value += 1.0;
+        }
     }
 
     pub fn dec(&self) {
-        *self.value.write().unwrap() -= 1.0;
+        if let Ok(mut value) = self.value.write() {
+            *value -= 1.0;
+        }
     }
 
     pub fn get(&self) -> f64 {
-        *self.value.read().unwrap()
+        self.value.read().map(|v| *v).unwrap_or(0.0)
     }
 
     pub fn to_prometheus(&self, global_labels: &HashMap<String, String>) -> String {
@@ -228,7 +234,9 @@ impl Histogram {
                 self.bucket_counts[i].fetch_add(1, Ordering::Relaxed);
             }
         }
-        *self.sum.write().unwrap() += value;
+        if let Ok(mut sum) = self.sum.write() {
+            *sum += value;
+        }
         self.count.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -241,7 +249,7 @@ impl Histogram {
     }
 
     pub fn get_sum(&self) -> f64 {
-        *self.sum.read().unwrap()
+        self.sum.read().map(|s| *s).unwrap_or(0.0)
     }
 
     pub fn to_prometheus(&self, global_labels: &HashMap<String, String>) -> String {
