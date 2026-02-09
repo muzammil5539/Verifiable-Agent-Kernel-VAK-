@@ -1,5 +1,5 @@
 ---
-name: build-project
+name: build
 description: Instructions for building the VAK project including Rust, WASM skills, and Python bindings.
 ---
 
