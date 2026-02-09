@@ -890,65 +890,25 @@ impl SkillRegistry {
             });
         }
 
-        // Check filesystem permissions using glob pattern matching
-        for requested_path in &requested.filesystem {
-            let mut path_allowed = false;
-            for allowed_pattern in &allowed.filesystem {
-                if let Ok(pattern) = glob::Pattern::new(allowed_pattern) {
-                    if pattern.matches(requested_path) {
-                        path_allowed = true;
-                        break;
-                    }
-                }
-                // Also allow exact matches
-                if allowed_pattern == requested_path {
-                    path_allowed = true;
-                    break;
-                }
-            }
-            if !path_allowed && !allowed.filesystem.is_empty() {
-                return Err(PermissionError::FilesystemPathNotAllowed {
-                    skill_id: *skill_id,
-                    path: requested_path.clone(),
-                });
-            }
-            if !path_allowed && allowed.filesystem.is_empty() && !requested.filesystem.is_empty() {
-                return Err(PermissionError::FilesystemPathNotAllowed {
-                    skill_id: *skill_id,
-                    path: requested_path.clone(),
-                });
-            }
-        }
+        // Check filesystem permissions
+        Self::check_glob_permissions(
+            &requested.filesystem,
+            &allowed.filesystem,
+            |path| PermissionError::FilesystemPathNotAllowed {
+                skill_id: *skill_id,
+                path: path.to_string(),
+            },
+        )?;
 
-        // Check env var permissions using glob pattern matching
-        for requested_var in &requested.env_vars {
-            let mut var_allowed = false;
-            for allowed_pattern in &allowed.env_vars {
-                if let Ok(pattern) = glob::Pattern::new(allowed_pattern) {
-                    if pattern.matches(requested_var) {
-                        var_allowed = true;
-                        break;
-                    }
-                }
-                // Also allow exact matches
-                if allowed_pattern == requested_var {
-                    var_allowed = true;
-                    break;
-                }
-            }
-            if !var_allowed && !allowed.env_vars.is_empty() {
-                return Err(PermissionError::EnvVarNotAllowed {
-                    skill_id: *skill_id,
-                    var: requested_var.clone(),
-                });
-            }
-            if !var_allowed && allowed.env_vars.is_empty() && !requested.env_vars.is_empty() {
-                return Err(PermissionError::EnvVarNotAllowed {
-                    skill_id: *skill_id,
-                    var: requested_var.clone(),
-                });
-            }
-        }
+        // Check env var permissions
+        Self::check_glob_permissions(
+            &requested.env_vars,
+            &allowed.env_vars,
+            |var| PermissionError::EnvVarNotAllowed {
+                skill_id: *skill_id,
+                var: var.to_string(),
+            },
+        )?;
 
         // Check memory limit
         if requested.max_memory_mb > allowed.max_memory_mb {
@@ -968,6 +928,38 @@ impl SkillRegistry {
             });
         }
 
+        Ok(())
+    }
+
+    /// Helper to validate permissions using glob patterns
+    fn check_glob_permissions<F>(
+        requested_items: &[String],
+        allowed_patterns: &[String],
+        error_constructor: F,
+    ) -> Result<(), PermissionError>
+    where
+        F: Fn(&str) -> PermissionError,
+    {
+        for requested in requested_items {
+            let mut is_allowed = false;
+            for pattern_str in allowed_patterns {
+                if let Ok(pattern) = glob::Pattern::new(pattern_str) {
+                    if pattern.matches(requested) {
+                        is_allowed = true;
+                        break;
+                    }
+                }
+                // Also allow exact matches
+                if pattern_str == requested {
+                    is_allowed = true;
+                    break;
+                }
+            }
+
+            if !is_allowed {
+                return Err(error_constructor(requested));
+            }
+        }
         Ok(())
     }
 
