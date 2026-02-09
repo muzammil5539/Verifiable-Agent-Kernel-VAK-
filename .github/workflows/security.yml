@@ -23,8 +23,6 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
 
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
@@ -54,8 +52,6 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
 
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked
@@ -73,8 +69,6 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
 
       - name: Install cargo-geiger
         run: cargo install cargo-geiger --locked
@@ -123,8 +117,6 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
 
       - name: Install cargo-sbom
         run: cargo install cargo-sbom --locked

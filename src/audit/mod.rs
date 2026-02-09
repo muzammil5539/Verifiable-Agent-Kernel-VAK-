@@ -152,6 +152,15 @@ pub trait AuditBackend: Send + Sync + std::fmt::Debug {
 
     /// Get entries in a time range
     fn get_by_time_range(&self, start: u64, end: u64) -> Result<Vec<AuditEntry>, AuditError>;
+
+    /// Iterate over all entries (streaming)
+    fn for_each_entry(
+        &self,
+        f: &mut dyn FnMut(&AuditEntry) -> Result<(), AuditError>,
+    ) -> Result<(), AuditError>;
+
+    /// Get entry by ID
+    fn get_entry(&self, id: u64) -> Result<Option<AuditEntry>, AuditError>;
 }
 
 /// Errors that can occur in audit operations
@@ -232,8 +241,242 @@ impl AuditBackend for MemoryAuditBackend {
             .cloned()
             .collect())
     }
+
+    fn for_each_entry(
+        &self,
+        f: &mut dyn FnMut(&AuditEntry) -> Result<(), AuditError>,
+    ) -> Result<(), AuditError> {
+        for entry in &self.entries {
+            f(entry)?;
+        }
+        Ok(())
+    }
+
+    fn get_entry(&self, id: u64) -> Result<Option<AuditEntry>, AuditError> {
+        Ok(self.entries.iter().find(|e| e.id == id).cloned())
+    }
 }
 
+// ============================================================================
+// File Backend (Issue #3 - Persistent Storage)
+// ============================================================================
+
+/// File-based audit backend with append-only storage
+///
+/// Stores audit entries as JSONL (JSON Lines) for efficient appending
+/// and streaming reads. Supports log rotation via file naming.
+#[derive(Debug)]
+pub struct FileAuditBackend {
+    /// Directory for audit log files
+    log_dir: PathBuf,
+    /// Current log file path
+    current_file: PathBuf,
+    /// File handle for appending
+    file_handle: Option<File>,
+    /// Cached entry count
+    entry_count: u64,
+}
+
+impl FileAuditBackend {
+    /// Create a new file-based audit backend
+    ///
+    /// # Arguments
+    /// * `log_dir` - Directory to store audit log files
+    ///
+    /// # Returns
+    /// * New backend instance or error if directory cannot be created
+    pub fn new(log_dir: impl AsRef<Path>) -> Result<Self, AuditError> {
+        let log_dir = log_dir.as_ref().to_path_buf();
+
+        // Create directory if needed
+        if !log_dir.exists() {
+            fs::create_dir_all(&log_dir)?;
+        }
+
+        let current_file = log_dir.join("audit.jsonl");
+
+        // Count existing entries
+        let entry_count = if current_file.exists() {
+            let file = File::open(&current_file)?;
+            BufReader::new(file).lines().count() as u64
+        } else {
+            0
+        };
+
+        Ok(Self {
+            log_dir,
+            current_file,
+            file_handle: None,
+            entry_count,
+        })
+    }
+
+    /// Get or create the file handle
+    fn get_file_handle(&mut self) -> Result<&mut File, AuditError> {
+        if self.file_handle.is_none() {
+            let file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&self.current_file)?;
+            self.file_handle = Some(file);
+        }
+        self.file_handle
+            .as_mut()
+            .ok_or_else(|| AuditError::BackendNotAvailable("File handle failed to initialize".to_string()))
+    }
+
+    /// Rotate log file (create new file with timestamp)
+    pub fn rotate(&mut self) -> Result<PathBuf, AuditError> {
+        // Close current file
+        self.file_handle = None;
+
+        // Rename current file with timestamp
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let rotated_name = format!("audit_{}.jsonl", timestamp);
+        let rotated_path = self.log_dir.join(&rotated_name);
+
+        if self.current_file.exists() {
+            fs::rename(&self.current_file, &rotated_path)?;
+        }
+
+        // Reset counter
+        self.entry_count = 0;
+
+        Ok(rotated_path)
+    }
+}
+
+impl AuditBackend for FileAuditBackend {
+    fn append(&mut self, entry: &AuditEntry) -> Result<(), AuditError> {
+        let json = serde_json::to_string(entry)
+            .map_err(|e| AuditError::SerializationError(e.to_string()))?;
+
+        let file = self.get_file_handle()?;
+        writeln!(file, "{}", json)?;
+
+        self.entry_count += 1;
+        Ok(())
+    }
+
+    fn load_all(&self) -> Result<Vec<AuditEntry>, AuditError> {
+        if !self.current_file.exists() {
+            return Ok(Vec::new());
+        }
+
+        let file = File::open(&self.current_file)?;
+        let reader = BufReader::new(file);
+        let mut entries = Vec::new();
+
+        for line in reader.lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let entry: AuditEntry = serde_json::from_str(&line)
+                .map_err(|e| AuditError::SerializationError(e.to_string()))?;
+            entries.push(entry);
+        }
+
+        Ok(entries)
+    }
+
+    fn get_last(&self) -> Result<Option<AuditEntry>, AuditError> {
+        if !self.current_file.exists() {
+            return Ok(None);
+        }
+
+        let file = File::open(&self.current_file)?;
+        let reader = BufReader::new(file);
+        let mut last_entry = None;
+
+        for line in reader.lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let entry: AuditEntry = serde_json::from_str(&line)
+                .map_err(|e| AuditError::SerializationError(e.to_string()))?;
+            last_entry = Some(entry);
+        }
+
+        Ok(last_entry)
+    }
+
+    fn count(&self) -> Result<u64, AuditError> {
+        Ok(self.entry_count)
+    }
+
+    fn flush(&mut self) -> Result<(), AuditError> {
+        if let Some(ref mut file) = self.file_handle {
+            file.sync_all()?;
+        }
+        Ok(())
+    }
+
+    fn get_by_agent(&self, agent_id: &str) -> Result<Vec<AuditEntry>, AuditError> {
+        let all = self.load_all()?;
+        Ok(all.into_iter().filter(|e| e.agent_id == agent_id).collect())
+    }
+
+    fn get_by_time_range(&self, start: u64, end: u64) -> Result<Vec<AuditEntry>, AuditError> {
+        let all = self.load_all()?;
+        Ok(all
+            .into_iter()
+            .filter(|e| e.timestamp >= start && e.timestamp <= end)
+            .collect())
+    }
+
+    fn for_each_entry(
+        &self,
+        f: &mut dyn FnMut(&AuditEntry) -> Result<(), AuditError>,
+    ) -> Result<(), AuditError> {
+        if !self.current_file.exists() {
+            return Ok(());
+        }
+
+        let file = File::open(&self.current_file)?;
+        let reader = BufReader::new(file);
+
+        for line in reader.lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let entry: AuditEntry = serde_json::from_str(&line)
+                .map_err(|e| AuditError::SerializationError(e.to_string()))?;
+            f(&entry)?;
+        }
+        Ok(())
+    }
+
+    fn get_entry(&self, id: u64) -> Result<Option<AuditEntry>, AuditError> {
+        if !self.current_file.exists() {
+            return Ok(None);
+        }
+
+        let file = File::open(&self.current_file)?;
+        let reader = BufReader::new(file);
+
+        for line in reader.lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            // Optimization: check ID string before parsing? Maybe unsafe if format changes.
+            // Just parse for correctness.
+            let entry: AuditEntry = serde_json::from_str(&line)
+                .map_err(|e| AuditError::SerializationError(e.to_string()))?;
+            if entry.id == id {
+                return Ok(Some(entry));
+            }
+        }
+        Ok(None)
+    }
+}
 
 // ============================================================================
 // SQLite Backend (Issue #4 - Queryable Persistent Storage)
@@ -524,6 +767,50 @@ impl AuditBackend for SqliteAuditBackend {
 
         Ok(entries)
     }
+
+    fn for_each_entry(
+        &self,
+        f: &mut dyn FnMut(&AuditEntry) -> Result<(), AuditError>,
+    ) -> Result<(), AuditError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
+
+        let mut stmt = conn
+            .prepare("SELECT id, timestamp, agent_id, action, resource, decision, hash, prev_hash, signature, metadata FROM audit_logs ORDER BY id")
+            .map_err(|e| AuditError::BackendNotAvailable(format!("Query prepare: {}", e)))?;
+
+        let rows = stmt
+            .query_map([], Self::row_to_entry)
+            .map_err(|e| AuditError::BackendNotAvailable(format!("Query: {}", e)))?;
+
+        for row in rows {
+            let entry = row.map_err(|e| AuditError::BackendNotAvailable(format!("Row mapping: {}", e)))?;
+            f(&entry)?;
+        }
+        Ok(())
+    }
+
+    fn get_entry(&self, id: u64) -> Result<Option<AuditEntry>, AuditError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
+
+        let mut stmt = conn
+            .prepare("SELECT id, timestamp, agent_id, action, resource, decision, hash, prev_hash, signature, metadata FROM audit_logs WHERE id = ?")
+            .map_err(|e| AuditError::BackendNotAvailable(format!("Query prepare: {}", e)))?;
+
+        let mut rows = stmt
+            .query(params![id])
+            .map_err(|e| AuditError::BackendNotAvailable(format!("Query: {}", e)))?;
+
+        match rows.next().map_err(|e| AuditError::BackendNotAvailable(format!("Row fetch: {}", e)))? {
+            Some(row) => Ok(Some(Self::row_to_entry(row).map_err(|e| AuditError::BackendNotAvailable(format!("Row mapping: {}", e)))?)),
+            None => Ok(None),
+        }
+    }
 }
 
 // ============================================================================
@@ -645,8 +932,8 @@ impl Default for AuditSigner {
 pub struct AuditLogger {
     /// Storage backend for audit entries
     backend: Box<dyn AuditBackend>,
-    /// In-memory cache for fast access
-    entries: Vec<AuditEntry>,
+    /// Cache of the last entry for chaining
+    last_entry_cache: Option<AuditEntry>,
     /// Next entry ID
     next_id: u64,
     /// Chain is verified
@@ -658,7 +945,6 @@ pub struct AuditLogger {
 impl std::fmt::Debug for AuditLogger {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AuditLogger")
-            .field("entry_count", &self.entries.len())
             .field("next_id", &self.next_id)
             .field("chain_verified", &self.chain_verified)
             .field("signing_enabled", &self.signer.is_some())
@@ -671,7 +957,7 @@ impl AuditLogger {
     pub fn new() -> Self {
         Self {
             backend: Box::new(MemoryAuditBackend::new()),
-            entries: Vec::new(),
+            last_entry_cache: None,
             next_id: 1,
             chain_verified: true,
             signer: None,
@@ -682,7 +968,7 @@ impl AuditLogger {
     pub fn new_with_signing() -> Self {
         Self {
             backend: Box::new(MemoryAuditBackend::new()),
-            entries: Vec::new(),
+            last_entry_cache: None,
             next_id: 1,
             chain_verified: true,
             signer: Some(AuditSigner::new()),
@@ -700,22 +986,24 @@ impl AuditLogger {
     /// let logger = AuditLogger::with_backend(Box::new(backend));
     /// ```
     pub fn with_backend(backend: Box<dyn AuditBackend>) -> Result<Self, AuditError> {
-        // Load existing entries from backend
-        let entries = backend.load_all()?;
-        let next_id = entries.last().map(|e| e.id + 1).unwrap_or(1);
-
         let mut logger = Self {
             backend,
-            entries,
-            next_id,
+            last_entry_cache: None,
+            next_id: 1,
             chain_verified: false,
             signer: None,
         };
 
-        // Verify chain integrity on startup
-        if let Err(e) = logger.verify_chain() {
-            tracing::error!("Audit chain verification failed on startup: {:?}", e);
-            return Err(AuditError::ChainVerificationFailed(format!("{:?}", e)));
+        // Verify chain integrity on startup and get last entry
+        match logger.verify_chain() {
+            Ok(last_entry) => {
+                logger.next_id = last_entry.as_ref().map(|e| e.id + 1).unwrap_or(1);
+                logger.last_entry_cache = last_entry;
+            }
+            Err(e) => {
+                tracing::error!("Audit chain verification failed on startup: {:?}", e);
+                return Err(AuditError::ChainVerificationFailed(format!("{:?}", e)));
+            }
         }
 
         logger.chain_verified = true;
@@ -784,8 +1072,8 @@ impl AuditLogger {
             .as_secs();
 
         let prev_hash = self
-            .entries
-            .last()
+            .last_entry_cache
+            .as_ref()
             .map(|e| e.hash.clone())
             .unwrap_or_else(|| "0".repeat(64)); // Genesis hash
 
@@ -817,10 +1105,12 @@ impl AuditLogger {
             tracing::error!("Failed to persist audit entry: {:?}", e);
         }
 
-        self.entries.push(entry);
+        self.last_entry_cache = Some(entry);
         self.next_id += 1;
 
-        self.entries.last().unwrap()
+        // SAFETY: We just set last_entry_cache to Some(entry)
+        #[allow(clippy::unwrap_used)]
+        self.last_entry_cache.as_ref().unwrap()
     }
 
     /// Static hash computation function (for use before self is available)
@@ -852,38 +1142,23 @@ impl AuditLogger {
     }
 
     /// Get entries for a specific agent
-    pub fn get_entries_by_agent(&self, agent_id: &str) -> Vec<&AuditEntry> {
-        self.entries
-            .iter()
-            .filter(|e| e.agent_id == agent_id)
-            .collect()
+    pub fn get_entries_by_agent(&self, agent_id: &str) -> Result<Vec<AuditEntry>, AuditError> {
+        self.backend.get_by_agent(agent_id)
     }
 
-    /// Verifies the integrity of the entire audit chain
-    pub fn verify_chain(&self) -> Result<(), AuditVerificationError> {
-        if self.entries.is_empty() {
-            return Ok(());
-        }
+    /// Verifies the integrity of the entire audit chain and returns the last entry
+    pub fn verify_chain(&self) -> Result<Option<AuditEntry>, AuditVerificationError> {
+        let mut prev_hash = "0".repeat(64);
+        let mut last_entry: Option<AuditEntry> = None;
 
-        let genesis_hash = "0".repeat(64);
-
-        for (i, entry) in self.entries.iter().enumerate() {
-            // Verify prev_hash linkage
-            let expected_prev = if i == 0 {
-                &genesis_hash
-            } else {
-                &self.entries[i - 1].hash
-            };
-
-            if entry.prev_hash != *expected_prev {
-                return Err(AuditVerificationError::BrokenChain {
-                    entry_id: entry.id,
-                    expected: expected_prev.clone(),
-                    found: entry.prev_hash.clone(),
-                });
+        let mut verify_fn = |entry: &AuditEntry| -> Result<(), AuditError> {
+            if entry.prev_hash != prev_hash {
+                return Err(AuditError::ChainVerificationFailed(format!(
+                    "Broken chain at entry {}: expected prev_hash {}, found {}",
+                    entry.id, prev_hash, entry.prev_hash
+                )));
             }
 
-            // Verify entry hash
             let computed_hash = Self::compute_hash_static(
                 entry.id,
                 entry.timestamp,
@@ -895,41 +1170,73 @@ impl AuditLogger {
             );
 
             if entry.hash != computed_hash {
-                return Err(AuditVerificationError::InvalidHash {
-                    entry_id: entry.id,
-                    expected: computed_hash,
-                    found: entry.hash.clone(),
-                });
+                return Err(AuditError::ChainVerificationFailed(format!(
+                    "Invalid hash at entry {}: expected {}, found {}",
+                    entry.id, computed_hash, entry.hash
+                )));
             }
-        }
 
-        Ok(())
+            prev_hash = entry.hash.clone();
+            last_entry = Some(entry.clone());
+            Ok(())
+        };
+
+        self.backend
+            .for_each_entry(&mut verify_fn)
+            .map_err(|e| match e {
+                AuditError::ChainVerificationFailed(msg) => {
+                    AuditVerificationError::BrokenChain {
+                        entry_id: 0,
+                        expected: String::new(),
+                        found: msg,
+                    }
+                }
+                e => AuditVerificationError::BrokenChain {
+                    entry_id: 0,
+                    expected: String::new(),
+                    found: format!("Backend error: {:?}", e),
+                },
+            })?;
+
+        Ok(last_entry)
     }
 
     /// Verify all signatures in the chain (Issue #51)
     ///
     /// Requires the public key that was used for signing
     pub fn verify_signatures(&self, public_key_hex: &str) -> Result<(), AuditVerificationError> {
-        for entry in &self.entries {
+        let mut verify_fn = |entry: &AuditEntry| -> Result<(), AuditError> {
             if let Some(ref signature) = entry.signature {
                 match AuditSigner::verify_with_public_key(public_key_hex, &entry.hash, signature) {
-                    Ok(true) => continue,
-                    Ok(false) => {
-                        return Err(AuditVerificationError::InvalidSignature {
-                            entry_id: entry.id,
-                            reason: "Signature verification failed".to_string(),
-                        });
-                    }
-                    Err(e) => {
-                        return Err(AuditVerificationError::InvalidSignature {
-                            entry_id: entry.id,
-                            reason: format!("Signature verification error: {:?}", e),
-                        });
+                    Ok(true) => Ok(()),
+                    Ok(false) => Err(AuditError::ChainVerificationFailed(format!(
+                        "Signature verification failed for entry {}",
+                        entry.id
+                    ))),
+                    Err(e) => Err(AuditError::ChainVerificationFailed(format!(
+                        "Signature verification error for entry {}: {:?}",
+                        entry.id, e
+                    ))),
+                }
+            } else {
+                Ok(())
+            }
+        };
+
+        self.backend
+            .for_each_entry(&mut verify_fn)
+            .map_err(|e| match e {
+                AuditError::ChainVerificationFailed(msg) => {
+                    AuditVerificationError::InvalidSignature {
+                        entry_id: 0,
+                        reason: msg,
                     }
                 }
-            }
-        }
-        Ok(())
+                e => AuditVerificationError::InvalidSignature {
+                    entry_id: 0,
+                    reason: format!("Backend error: {:?}", e),
+                },
+            })
     }
 
     /// Verify both chain integrity and signatures
@@ -942,30 +1249,28 @@ impl AuditLogger {
     }
 
     /// Exports audit log for compliance reporting
-    pub fn export(&self) -> AuditReport {
-        let total_entries = self.entries.len();
-        let allowed_count = self
-            .entries
+    pub fn export(&self) -> Result<AuditReport, AuditError> {
+        let entries = self.backend.load_all()?;
+        let total_entries = entries.len();
+        let allowed_count = entries
             .iter()
             .filter(|e| e.decision == AuditDecision::Allowed)
             .count();
-        let denied_count = self
-            .entries
+        let denied_count = entries
             .iter()
             .filter(|e| e.decision == AuditDecision::Denied)
             .count();
-        let error_count = self
-            .entries
+        let error_count = entries
             .iter()
             .filter(|e| matches!(e.decision, AuditDecision::Error(_)))
             .count();
 
         let chain_valid = self.verify_chain().is_ok();
 
-        let first_timestamp = self.entries.first().map(|e| e.timestamp);
-        let last_timestamp = self.entries.last().map(|e| e.timestamp);
+        let first_timestamp = entries.first().map(|e| e.timestamp);
+        let last_timestamp = entries.last().map(|e| e.timestamp);
 
-        AuditReport {
+        Ok(AuditReport {
             total_entries,
             allowed_count,
             denied_count,
@@ -973,18 +1278,29 @@ impl AuditLogger {
             chain_valid,
             first_timestamp,
             last_timestamp,
-            entries: self.entries.clone(),
-        }
+            entries,
+        })
     }
 
-    /// Returns all entries (read-only)
-    pub fn entries(&self) -> &[AuditEntry] {
-        &self.entries
+    /// Returns all entries
+    /// Warning: This loads all entries into memory.
+    pub fn load_all_entries(&self) -> Result<Vec<AuditEntry>, AuditError> {
+        self.backend.load_all()
     }
 
     /// Get a specific entry by ID
-    pub fn get_entry(&self, id: u64) -> Option<&AuditEntry> {
-        self.entries.iter().find(|e| e.id == id)
+    pub fn get_entry(&self, id: u64) -> Result<Option<AuditEntry>, AuditError> {
+        self.backend.get_entry(id)
+    }
+
+    /// Get the last entry
+    pub fn last_entry(&self) -> Option<&AuditEntry> {
+        self.last_entry_cache.as_ref()
+    }
+
+    /// Get total entry count
+    pub fn count(&self) -> Result<u64, AuditError> {
+        self.backend.count()
     }
 }
 
@@ -1089,8 +1405,11 @@ mod tests {
         let mut logger = AuditLogger::new();
         logger.log("agent-1", "read", "/data/file.txt", AuditDecision::Allowed);
 
-        assert_eq!(logger.entries().len(), 1);
-        assert_eq!(logger.entries()[0].agent_id, "agent-1");
+        assert_eq!(logger.count().unwrap(), 1);
+        assert_eq!(
+            logger.load_all_entries().unwrap()[0].agent_id,
+            "agent-1"
+        );
     }
 
     #[test]
@@ -1103,8 +1422,9 @@ mod tests {
         assert!(logger.verify_chain().is_ok());
 
         // Verify chain linkage
-        assert_eq!(logger.entries()[1].prev_hash, logger.entries()[0].hash);
-        assert_eq!(logger.entries()[2].prev_hash, logger.entries()[1].hash);
+        let entries = logger.load_all_entries().unwrap();
+        assert_eq!(entries[1].prev_hash, entries[0].hash);
+        assert_eq!(entries[2].prev_hash, entries[1].hash);
     }
 
     #[test]
@@ -1113,7 +1433,7 @@ mod tests {
         logger.log("agent-1", "read", "/data/a.txt", AuditDecision::Allowed);
         logger.log("agent-2", "write", "/data/b.txt", AuditDecision::Denied);
 
-        let report = logger.export();
+        let report = logger.export().unwrap();
 
         assert_eq!(report.total_entries, 2);
         assert_eq!(report.allowed_count, 1);
@@ -1157,7 +1477,7 @@ mod tests {
         logger.log("agent-2", "write", "/data/b.txt", AuditDecision::Denied);
         logger.flush().unwrap();
 
-        assert_eq!(logger.entries().len(), 2);
+        assert_eq!(logger.count().unwrap(), 2);
         assert!(logger.verify_chain().is_ok());
     }
 
@@ -1168,7 +1488,7 @@ mod tests {
         logger.log("agent-2", "write", "/b.txt", AuditDecision::Allowed);
         logger.log("agent-1", "delete", "/c.txt", AuditDecision::Denied);
 
-        let agent1_entries = logger.get_entries_by_agent("agent-1");
+        let agent1_entries = logger.get_entries_by_agent("agent-1").unwrap();
         assert_eq!(agent1_entries.len(), 2);
     }
 
@@ -1188,7 +1508,8 @@ mod tests {
             Some(metadata.clone()),
         );
 
-        let entry = &logger.entries()[0];
+        let entries = logger.load_all_entries().unwrap();
+        let entry = &entries[0];
         assert!(entry.metadata.is_some());
         assert_eq!(
             entry.metadata.as_ref().unwrap()["ip_address"],
@@ -1378,7 +1699,7 @@ mod tests {
         logger.log("agent-2", "write", "/data/b.txt", AuditDecision::Denied);
 
         // All entries should have signatures
-        for entry in logger.entries() {
+        for entry in logger.load_all_entries().unwrap() {
             assert!(entry.signature.is_some());
         }
 
