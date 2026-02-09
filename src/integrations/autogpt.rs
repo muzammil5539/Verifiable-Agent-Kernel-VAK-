@@ -775,7 +775,8 @@ impl AutoGPTAdapter {
 
             match prm.score_trajectory(&reasoning_steps, &plan.goal).await {
                 Ok(scores) => {
-                    let avg_score: f64 = scores.iter().map(|s| s.score).sum::<f64>() / scores.len() as f64;
+                    let avg_score: f64 =
+                        scores.iter().map(|s| s.score).sum::<f64>() / scores.len() as f64;
                     if avg_score < self.config.base.prm_threshold {
                         result.overall_risk = result.overall_risk.max(RiskLevel::High);
                         result.recommendations.push(VerificationRecommendation {

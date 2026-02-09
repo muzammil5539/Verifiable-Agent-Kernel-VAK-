@@ -195,7 +195,8 @@ impl DashboardServer {
         }
 
         // Try API extensions
-        if let Some(response) = crate::api::a2a::handle_request(&self.discovery, path, method).await {
+        if let Some(response) = crate::api::a2a::handle_request(&self.discovery, path, method).await
+        {
             return response;
         }
 

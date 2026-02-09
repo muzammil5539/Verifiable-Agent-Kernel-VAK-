@@ -630,7 +630,10 @@ impl LangChainAdapter {
             let thought = ctx.reasoning_steps.last().cloned().unwrap_or_default();
             let step = ReasoningStep::new(step_num, thought).with_action(action);
 
-            let context_str = ctx.goal.clone().unwrap_or_else(|| "Unknown goal".to_string());
+            let context_str = ctx
+                .goal
+                .clone()
+                .unwrap_or_else(|| "Unknown goal".to_string());
 
             match prm.score_step(&step, &context_str).await {
                 Ok(score) => return score.score,

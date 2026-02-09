@@ -47,9 +47,7 @@ pub use self::neurosymbolic_pipeline::{
     AgentPlan, ExecutionResult, NeuroSymbolicPipeline, PipelineConfig, PipelineError,
     ProposedAction,
 };
-pub use self::rate_limiter::{
-    LimitResult, RateLimitConfig, RateLimiter, ResourceKey,
-};
+pub use self::rate_limiter::{LimitResult, RateLimitConfig, RateLimiter, ResourceKey};
 
 use std::path::PathBuf;
 use std::sync::Arc;
