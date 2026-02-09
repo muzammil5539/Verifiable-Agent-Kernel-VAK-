@@ -102,6 +102,8 @@
 #![deny(unsafe_code)]
 #![allow(missing_docs)]
 #![warn(rustdoc::missing_doc_code_examples)]
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+#![cfg_attr(test, allow(clippy::expect_used))]
 
 // Re-export core types at the crate root for convenience
 pub use kernel::types::{

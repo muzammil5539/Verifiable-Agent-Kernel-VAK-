@@ -33,6 +33,14 @@ ignore = [
 # Licenses - Ensure license compliance
 # ============================================================================
 [licenses]
+# How to handle unlicensed crates (deprecated key 'unlicensed' removed)
+# Default is usually deny if not allowed.
+
+# How to handle copyleft licenses (deprecated key 'copyleft' removed)
+# We handle this by explicitly denying/allowing licenses below.
+
+# Allow OSI-approved or FSF free licenses (deprecated key 'allow-osi-fsf-free' removed)
+
 # Confidence threshold for license detection
 confidence-threshold = 0.8
 
@@ -51,7 +59,12 @@ allow = [
     "CDLA-Permissive-2.0",
     "BSL-1.0",
     "Unlicense",
+    "CDLA-Permissive-2.0",
 ]
+
+# Explicitly denied licenses (copyleft/incompatible)
+# The 'deny' key in [licenses] is deprecated in favor of allow-list only or [bans].
+# However, for clarity we can list them here if supported, but let's stick to 'allow' for safety.
 
 # Private crates (internal use only)
 private = { ignore = true }
