@@ -41,6 +41,7 @@
 //! - Gap Analysis Section 4, Phase 1.3: Async Host Interface (HFI)
 //! - Gap Analysis Section 2.1.1: Async Stack Switching
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -127,6 +128,22 @@ impl Default for AsyncHostConfig {
             auth_cache_ttl: Duration::from_secs(60),
         }
     }
+}
+
+/// Custom operation handler trait
+#[async_trait]
+pub trait CustomHandler: Send + Sync {
+    /// Handle the custom operation
+    async fn handle(&self, params: serde_json::Value) -> AsyncHostResult<Vec<u8>>;
+}
+
+/// Registration for a custom handler
+#[derive(Clone)]
+pub struct HandlerRegistration {
+    /// The handler implementation
+    pub handler: Arc<dyn CustomHandler>,
+    /// Optional execution timeout override
+    pub timeout: Option<Duration>,
 }
 
 /// Types of async operations
@@ -232,6 +249,8 @@ pub struct AsyncHostContext {
     auth_cache: Arc<RwLock<HashMap<String, CachedAuth>>>,
     /// Operation counter
     operation_counter: Arc<std::sync::atomic::AtomicU64>,
+    /// Custom operation handlers
+    custom_handlers: Arc<RwLock<HashMap<String, HandlerRegistration>>>,
 }
 
 impl std::fmt::Debug for AsyncHostContext {
@@ -278,7 +297,27 @@ impl AsyncHostContext {
             context_collector,
             auth_cache: Arc::new(RwLock::new(HashMap::new())),
             operation_counter: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            custom_handlers: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Register a custom operation handler
+    pub async fn register_handler(&self, name: impl Into<String>, handler: Arc<dyn CustomHandler>) {
+        self.register_handler_with_timeout(name, handler, None).await;
+    }
+
+    /// Register a custom operation handler with configuration
+    pub async fn register_handler_with_timeout(
+        &self,
+        name: impl Into<String>,
+        handler: Arc<dyn CustomHandler>,
+        timeout: Option<Duration>,
+    ) {
+        let mut handlers = self.custom_handlers.write().await;
+        handlers.insert(
+            name.into(),
+            HandlerRegistration { handler, timeout },
+        );
     }
 
     /// Execute an async operation with policy check
@@ -614,29 +653,27 @@ impl AsyncHostContext {
     ///
     /// ## Current Implementation Status
     ///
-    /// **NOTE**: This is a placeholder implementation that echoes back the params.
-    /// In production, this should be extended to:
+    /// This implementation dispatches to registered handlers.
     ///
-    /// 1. Register custom operation handlers via a trait-based system
+    /// 1. Register custom operation handlers via `register_handler`
     /// 2. Dispatch to appropriate handlers based on operation name
-    /// 3. Apply policy checks specific to custom operation types
-    /// 4. Implement timeout and resource limits per handler
+    /// 3. Apply policy checks specific to custom operation types (via `execute_async`)
+    /// 4. Enforces handler-specific timeout if configured
     ///
-    /// ## Example Future Usage
+    /// ## Example Usage
     ///
     /// ```rust,ignore
-    /// // Register a custom handler
-    /// context.register_handler("database_query", |params| async {
-    ///     let query = params.get("query").and_then(|v| v.as_str())?;
-    ///     // Execute query with proper sandboxing
-    ///     Ok(result_bytes)
-    /// });
+    /// // Define a handler
+    /// struct MyHandler;
+    /// #[async_trait]
+    /// impl CustomHandler for MyHandler {
+    ///     async fn handle(&self, params: serde_json::Value) -> AsyncHostResult<Vec<u8>> {
+    ///         Ok(vec![])
+    ///     }
+    /// }
     ///
-    /// // Execute the custom operation
-    /// let result = context.execute_async(AsyncOperation::Custom {
-    ///     name: "database_query".to_string(),
-    ///     params: json!({"query": "SELECT * FROM users LIMIT 10"}),
-    /// }).await?;
+    /// // Register
+    /// context.register_handler("my_op", Arc::new(MyHandler)).await;
     /// ```
     ///
     /// ## Security Considerations
@@ -646,23 +683,6 @@ impl AsyncHostContext {
     /// - Respect resource quotas (memory, CPU, network)
     /// - Log operations for audit purposes
     /// - Implement proper error handling
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The name of the custom operation (used for handler dispatch)
-    /// * `params` - JSON parameters for the operation
-    ///
-    /// # Returns
-    ///
-    /// Returns the serialized params as a placeholder. Future implementations
-    /// should return actual operation results.
-    ///
-    /// # TODO
-    ///
-    /// - [ ] Implement custom handler registry
-    /// - [ ] Add per-handler policy evaluation
-    /// - [ ] Add handler-specific timeout configuration
-    /// - [ ] Add handler metrics and tracing
     async fn execute_custom(
         &self,
         name: &str,
@@ -670,17 +690,27 @@ impl AsyncHostContext {
     ) -> AsyncHostResult<Vec<u8>> {
         debug!(name = %name, "Executing custom operation");
 
-        // TODO: Implement custom handler registry and dispatch
-        // Current implementation echoes params for testing purposes
-        info!(
-            operation_name = %name,
-            agent_id = %self.agent_id,
-            "Custom operation executed (placeholder implementation)"
-        );
+        let registration = {
+            let handlers = self.custom_handlers.read().await;
+            handlers.get(name).cloned()
+        };
 
-        // Return params as result for now - serves as acknowledgment
-        // that the operation was received and processed
-        Ok(serde_json::to_vec(params).unwrap_or_default())
+        if let Some(reg) = registration {
+            let fut = reg.handler.handle(params.clone());
+            if let Some(timeout) = reg.timeout {
+                tokio::time::timeout(timeout, fut)
+                    .await
+                    .map_err(|_| AsyncHostError::Timeout(timeout))?
+            } else {
+                fut.await
+            }
+        } else {
+            tracing::warn!(name = %name, "Custom handler not found");
+            Err(AsyncHostError::Internal(format!(
+                "Custom handler '{}' not found",
+                name
+            )))
+        }
     }
 
     /// Generate next operation ID
@@ -839,5 +869,91 @@ mod tests {
 
         let results = executor.execute_batch(operations).await;
         assert_eq!(results.len(), 1);
+    }
+
+    struct TestHandler;
+
+    #[async_trait]
+    impl CustomHandler for TestHandler {
+        async fn handle(&self, params: serde_json::Value) -> AsyncHostResult<Vec<u8>> {
+            let key = params.get("key").and_then(|v| v.as_str()).unwrap_or("");
+            if key == "error" {
+                return Err(AsyncHostError::Internal("Custom error".to_string()));
+            }
+            Ok(key.as_bytes().to_vec())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_custom_handler_registration_and_execution() {
+        let mut ctx = AsyncHostContext::new("agent-1", "session-1");
+        // Override enforcer to be permissive for this test
+        ctx.enforcer = Arc::new(CedarEnforcer::new_permissive());
+
+        ctx.register_handler("test_op", Arc::new(TestHandler)).await;
+
+        // Success case
+        let op = AsyncOperation::Custom {
+            name: "test_op".to_string(),
+            params: serde_json::json!({"key": "success"}),
+        };
+
+        let result = ctx.execute_async(op).await.unwrap();
+        assert!(result.success);
+        assert_eq!(result.data.unwrap(), b"success");
+
+        // Error case from handler
+        let op_error = AsyncOperation::Custom {
+            name: "test_op".to_string(),
+            params: serde_json::json!({"key": "error"}),
+        };
+
+        let result_error = ctx.execute_async(op_error).await.unwrap();
+        assert!(!result_error.success);
+        assert_eq!(result_error.error.unwrap(), "Internal error: Custom error");
+
+        // Handler not found case
+        let op_missing = AsyncOperation::Custom {
+            name: "missing_op".to_string(),
+            params: serde_json::json!({}),
+        };
+
+        let result_missing = ctx.execute_async(op_missing).await.unwrap();
+        assert!(!result_missing.success);
+        assert!(result_missing.error.unwrap().contains("not found"));
+    }
+
+    struct TimeoutHandler;
+    #[async_trait]
+    impl CustomHandler for TimeoutHandler {
+        async fn handle(&self, _params: serde_json::Value) -> AsyncHostResult<Vec<u8>> {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            Ok(vec![])
+        }
+    }
+
+    #[tokio::test]
+    async fn test_custom_handler_timeout() {
+        let mut ctx = AsyncHostContext::new("agent-1", "session-1");
+        // Override enforcer to be permissive for this test
+        ctx.enforcer = Arc::new(CedarEnforcer::new_permissive());
+
+        // Register with very short timeout
+        ctx.register_handler_with_timeout(
+            "timeout_op",
+            Arc::new(TimeoutHandler),
+            Some(Duration::from_millis(10)),
+        )
+        .await;
+
+        let op = AsyncOperation::Custom {
+            name: "timeout_op".to_string(),
+            params: serde_json::json!({}),
+        };
+
+        let result = ctx.execute_async(op).await.unwrap();
+        assert!(!result.success);
+        // AsyncHostError::Timeout formats as "Operation timed out after ..."
+        assert!(result.error.unwrap().contains("timed out"));
     }
 }
