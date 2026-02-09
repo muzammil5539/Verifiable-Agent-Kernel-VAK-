@@ -711,7 +711,7 @@ impl AutoGPTAdapter {
         agent_id: &str,
         verification_opts: Option<&VerificationOptions>,
     ) -> AdapterResult<FullVerificationResult> {
-        let verifier = TaskVerifier::new(&self.config, &self.stats, self.prm.as_ref());
+        let verifier = TaskVerifier::new(&self.config, &self.stats, self.prm.as_ref(), &self.blocked_commands_set);
         verifier.verify(plan, agent_id, verification_opts).await
     }
 
@@ -729,9 +729,10 @@ impl AutoGPTAdapter {
 
         // Check for anomalies in output
         let mut alerts = Vec::new();
+        let output_lower = output.to_lowercase();
 
         // Check for error patterns
-        if output.to_lowercase().contains("error") || output.to_lowercase().contains("failed") {
+        if output_lower.contains("error") || output_lower.contains("failed") {
             alerts.push(MonitoringAlert {
                 level: AlertLevel::Medium,
                 message: "Error detected in step output".to_string(),
@@ -751,7 +752,7 @@ impl AutoGPTAdapter {
         // Check for sensitive data in output
         let sensitive_patterns = ["password", "secret", "token", "api_key", "private_key"];
         for pattern in sensitive_patterns {
-            if output.to_lowercase().contains(pattern) {
+            if output_lower.contains(pattern) {
                 alerts.push(MonitoringAlert {
                     level: AlertLevel::High,
                     message: format!("Sensitive data pattern '{}' detected in output", pattern),
@@ -772,10 +773,11 @@ impl AutoGPTAdapter {
 }
 
 /// Task verifier that orchestrates analysis phases
-pub struct TaskVerifier<'a> {
+pub(crate) struct TaskVerifier<'a> {
     config: &'a AutoGPTConfig,
     stats: &'a AutoGPTStats,
     prm: Option<&'a Arc<dyn ProcessRewardModel>>,
+    blocked_commands_set: &'a regex::RegexSet,
 }
 
 impl<'a> TaskVerifier<'a> {
@@ -784,8 +786,9 @@ impl<'a> TaskVerifier<'a> {
         config: &'a AutoGPTConfig,
         stats: &'a AutoGPTStats,
         prm: Option<&'a Arc<dyn ProcessRewardModel>>,
+        blocked_commands_set: &'a regex::RegexSet,
     ) -> Self {
-        Self { config, stats, prm }
+        Self { config, stats, prm, blocked_commands_set }
     }
 
     /// Perform full task verification
@@ -838,8 +841,9 @@ impl<'a> TaskVerifier<'a> {
         // PRM Scoring
         self.score_reasoning(plan, &mut result).await;
 
-        // Generate recommendations
-        result.recommendations = self.generate_recommendations(&result, plan);
+        // Generate recommendations, preserving any recommendations added by PRM scoring
+        let generated_recommendations = self.generate_recommendations(&result, plan);
+        result.recommendations.extend(generated_recommendations);
 
         // Final verification decision
         result.verified = result.overall_risk < RiskLevel::Critical
@@ -864,15 +868,13 @@ impl<'a> TaskVerifier<'a> {
 
     /// Analyze timing constraints
     fn analyze_timing(&self, plan: &TaskPlan) -> TimingAnalysis {
+        let estimated_duration_secs = plan
+            .estimated_time_secs
+            .unwrap_or_else(|| plan.steps.len() as u64 * 30);
         TimingAnalysis {
-            estimated_duration_secs: plan
-                .estimated_time_secs
-                .unwrap_or_else(|| plan.steps.len() as u64 * 30),
+            estimated_duration_secs,
             max_allowed_secs: self.config.max_execution_time_secs,
-            exceeds_limit: plan
-                .estimated_time_secs
-                .map(|t| t > self.config.max_execution_time_secs)
-                .unwrap_or(false),
+            exceeds_limit: estimated_duration_secs > self.config.max_execution_time_secs,
             step_count: plan.steps.len(),
             max_allowed_steps: self.config.max_steps,
         }
@@ -892,18 +894,29 @@ impl<'a> TaskVerifier<'a> {
 
             match prm.score_trajectory(&reasoning_steps, &plan.goal).await {
                 Ok(scores) => {
-                    let avg_score: f64 = scores.iter().map(|s| s.score).sum::<f64>() / scores.len() as f64;
-                    if avg_score < self.config.base.prm_threshold {
+                    if scores.is_empty() {
+                        tracing::warn!("PRM returned empty scores, treating as low quality");
                         result.overall_risk = result.overall_risk.max(RiskLevel::High);
                         result.recommendations.push(VerificationRecommendation {
                             level: RecommendationLevel::Blocking,
                             category: "reasoning".to_string(),
-                            message: format!(
-                                "Plan reasoning quality low (score: {:.2}). Consider revising.",
-                                avg_score
-                            ),
+                            message: "Unable to score plan reasoning. Consider revising.".to_string(),
                             action: Some("revise_plan".to_string()),
                         });
+                    } else {
+                        let avg_score: f64 = scores.iter().map(|s| s.score).sum::<f64>() / scores.len() as f64;
+                        if avg_score < self.config.base.prm_threshold {
+                            result.overall_risk = result.overall_risk.max(RiskLevel::High);
+                            result.recommendations.push(VerificationRecommendation {
+                                level: RecommendationLevel::Blocking,
+                                category: "reasoning".to_string(),
+                                message: format!(
+                                    "Plan reasoning quality low (score: {:.2}). Consider revising.",
+                                    avg_score
+                                ),
+                                action: Some("revise_plan".to_string()),
+                            });
+                        }
                     }
                 }
                 Err(e) => {
