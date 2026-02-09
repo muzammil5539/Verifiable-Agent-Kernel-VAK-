@@ -36,7 +36,7 @@
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 #[cfg(feature = "python")]
-use pyo3::types::{PyAny, PyDict, PyList, PyTuple};
+use pyo3::types::{PyAny, PyDict, PyList};
 
 #[cfg(feature = "python")]
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
@@ -55,16 +55,12 @@ use crate::audit::{AuditDecision, AuditLogger};
 #[pyclass(name = "PolicyDecision")]
 #[derive(Clone)]
 pub struct PyPolicyDecision {
-    /// The effect of the decision (allow/deny)
     #[pyo3(get)]
     pub effect: String,
-    /// The ID of the policy that made the decision
     #[pyo3(get)]
     pub policy_id: String,
-    /// The reason for the decision
     #[pyo3(get)]
     pub reason: String,
-    /// List of matched rule IDs
     #[pyo3(get)]
     pub matched_rules: Vec<String>,
 }
@@ -103,25 +99,18 @@ impl PyPolicyDecision {
 #[pyclass(name = "ToolResponse")]
 #[derive(Clone)]
 pub struct PyToolResponse {
-    /// Unique request identifier
     #[pyo3(get)]
     pub request_id: String,
-    /// Whether execution was successful
     #[pyo3(get)]
     pub success: bool,
-    /// The result string (if successful)
     #[pyo3(get)]
     pub result: Option<String>,
-    /// The error message (if failed)
     #[pyo3(get)]
     pub error: Option<String>,
-    /// Execution time in milliseconds
     #[pyo3(get)]
     pub execution_time_ms: f64,
-    /// Memory used in bytes
     #[pyo3(get)]
     pub memory_used_bytes: usize,
-    /// Audit trail for this execution
     #[pyo3(get)]
     pub audit_trail: Vec<String>,
 }
@@ -203,13 +192,7 @@ fn py_to_json(obj: Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
     if let Ok(dict) = obj.downcast::<PyDict>() {
         let mut map = serde_json::Map::new();
         for (k, v) in dict.iter() {
-            // Mirror Python's json.dumps behavior: coerce dict keys via str(k)
-            let key = k.str()?.to_str().map_err(|e| {
-                PyValueError::new_err(format!(
-                    "Dictionary key must be convertible to valid UTF-8 string: {}",
-                    e
-                ))
-            })?.to_owned();
+            let key = k.extract::<String>()?;
             let value = py_to_json(v)?;
             map.insert(key, value);
         }
@@ -224,15 +207,6 @@ fn py_to_json(obj: Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
         return Ok(serde_json::Value::Array(vec));
     }
 
-    // Handle tuples like lists (matching json.dumps behavior)
-    if let Ok(tuple) = obj.downcast::<PyTuple>() {
-        let mut vec = Vec::new();
-        for v in tuple.iter() {
-            vec.push(py_to_json(v)?);
-        }
-        return Ok(serde_json::Value::Array(vec));
-    }
-
     if let Ok(s) = obj.extract::<String>() {
         return Ok(serde_json::Value::String(s));
     }
@@ -241,28 +215,12 @@ fn py_to_json(obj: Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
         return Ok(serde_json::Value::Number(i.into()));
     }
 
-    // Try u64 for large positive integers before falling back to f64
-    if let Ok(u) = obj.extract::<u64>() {
-        return Ok(serde_json::Value::Number(u.into()));
-    }
-
     if let Ok(f) = obj.extract::<f64>() {
-        if f.is_finite() {
-            if let Some(n) = serde_json::Number::from_f64(f) {
-                return Ok(serde_json::Value::Number(n));
-            } else {
-                // This should theoretically never occur for finite floats, but handle it defensively
-                return Err(PyValueError::new_err(format!(
-                    "Unexpected error: failed to convert finite float ({}) to JSON number",
-                    f
-                )));
-            }
+        if let Some(n) = serde_json::Number::from_f64(f) {
+            return Ok(serde_json::Value::Number(n));
+        } else {
+            return Ok(serde_json::Value::Null);
         }
-        // Raise error for non-finite floats instead of silently converting to null
-        return Err(PyValueError::new_err(format!(
-            "Non-finite float value ({}) cannot be converted to JSON",
-            f
-        )));
     }
 
     Err(PyValueError::new_err(format!(
@@ -370,9 +328,7 @@ impl PyKernel {
 
         // Convert Python dictionary to JSON string for internal storage
         let config_val = py_to_json(config.as_any().clone())?;
-        let config_json = serde_json::to_string(&config_val).map_err(|e| {
-            PyValueError::new_err(format!("Failed to serialize agent config to JSON: {}", e))
-        })?;
+        let config_json = serde_json::to_string(&config_val).unwrap_or_else(|_| "{}".to_string());
 
         let mut agent_data = HashMap::new();
         agent_data.insert("name".to_string(), name.to_string());
@@ -508,8 +464,7 @@ impl PyKernel {
 
         // Convert Python dictionary to serde_json::Value
         let params_val = py_to_json(params.as_any().clone())?;
-        let params_json = serde_json::to_string(&params_val)
-            .map_err(|e| PyValueError::new_err(format!("Failed to serialize params: {}", e)))?;
+        let params_json = serde_json::to_string(&params_val).unwrap_or_else(|_| "{}".to_string());
 
         let mut result = HashMap::new();
         result.insert("request_id".to_string(), request_id);
@@ -636,12 +591,7 @@ impl PyKernel {
 
         // Get audit entries from logger
         let mut results = Vec::new();
-        let entries = self
-            .audit_logger
-            .load_all_entries()
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-
-        for entry in entries {
+        for entry in self.audit_logger.entries() {
             if let Some(agent) = agent_filter {
                 if entry.agent_id != agent {
                     continue;
@@ -677,11 +627,7 @@ impl PyKernel {
             .parse()
             .map_err(|_| PyValueError::new_err("Invalid entry ID"))?;
 
-        if let Some(entry) = self
-            .audit_logger
-            .get_entry(id)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
-        {
+        if let Some(entry) = self.audit_logger.get_entry(id) {
             let mut entry_map = HashMap::new();
             entry_map.insert("entry_id".to_string(), entry.id.to_string());
             entry_map.insert("timestamp".to_string(), entry.timestamp.to_string());
@@ -745,7 +691,7 @@ impl PyKernel {
             return Err(PyRuntimeError::new_err("Kernel not initialized"));
         }
 
-        Ok(self.audit_logger.last_entry().map(|e| e.hash.clone()))
+        Ok(self.audit_logger.entries().last().map(|e| e.hash.clone()))
     }
 
     /// Add a policy rule
@@ -792,7 +738,7 @@ impl PyKernel {
             self.initialized,
             self.agents.len(),
             self.skill_registry.len(),
-            self.audit_logger.count().unwrap_or(0)
+            self.audit_logger.entries().len()
         )
     }
 }
@@ -868,6 +814,7 @@ async def async_policy_check(agent_id: str, action: str, context: dict) -> dict:
 from fastapi import FastAPI, HTTPException
 from vak import VakKernel
 import asyncio
+import json
 
 app = FastAPI()
 kernel = VakKernel.default()
@@ -958,19 +905,14 @@ mod tests {
 
     #[test]
     fn test_py_kernel_agent_registration() {
-        pyo3::prepare_freethreaded_python();
+        let mut kernel = PyKernel::default().unwrap();
 
-        Python::with_gil(|py| {
-            let mut kernel = PyKernel::default().unwrap();
-            let empty_dict = PyDict::new(py);
+        kernel
+            .register_agent("test-agent", "Test Agent", "{}")
+            .unwrap();
+        assert!(kernel.agents.contains_key("test-agent"));
 
-            kernel
-                .register_agent("test-agent", "Test Agent", empty_dict.bind(py).clone())
-                .unwrap();
-            assert!(kernel.agents.contains_key("test-agent"));
-
-            kernel.unregister_agent("test-agent").unwrap();
-            assert!(!kernel.agents.contains_key("test-agent"));
-        });
+        kernel.unregister_agent("test-agent").unwrap();
+        assert!(!kernel.agents.contains_key("test-agent"));
     }
 }

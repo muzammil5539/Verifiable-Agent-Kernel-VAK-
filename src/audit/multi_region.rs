@@ -1043,30 +1043,6 @@ impl AuditBackend for MultiRegionS3Backend {
             .filter(|e| e.timestamp >= start && e.timestamp <= end)
             .collect())
     }
-
-    fn for_each_entry(
-        &self,
-        f: &mut dyn FnMut(&AuditEntry) -> Result<(), AuditError>,
-    ) -> Result<(), AuditError> {
-        let cache = self
-            .local_cache
-            .read()
-            .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
-
-        for entry in cache.iter() {
-            f(entry)?;
-        }
-        Ok(())
-    }
-
-    fn get_entry(&self, id: u64) -> Result<Option<AuditEntry>, AuditError> {
-        let cache = self
-            .local_cache
-            .read()
-            .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
-
-        Ok(cache.iter().find(|e| e.id == id).cloned())
-    }
 }
 
 // ============================================================================
