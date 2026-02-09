@@ -777,7 +777,7 @@ impl ReplayVerifier {
         };
 
         let content = format!(
-            "{}:{}:{}:{}:{}:{:?}:{:?}:{:?}:{:?}:{}:{:?}",
+            "{}:{}:{}:{}:{}:{:?}:{:?}:{:?}:{:?}:{}",
             event.event_id,
             event.trace_id,
             event.timestamp,
@@ -788,7 +788,6 @@ impl ReplayVerifier {
             event.decision,
             event.shadow_mode,
             prev_hash,
-            event.state_hash,
         );
 
         let mut hasher = Sha256::new();

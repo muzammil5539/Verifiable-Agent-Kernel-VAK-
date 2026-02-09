@@ -40,7 +40,7 @@ rand = "0.8"
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 # WASM runtime
-wasmtime = "41.0.3"
+wasmtime = "41.0.1"
 
 # Identifiers
 uuid = { version = "1.6", features = ["v4", "v7", "serde"] }
@@ -148,10 +148,6 @@ glob.workspace = true
 
 [[bench]]
 name = "kernel_benchmarks"
-harness = false
-
-[[bench]]
-name = "audit_benchmarks"
 harness = false
 
 # Build profiles

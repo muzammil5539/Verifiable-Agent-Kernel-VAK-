@@ -45,7 +45,7 @@ runs-on: ubuntu-latest
 
 **Steps**:
 1. Checkout repository (`actions/checkout@v4`)
-2. Install Rust toolchain (`dtolnay/rust-toolchain@stable`)
+2. Install Rust toolchain (`dtolnay/rust-action@stable`)
 3. Install cargo-audit: `cargo install cargo-audit --locked`
 4. Run scan: `cargo audit --deny warnings`
 5. Generate JSON report (on failure): `cargo audit --json > security-audit-report.json`
@@ -159,7 +159,7 @@ env:
 ### Action Versions
 - `actions/checkout@v4` - Repository checkout
 - `actions/upload-artifact@v4` - Artifact uploads
-- `dtolnay/rust-toolchain@stable` - Rust toolchain
+- `dtolnay/rust-action@stable` - Rust toolchain
 
 ## Build & Test Workflow (Recommended)
 
@@ -187,7 +187,7 @@ jobs:
         rust: [stable, beta]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@${{ matrix.rust }}
+      - uses: dtolnay/rust-action@${{ matrix.rust }}
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -223,7 +223,7 @@ jobs:
         python-version: ['3.9', '3.10', '3.11', '3.12']
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-action@stable
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -245,7 +245,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-action@stable
       - name: Run benchmarks
         run: cargo bench --no-fail-fast
       - name: Upload benchmark results
@@ -275,7 +275,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-action@stable
       - name: Build release
         run: cargo build --release
       - name: Package artifacts
@@ -292,7 +292,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-action@stable
       - name: Publish
         run: cargo publish --token ${{ secrets.CARGO_TOKEN }}
 
@@ -477,7 +477,7 @@ env:
 - `actions/checkout` - Repository checkout
 - `actions/cache` - Dependency caching
 - `actions/upload-artifact` - Artifact uploads
-- `dtolnay/rust-toolchain` - Rust toolchain
+- `dtolnay/rust-action` - Rust toolchain
 - `actions/setup-python` - Python setup
 
 ### External Tools
