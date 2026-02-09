@@ -458,8 +458,7 @@ impl FlightRecorder {
     pub fn start_trace(&self, agent_id: &str) -> String {
         let trace_id = Uuid::new_v4().to_string();
 
-        {
-            let mut current = self.current_trace_id.write().unwrap();
+        if let Ok(mut current) = self.current_trace_id.write() {
             *current = Some(trace_id.clone());
         }
 
@@ -475,9 +474,10 @@ impl FlightRecorder {
 
     /// End the current trace
     pub fn end_trace(&self, agent_id: &str) -> Option<TraceReceipt> {
-        let trace_id = {
-            let mut current = self.current_trace_id.write().unwrap();
+        let trace_id = if let Ok(mut current) = self.current_trace_id.write() {
             current.take()
+        } else {
+            None
         }?;
 
         // Record trace end event
@@ -494,8 +494,7 @@ impl FlightRecorder {
     /// Start a span within a trace
     pub fn start_span(&self, span_id: &str, parent_span_id: Option<&str>, agent_id: &str) {
         // Record span start time
-        {
-            let mut spans = self.active_spans.write().unwrap();
+        if let Ok(mut spans) = self.active_spans.write() {
             spans.insert(span_id.to_string(), Instant::now());
         }
 
@@ -519,11 +518,12 @@ impl FlightRecorder {
 
     /// End a span
     pub fn end_span(&self, span_id: &str, agent_id: &str) {
-        let duration_us = {
-            let mut spans = self.active_spans.write().unwrap();
+        let duration_us = if let Ok(mut spans) = self.active_spans.write() {
             spans
                 .remove(span_id)
                 .map(|start| start.elapsed().as_micros() as u64)
+        } else {
+            None
         };
 
         let trace_id = self
@@ -705,11 +705,10 @@ impl FlightRecorder {
     fn record_event(&self, mut event: FlightEvent) {
         // Compute hash chain
         if self.config.enable_chain_hashing {
-            let prev_hash = self.last_hash.read().unwrap().clone();
+            let prev_hash = self.last_hash.read().map(|h| h.clone()).unwrap_or_default();
             event.compute_hash(&prev_hash);
 
-            {
-                let mut last = self.last_hash.write().unwrap();
+            if let Ok(mut last) = self.last_hash.write() {
                 *last = event.hash.clone();
             }
         }
@@ -724,8 +723,7 @@ impl FlightRecorder {
         }
 
         // Store in memory
-        {
-            let mut events = self.events.write().unwrap();
+        if let Ok(mut events) = self.events.write() {
             events.push(event);
 
             // Trim if over limit
@@ -740,17 +738,20 @@ impl FlightRecorder {
 
     /// Get the current trace ID
     pub fn get_current_trace_id(&self) -> Option<String> {
-        self.current_trace_id.read().unwrap().clone()
+        self.current_trace_id.read().ok()?.clone()
     }
 
     /// Get all events for a trace
     pub fn get_trace_events(&self, trace_id: &str) -> Vec<FlightEvent> {
-        let events = self.events.read().unwrap();
-        events
-            .iter()
-            .filter(|e| e.trace_id == trace_id)
-            .cloned()
-            .collect()
+        if let Ok(events) = self.events.read() {
+            events
+                .iter()
+                .filter(|e| e.trace_id == trace_id)
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
+        }
     }
 
     /// Generate a receipt for the current trace
@@ -830,12 +831,14 @@ impl FlightRecorder {
 
     /// Clear all events (for testing)
     pub fn clear(&self) {
-        let mut events = self.events.write().unwrap();
-        events.clear();
+        if let Ok(mut events) = self.events.write() {
+            events.clear();
+        }
         self.event_count.store(0, Ordering::Relaxed);
 
-        let mut last_hash = self.last_hash.write().unwrap();
-        *last_hash = "genesis".to_string();
+        if let Ok(mut last_hash) = self.last_hash.write() {
+            *last_hash = "genesis".to_string();
+        }
     }
 
     /// Redact sensitive fields from JSON value
@@ -1165,13 +1168,13 @@ mod tests {
         recorder.start_trace("test-agent");
         recorder.record_request("test-agent", "login", "/auth", Some(input));
 
-        let events = recorder.events.read().unwrap();
+        let events = recorder.events.read().expect("Lock poisoned");
         let request = events
             .iter()
             .find(|e| matches!(e.event_type, EventType::Request))
-            .unwrap();
+            .expect("Request event not found");
 
-        let input = request.input.as_ref().unwrap();
+        let input = request.input.as_ref().expect("Input is None");
         assert_eq!(input["password"], "[REDACTED]");
         assert_eq!(input["api_key"], "[REDACTED]");
         assert_eq!(input["data"]["token"], "[REDACTED]");
@@ -1187,7 +1190,7 @@ mod tests {
         recorder.record_request("agent-1", "test", "/res", None);
         recorder.end_trace("agent-1");
 
-        let events = recorder.events.read().unwrap().clone();
+        let events = recorder.events.read().expect("Lock poisoned").clone();
         let replay = ReplayEngine::new(events);
 
         let summary = replay.summary();
@@ -1210,7 +1213,7 @@ mod tests {
         recorder.end_span("span-1", "agent-1");
         recorder.end_trace("agent-1");
 
-        let events = recorder.events.read().unwrap();
+        let events = recorder.events.read().expect("Lock poisoned");
         let span_ends: Vec<_> = events
             .iter()
             .filter(|e| matches!(e.event_type, EventType::SpanEnd))

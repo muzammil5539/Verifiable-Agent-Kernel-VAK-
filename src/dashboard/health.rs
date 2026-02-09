@@ -87,7 +87,7 @@ impl ComponentHealth {
             message: None,
             last_check: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
             response_time_ms: None,
         }
@@ -100,7 +100,7 @@ impl ComponentHealth {
             message: Some(message.into()),
             last_check: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
             response_time_ms: None,
         }
@@ -113,7 +113,7 @@ impl ComponentHealth {
             message: Some(message.into()),
             last_check: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
             response_time_ms: None,
         }
@@ -209,22 +209,34 @@ impl HealthChecker {
         F: Fn() -> ComponentHealth + Send + Sync + 'static,
     {
         let name = name.into();
-        self.checks.write().unwrap().insert(name, Box::new(check));
+        if let Ok(mut checks) = self.checks.write() {
+            checks.insert(name, Box::new(check));
+        } else {
+            tracing::error!("Failed to acquire health checks lock for registration");
+        }
     }
 
     /// Register a component as required for readiness
     pub fn require_for_ready(&self, component: impl Into<String>) {
-        self.ready_checks.write().unwrap().push(component.into());
+        if let Ok(mut checks) = self.ready_checks.write() {
+            checks.push(component.into());
+        } else {
+            tracing::error!("Failed to acquire ready checks lock");
+        }
     }
 
     /// Mark the system as ready
     pub fn set_ready(&self, ready: bool) {
-        *self.ready.write().unwrap() = ready;
+        if let Ok(mut r) = self.ready.write() {
+            *r = ready;
+        } else {
+            tracing::error!("Failed to acquire readiness lock");
+        }
     }
 
     /// Check if system is ready
     pub fn is_ready(&self) -> bool {
-        *self.ready.read().unwrap()
+        self.ready.read().map(|r| *r).unwrap_or(false)
     }
 
     /// Get uptime in seconds
@@ -234,25 +246,29 @@ impl HealthChecker {
 
     /// Perform health check
     pub fn check_health(&self) -> HealthResponse {
-        let checks = self.checks.read().unwrap();
         let mut components = HashMap::new();
         let mut overall_status = HealthStatus::Healthy;
 
-        for (name, check_fn) in checks.iter() {
-            let component_health = check_fn();
+        if let Ok(checks) = self.checks.read() {
+            for (name, check_fn) in checks.iter() {
+                let component_health = check_fn();
 
-            // Update overall status based on component health
-            match component_health.status {
-                HealthStatus::Unhealthy => {
-                    overall_status = HealthStatus::Unhealthy;
+                // Update overall status based on component health
+                match component_health.status {
+                    HealthStatus::Unhealthy => {
+                        overall_status = HealthStatus::Unhealthy;
+                    }
+                    HealthStatus::Degraded if overall_status == HealthStatus::Healthy => {
+                        overall_status = HealthStatus::Degraded;
+                    }
+                    _ => {}
                 }
-                HealthStatus::Degraded if overall_status == HealthStatus::Healthy => {
-                    overall_status = HealthStatus::Degraded;
-                }
-                _ => {}
+
+                components.insert(name.clone(), component_health);
             }
-
-            components.insert(name.clone(), component_health);
+        } else {
+            overall_status = HealthStatus::Unhealthy;
+            tracing::error!("Failed to acquire health checks lock");
         }
 
         HealthResponse {
@@ -262,7 +278,7 @@ impl HealthChecker {
             version: env!("CARGO_PKG_VERSION").to_string(),
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
         }
     }
@@ -276,21 +292,33 @@ impl HealthChecker {
                 not_ready_components: vec![],
                 timestamp: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_secs(),
             };
         }
 
         let health = self.check_health();
-        let required = self.ready_checks.read().unwrap();
         let mut not_ready = Vec::new();
 
-        for component_name in required.iter() {
-            if let Some(component) = health.components.get(component_name) {
-                if component.status == HealthStatus::Unhealthy {
-                    not_ready.push(component_name.clone());
+        if let Ok(required) = self.ready_checks.read() {
+            for component_name in required.iter() {
+                if let Some(component) = health.components.get(component_name) {
+                    if component.status == HealthStatus::Unhealthy {
+                        not_ready.push(component_name.clone());
+                    }
                 }
             }
+        } else {
+            // Assume not ready if lock fails
+            return ReadinessResponse {
+                status: ReadinessStatus::NotReady,
+                reason: Some("Failed to acquire readiness checks lock".to_string()),
+                not_ready_components: vec![],
+                timestamp: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            };
         }
 
         if not_ready.is_empty() {
@@ -300,7 +328,7 @@ impl HealthChecker {
                 not_ready_components: vec![],
                 timestamp: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_secs(),
             }
         } else {
@@ -310,7 +338,7 @@ impl HealthChecker {
                 not_ready_components: not_ready,
                 timestamp: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_secs(),
             }
         }
