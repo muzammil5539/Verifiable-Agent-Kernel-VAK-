@@ -61,7 +61,6 @@ arc-swap = "1.7"
 rs_merkle = "1.5"
 
 # HTTP client (using rustls for TLS to avoid system OpenSSL dependency)
-# reqwest 0.11 uses rustls-pemfile 1.0.4 which is unmaintained. Updating to 0.12.
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 
 # Streaming
@@ -149,6 +148,10 @@ glob.workspace = true
 
 [[bench]]
 name = "kernel_benchmarks"
+harness = false
+
+[[bench]]
+name = "audit_benchmarks"
 harness = false
 
 # Build profiles
