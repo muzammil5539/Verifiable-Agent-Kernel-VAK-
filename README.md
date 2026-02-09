@@ -472,63 +472,118 @@ python examples/python_quickstart.py
 
 ## Development Roadmap
 
-### Current Status (v0.1 - Alpha)
+### Current Status (v0.1 - Alpha) — ~43% Complete
+
+**Completed Phases:**
+- ✅ Phase 1: Core Kernel Stability ("Iron Kernel")
+- ✅ Phase 2: Policy Layer ("Digital Superego")
+- ✅ Phase 3: Memory & Provenance ("Immutable Past")
+- ✅ Phase 4: Neuro-Symbolic Cognitive Layer ("Prefrontal Cortex")
+- ✅ Security Layer
+
+**In Progress:**
+- ⚠️ Phase 5: Ecosystem & Interoperability (Partially Complete)
+- ⚠️ Testing Layer (In Progress)
 
 | Module | Status | Completion |
 |--------|--------|------------|
-| Kernel Core | ✅ Implemented | ~80% |
-| Policy Engine (ABAC) | ✅ Implemented | ~90% |
-| Audit Logging | ✅ Implemented | ~95% |
-| Memory Fabric | ⚠️ Partial | ~60% |
-| WASM Sandbox | ⚠️ Partial | ~85% |
-| Neuro-Symbolic Reasoner | ❌ Missing | ~0% |
-| Swarm Consensus | ❌ Missing | ~0% |
-| Python SDK | ⚠️ Partial | ~30% |
+| Kernel Core | ✅ Complete | 100% |
+| Policy Engine (ABAC) | ✅ Complete | 100% |
+| Audit Logging | ✅ Complete | 100% |
+| Memory Fabric | ✅ Complete | 100% |
+| WASM Sandbox | ✅ Complete | 100% |
+| Neuro-Symbolic Reasoner | ✅ Complete | 100% |
+| Security Layer | ✅ Complete | 100% |
+| Swarm/A2A Protocol | ⚠️ Partial | ~70% |
+| MCP/Integrations | ⚠️ Partial | ~60% |
+| Python SDK | ⚠️ Partial | ~40% |
+| Testing Suite | ⚠️ In Progress | ~30% |
 | LLM Interface | ✅ Implemented | 100% |
 
 ### Roadmap by Priority
 
 #### 🔴 P0 - Critical for MVP
 
-**Phase 1: Foundation** (Week 1)
-- [x] LLM-001: LLM Interface abstraction
-- [x] MEM-001: Episodic Memory (Merkle Chain)
-- [x] SBX-001: Skill Registry with manifests
+**Phase 1: Core Kernel Stability** ✅ COMPLETE
+- [x] RT-001: Epoch Ticker Thread
+- [x] RT-002: Epoch Deadline Configuration
+- [x] RT-003: Pooling Allocator Strategy
+- [x] RT-004: Async Host Functions
+- [x] RT-005: Panic Safety at WASM/Host Boundary
+- [x] RT-006: Deterministic Termination Tests
 
-**Phase 2: Reasoning** (Week 2-3)
-- [ ] NSR-001: Process Reward Model (PRM) integration
-- [ ] NSR-002: Z3 Formal Verification Gateway
-- [ ] SBX-002: Signed Skill verification
+**Phase 2: Policy Layer** ✅ COMPLETE
+- [x] POL-001: Cedar Policy Integration
+- [x] POL-002: Cedar Schema Definition
+- [x] POL-003: Cedar Enforcer Implementation
+- [x] POL-004: Policy Middleware Injection
+- [x] POL-005: Dynamic Context Injection
+- [x] POL-006: Policy Hot-Reloading
+- [x] POL-007: Default Deny Policy
+- [x] POL-008: Policy Analysis Integration
 
-**Phase 3: Integration** (Week 3-4)
-- [ ] PY-001: PyO3 bindings for Python SDK
-- [ ] Integration testing and documentation
+**Phase 3: Memory & Provenance** ✅ COMPLETE
+- [x] MEM-001: rs_merkle Integration
+- [x] MEM-002: Sparse Merkle Tree Proofs
+- [x] MEM-003: Content-Addressable Storage
+- [x] MEM-004: Cryptographic Receipt Generation
+- [x] MEM-005: Time Travel Debugging
+- [x] MEM-006: Secret Scrubbing
+
+**Phase 4: Neuro-Symbolic Cognitive Layer** ✅ COMPLETE
+- [x] NSR-001: Datalog Integration
+- [x] NSR-002: Safety Rules Implementation
+- [x] NSR-003: Reasoning Host Function
+- [x] NSR-004: Risk-Based Network Access Rules
+- [x] NSR-005: Constrained Decoding Bridge
+- [x] NSR-006: Neuro-Symbolic Hybrid Loop
+
+**Security Layer** ✅ COMPLETE
+- [x] SEC-001: Supply Chain Hardening (cargo-audit)
+- [x] SEC-002: License Compliance (cargo-deny)
+- [x] SEC-003: Unsafe Rust Audit
+- [x] SEC-004: Prompt Injection Protection
+- [x] SEC-005: Rate Limiting
+
+**Phase 5: Ecosystem & Interoperability** ⚠️ PARTIAL
+- [x] INT-001: MCP Server Implementation
+- [x] INT-002: MCP Tool Mapping
+- [ ] INT-003: LangChain Adapter Completion
+- [ ] INT-004: AutoGPT Adapter Completion
+- [x] SWM-001: A2A Protocol Support
+- [ ] SWM-002: AgentCard Discovery
+
+**Testing Layer** ⚠️ IN PROGRESS
+- [ ] TST-001: Infinite Loop Preemption Tests
+- [ ] TST-002: Memory Containment Tests
+- [ ] TST-003: Policy Verification Tests
+- [x] TST-004: Integration Test Coverage
+- [ ] TST-005: Benchmark Suite Expansion
+- [ ] TST-006: Python SDK Tests
 
 #### 🟠 P1 - Important for Production
-- [ ] MEM-002: Working Memory with dynamic summarization
-- [ ] MEM-003: Knowledge Graph for Semantic Memory
-- [ ] MEM-004: LanceDB for vector storage
-- [ ] MEM-005: Time Travel & Rollbacks
-- [ ] NSR-003: Tree of Thoughts search
+- [ ] DOC-001: Architecture documentation
+- [ ] DOC-002: API reference documentation
+- [ ] INT-003: LangChain Adapter Completion
+- [ ] INT-004: AutoGPT Adapter Completion
 
 #### 🟡 P2 - Nice to Have
-- [ ] SWM-001: Swarm Consensus module
-- [ ] SWM-002: Quadratic Voting
-- [ ] SWM-003: Protocol Router
-- [ ] MEM-006: IPFS-Lite backend
-- [ ] INF-001: Persistent state storage backends
+- [ ] INF-001: Kubernetes operator
+- [ ] INF-002: Docker images
+- [ ] INF-003: Helm charts
+- [ ] OBS-002: Cryptographic replay capability
 
 #### 🟢 P3 - Future (Post-MVP)
-- [ ] ADV-001: Zero-Knowledge Proof integration
-- [ ] ADV-002: Constitution Protocol
-- [ ] ADV-003: Fleet Management dashboard
-- [ ] ADV-004: Decentralized Skill Marketplace
+- [ ] FUT-001: Zero-Knowledge Proof integration
+- [ ] FUT-002: Constitution Protocol
+- [ ] FUT-003: Enhanced PRM fine-tuning toolkit
+- [ ] FUT-004: Skill marketplace with verified publishers
 
 ### Target Milestones
 
-- **v0.1 (Current)**: Core kernel, policy engine, audit logging
-- **v0.2 (Q1 2026)**: Neuro-symbolic reasoner, PRM integration
-- **v0.3 (Q2 2026)**: Multi-agent swarm, Python SDK stable
+- **v0.1 (Current - Alpha)**: Core kernel, policy engine, audit logging, neuro-symbolic layer ✅
+- **v0.2 (Q1 2026)**: Complete ecosystem integrations, Python SDK stable
+- **v0.3 (Q2 2026)**: Full test coverage, infrastructure tooling
 - **v1.0 (Q3 2026)**: Production-ready with full documentation
 
 ---
