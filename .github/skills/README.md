@@ -17,7 +17,11 @@ These skills are designed to help AI agents (like Claude) work with the VAK code
 
 These are WASM modules that run inside the VAK kernel sandbox.
 
--   **Calculator** (`calculator/`): A simple WASM skill demonstrating the skill interface.
+-   **Calculator** (`calculator/`): Basic arithmetic operations (add, subtract, multiply, divide).
+-   **Crypto Hash** (`crypto-hash/`): Cryptographic hashing (SHA-256, HMAC-SHA256, hash verification).
+-   **JSON Validator** (`json-validator/`): JSON validation, pretty-printing, minification, extraction, merging, and diffing.
+-   **Text Analyzer** (`text-analyzer/`): Text analysis (word count, character stats, frequency, similarity, entropy).
+-   **Regex Matcher** (`regex-matcher/`): Pattern matching (glob patterns, find-all, replace, split, pattern extraction).
 
 ## Usage
 

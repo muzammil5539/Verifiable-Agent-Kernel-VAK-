@@ -24,10 +24,12 @@ pub enum HealthStatus {
 }
 
 impl HealthStatus {
+    /// Returns true if the status is healthy or degraded.
     pub fn is_healthy(&self) -> bool {
         matches!(self, HealthStatus::Healthy | HealthStatus::Degraded)
     }
 
+    /// Returns the HTTP status code corresponding to this health status.
     pub fn http_status_code(&self) -> u16 {
         match self {
             HealthStatus::Healthy => 200,
@@ -48,10 +50,12 @@ pub enum ReadinessStatus {
 }
 
 impl ReadinessStatus {
+    /// Returns true if the status is ready.
     pub fn is_ready(&self) -> bool {
         matches!(self, ReadinessStatus::Ready)
     }
 
+    /// Returns the HTTP status code corresponding to this readiness status.
     pub fn http_status_code(&self) -> u16 {
         match self {
             ReadinessStatus::Ready => 200,
@@ -80,6 +84,7 @@ pub struct ComponentHealth {
 }
 
 impl ComponentHealth {
+    /// Creates a healthy component health status with the given name.
     pub fn healthy(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -93,6 +98,7 @@ impl ComponentHealth {
         }
     }
 
+    /// Creates a degraded component health status with the given name and message.
     pub fn degraded(name: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -106,6 +112,7 @@ impl ComponentHealth {
         }
     }
 
+    /// Creates an unhealthy component health status with the given name and message.
     pub fn unhealthy(name: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -119,6 +126,7 @@ impl ComponentHealth {
         }
     }
 
+    /// Sets the response time in milliseconds on this component health.
     pub fn with_response_time(mut self, ms: f64) -> Self {
         self.response_time_ms = Some(ms);
         self
@@ -145,6 +153,7 @@ pub struct HealthResponse {
 }
 
 impl HealthResponse {
+    /// Serializes this health response to a pretty-printed JSON string.
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).unwrap_or_else(|_| "{}".to_string())
     }
@@ -164,6 +173,7 @@ pub struct ReadinessResponse {
 }
 
 impl ReadinessResponse {
+    /// Serializes this readiness response to a pretty-printed JSON string.
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).unwrap_or_else(|_| "{}".to_string())
     }

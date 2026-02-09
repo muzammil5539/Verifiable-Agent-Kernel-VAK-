@@ -53,7 +53,12 @@ pub enum PoolingError {
 
     /// Memory limit exceeded
     #[error("Memory limit exceeded: requested {requested} bytes, limit {limit} bytes")]
-    MemoryLimitExceeded { requested: usize, limit: usize },
+    MemoryLimitExceeded {
+        /// Number of bytes that were requested
+        requested: usize,
+        /// Maximum number of bytes allowed
+        limit: usize,
+    },
 }
 
 /// Configuration for the pooling allocator

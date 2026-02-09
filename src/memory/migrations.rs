@@ -53,7 +53,12 @@ pub enum MigrationError {
 
     /// Schema version mismatch
     #[error("Schema version mismatch: expected {expected}, found {found}")]
-    VersionMismatch { expected: u32, found: u32 },
+    VersionMismatch {
+        /// Expected schema version
+        expected: u32,
+        /// Actual schema version found
+        found: u32,
+    },
 }
 
 impl From<rusqlite::Error> for MigrationError {

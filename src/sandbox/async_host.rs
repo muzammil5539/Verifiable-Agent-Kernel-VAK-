@@ -70,7 +70,12 @@ pub enum AsyncHostError {
 
     /// Permission denied
     #[error("Permission denied: {action} on {resource}")]
-    PermissionDenied { action: String, resource: String },
+    PermissionDenied {
+        /// The action that was denied
+        action: String,
+        /// The resource the action was attempted on
+        resource: String,
+    },
 
     /// Resource exhausted
     #[error("Resource exhausted: {0}")]
@@ -150,29 +155,47 @@ pub struct HandlerRegistration {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AsyncOperation {
     /// File read operation
-    FileRead { path: String },
+    FileRead {
+        /// Path to the file to read
+        path: String,
+    },
     /// File write operation
-    FileWrite { path: String, data: Vec<u8> },
+    FileWrite {
+        /// Path to the file to write
+        path: String,
+        /// Data to write to the file
+        data: Vec<u8>,
+    },
     /// HTTP GET request
     HttpGet {
+        /// Target URL for the GET request
         url: String,
+        /// HTTP headers to include in the request
         headers: HashMap<String, String>,
     },
     /// HTTP POST request
     HttpPost {
+        /// Target URL for the POST request
         url: String,
+        /// Request body bytes
         body: Vec<u8>,
+        /// HTTP headers to include in the request
         headers: HashMap<String, String>,
     },
     /// Policy evaluation
     PolicyCheck {
+        /// Principal requesting the action
         principal: String,
+        /// Action to be evaluated
         action: String,
+        /// Resource the action targets
         resource: String,
     },
     /// Custom async operation
     Custom {
+        /// Name identifying the custom operation
         name: String,
+        /// Parameters for the custom operation
         params: serde_json::Value,
     },
 }

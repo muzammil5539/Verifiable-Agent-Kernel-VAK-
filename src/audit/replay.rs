@@ -28,7 +28,7 @@
 //! // Replay step by step
 //! let mut replay = session.start_replay(ReplayConfig::default());
 //! while let Some(step) = replay.next_step().await? {
-//!     println!("Step {}: {:?}", step.sequence, step.event_type);
+//!     println!("Step {}: {:?}", step.sequence, step.original_event.event_type);
 //!     // Can pause, inspect state, or compare with expected
 //! }
 //!
@@ -72,14 +72,22 @@ pub enum ReplayError {
     /// Chain integrity violation
     #[error("Chain integrity violation at event {event_id}: expected prev_hash {expected}, got {actual}")]
     IntegrityViolation {
+        /// ID of the event where the violation was detected
         event_id: String,
+        /// Expected hash value in the chain
         expected: String,
+        /// Actual hash value found in the chain
         actual: String,
     },
 
     /// Replay state mismatch
     #[error("State mismatch at step {step}: {description}")]
-    StateMismatch { step: u64, description: String },
+    StateMismatch {
+        /// Step number where the mismatch occurred
+        step: u64,
+        /// Description of the state mismatch
+        description: String,
+    },
 
     /// Replay already complete
     #[error("Replay session already complete")]

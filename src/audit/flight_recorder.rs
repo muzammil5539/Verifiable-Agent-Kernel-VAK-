@@ -26,8 +26,8 @@
 //!
 //! // Record events
 //! recorder.record_request("agent-1", "read", "/data/file.txt", None);
-//! recorder.record_policy_decision("agent-1", "allow", "rule-1", 5);
-//! recorder.record_response("agent-1", "read", true, Some("file contents"));
+//! recorder.record_policy_decision("agent-1", "allow", Some("rule-1"), 5);
+//! recorder.record_response("agent-1", "read", true, Some(serde_json::json!("file contents")));
 //!
 //! // Generate trace receipt
 //! let receipt = recorder.generate_receipt();
@@ -1068,33 +1068,51 @@ impl ReplayEngine {
 /// Summary of replay statistics
 #[derive(Debug, Default)]
 pub struct ReplaySummary {
+    /// Total number of events in the replay
     pub total_events: usize,
+    /// Number of shadow mode events
     pub shadow_events: usize,
+    /// Number of unique traces
     pub trace_count: usize,
+    /// Number of request events
     pub request_count: usize,
+    /// Number of response events
     pub response_count: usize,
+    /// Number of policy evaluation events
     pub policy_evaluations: usize,
+    /// Number of tool execution events
     pub tool_executions: usize,
+    /// Number of error events
     pub error_count: usize,
+    /// Map of decision types to their counts
     pub decisions: HashMap<String, usize>,
 }
 
 /// Report from a replay execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayReport {
+    /// Trace ID associated with this report
     pub trace_id: String,
+    /// Number of events that were replayed
     pub events_replayed: usize,
+    /// Number of events that matched the expected output
     pub matches: usize,
+    /// Number of events that did not match the expected output
     pub mismatches: usize,
+    /// Number of events that produced errors during replay
     pub errors: usize,
+    /// Details of each mismatch encountered
     pub mismatch_details: Vec<MismatchDetail>,
 }
 
 /// Detail of a replay mismatch
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MismatchDetail {
+    /// Event ID where the mismatch occurred
     pub event_id: String,
+    /// Expected output value from the original recording
     pub expected: serde_json::Value,
+    /// Actual output value produced during replay
     pub actual: serde_json::Value,
 }
 
@@ -1186,7 +1204,7 @@ mod tests {
         let config = RecorderConfig::default();
         let recorder = FlightRecorder::new(config);
 
-        let trace_id = recorder.start_trace("agent-1");
+        let _trace_id = recorder.start_trace("agent-1");
         recorder.record_request("agent-1", "test", "/res", None);
         recorder.end_trace("agent-1");
 

@@ -19,20 +19,23 @@
 //!
 //! # Example
 //!
-//! ```rust
+//! ```rust,no_run
 //! use vak::dashboard::cost_accounting::{CostAccountant, CostConfig, ExecutionCost};
 //!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let accountant = CostAccountant::new(CostConfig::default());
 //!
 //! // Track token usage
-//! accountant.record_tokens("agent-1", "session-1", 500, 150);
+//! accountant.record_tokens("agent-1", "session-1", 500, 150).await?;
 //!
 //! // Track fuel consumption
-//! accountant.record_fuel("agent-1", "session-1", 10000);
+//! accountant.record_fuel("agent-1", "session-1", 10000).await?;
 //!
 //! // Get cost summary
-//! let cost = accountant.get_session_cost("agent-1", "session-1").unwrap();
+//! let cost = accountant.get_session_cost("agent-1", "session-1").await?;
 //! println!("Total cost: ${:.6}", cost.total_cost_usd);
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # References

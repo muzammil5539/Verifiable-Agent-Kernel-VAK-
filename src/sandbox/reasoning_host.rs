@@ -27,6 +27,7 @@
 //!     action_type: "delete_file".to_string(),
 //!     target: "/etc/shadow".to_string(),
 //!     confidence: 0.9,
+//!     params: Default::default(),
 //! });
 //!
 //! assert!(result.is_violation());

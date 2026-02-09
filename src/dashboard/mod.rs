@@ -17,14 +17,21 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use vak::dashboard::{DashboardServer, DashboardConfig};
+//! use vak::dashboard::{DashboardServer, DashboardConfig, MetricsCollector, HealthChecker};
+//! use vak::dashboard::metrics::MetricsConfig;
+//! use vak::swarm::a2a::DiscoveryService;
+//! use std::sync::Arc;
 //!
 //! let config = DashboardConfig::default()
-//!     .with_port(8080)
-//!     .with_metrics_path("/metrics");
+//!     .with_port(8080);
 //!
-//! let server = DashboardServer::new(config);
-//! server.start().await;
+//! let metrics = Arc::new(MetricsCollector::new(MetricsConfig::default()));
+//! let health = Arc::new(HealthChecker::new());
+//! let discovery = Arc::new(DiscoveryService::new());
+//!
+//! let server = DashboardServer::new(config, metrics, health, discovery);
+//! let address = server.address();
+//! println!("Dashboard available at http://{}", address);
 //! ```
 
 pub mod cost_accounting;

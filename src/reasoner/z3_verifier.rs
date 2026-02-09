@@ -14,8 +14,9 @@
 //! # Example
 //!
 //! ```rust,no_run
+//! use std::collections::HashMap;
 //! use vak::reasoner::z3_verifier::{Z3FormalVerifier, Z3Config};
-//! use vak::reasoner::{Constraint, ConstraintKind};
+//! use vak::reasoner::{Constraint, ConstraintKind, FormalVerifier};
 //!
 //! let config = Z3Config::default();
 //! let verifier = Z3FormalVerifier::new(config);
@@ -28,7 +29,7 @@
 //! let mut context = HashMap::new();
 //! context.insert("amount".to_string(), 500.into());
 //!
-//! let result = verifier.verify(&constraint, &context).await;
+//! let result = verifier.verify(&constraint, &context);
 //! assert!(result.unwrap().is_satisfied());
 //! ```
 
@@ -563,9 +564,13 @@ impl Z3FormalVerifier {
 /// Z3 solver output
 #[derive(Debug)]
 pub struct Z3Output {
+    /// Whether the formula is satisfiable
     pub satisfiable: bool,
+    /// Whether the formula is unsatisfiable
     pub unsatisfiable: bool,
+    /// Model (counterexample) if satisfiable and model generation is enabled
     pub model: Option<HashMap<String, ConstraintValue>>,
+    /// Raw text output from the Z3 process
     pub raw_output: String,
 }
 

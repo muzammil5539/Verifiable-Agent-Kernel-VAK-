@@ -32,7 +32,6 @@
 
 extern crate alloc;
 
-use alloc::format;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -68,6 +67,7 @@ pub extern "C" fn alloc(size: usize) -> *mut u8 {
 /// management. It has been reviewed and the invariants are enforced by the
 /// WASM sandbox boundary. The host ensures proper memory lifecycle.
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn dealloc(ptr: *mut u8, size: usize) {
     if !ptr.is_null() && size > 0 {
         // SAFETY: The pointer was allocated by `alloc` with the given capacity.
@@ -210,6 +210,7 @@ fn process_input(input: &str) -> SkillOutput {
 /// The host is responsible for providing valid pointers through the WASM
 /// ABI. Invalid inputs would be caught at the WASM boundary.
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn execute(input_ptr: *const u8, input_len: usize) -> *const u8 {
     // SAFETY: The WASM host guarantees that `input_ptr` points to valid memory
     // of at least `input_len` bytes. The WASM memory model ensures isolation

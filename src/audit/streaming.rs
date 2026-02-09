@@ -16,13 +16,14 @@
 //! use vak::audit::streaming::{AuditStreamManager, StreamConfig, StreamFilter};
 //!
 //! let config = StreamConfig::default();
-//! let mut manager = AuditStreamManager::new(config);
+//! let manager = AuditStreamManager::new(config);
 //!
 //! // Subscribe to audit events
-//! let subscriber_id = manager.subscribe(StreamFilter::all());
+//! let subscriber_id = manager.subscribe(StreamFilter::all()).unwrap();
 //!
-//! // Receive events
-//! while let Some(event) = manager.next_event(&subscriber_id).await {
+//! // Get recent events matching a filter
+//! let events = manager.get_recent_events(&StreamFilter::all(), Some(10));
+//! for event in events {
 //!     println!("Audit event: {:?}", event);
 //! }
 //! ```

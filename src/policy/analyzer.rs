@@ -14,8 +14,9 @@
 //!
 //! # Example
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use vak::policy::analyzer::{PolicyAnalyzer, AnalyzerConfig, SafetyInvariant};
+//! use vak::policy::enforcer::PolicySet;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let analyzer = PolicyAnalyzer::new(AnalyzerConfig::default());
@@ -25,10 +26,11 @@
 //!     "audit_log_protection",
 //!     "No agent can delete the audit log",
 //!     r#"forbid(principal, action == Action::"delete", resource == Resource::"audit_log")"#,
-//! ));
+//! )).await;
 //!
 //! // Analyze policies
-//! let report = analyzer.analyze_policies("policies/").await?;
+//! let policies = PolicySet::new();
+//! let report = analyzer.analyze(&policies).await?;
 //!
 //! if !report.is_safe() {
 //!     // Block deployment

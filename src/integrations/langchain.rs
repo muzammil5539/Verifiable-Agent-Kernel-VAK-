@@ -17,6 +17,8 @@
 //! ```rust,no_run
 //! use vak::integrations::langchain::{LangChainAdapter, LangChainConfig, ToolCall};
 //!
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Create adapter with configuration
 //! let config = LangChainConfig::default()
 //!     .with_prm_threshold(0.7)
@@ -30,9 +32,11 @@
 //!     .with_param("b", 2);
 //!
 //! let decision = adapter.intercept_tool(&tool_call, "agent-1").await?;
-//! if decision.is_allowed() {
+//! if matches!(decision.decision, vak::integrations::common::HookDecision::Allow) {
 //!     // Proceed with tool execution
 //! }
+//! # Ok(())
+//! # }
 //! ```
 
 use crate::integrations::common::{
@@ -260,11 +264,17 @@ pub struct LangChainAdapter {
 /// Adapter statistics
 #[derive(Debug, Default)]
 pub struct AdapterStats {
+    /// Total number of tool calls intercepted
     pub tool_calls_total: AtomicU64,
+    /// Number of tool calls that were allowed
     pub tool_calls_allowed: AtomicU64,
+    /// Number of tool calls that were blocked
     pub tool_calls_blocked: AtomicU64,
+    /// Number of chain executions intercepted
     pub chain_executions: AtomicU64,
+    /// Number of policy violations detected
     pub policy_violations: AtomicU64,
+    /// Number of rejections due to low PRM scores
     pub prm_rejections: AtomicU64,
 }
 

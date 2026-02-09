@@ -66,7 +66,12 @@ use wasmtime::{Caller, Engine, Linker};
 pub enum HostFuncError {
     /// Permission denied by policy
     #[error("Permission denied: {action} on {resource}")]
-    PermissionDenied { action: String, resource: String },
+    PermissionDenied {
+        /// The action that was denied
+        action: String,
+        /// The resource the action was attempted on
+        resource: String,
+    },
 
     /// Host function panicked
     #[error("Host function panicked: {0}")]

@@ -489,7 +489,7 @@ pub enum RelationType {
     /// Causes another event
     Causes,
 
-    // Custom relationship type
+    /// Custom user-defined relationship type
     Custom(String),
 }
 

@@ -16,13 +16,17 @@
 //! ```rust,no_run
 //! use vak::audit::multi_region::{MultiRegionConfig, MultiRegionS3Backend, ReplicationMode};
 //!
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let config = MultiRegionConfig::new()
 //!     .with_primary_region("us-east-1", "audit-primary-bucket")
 //!     .with_replica_region("us-west-2", "audit-replica-bucket")
 //!     .with_replica_region("eu-west-1", "audit-eu-bucket")
 //!     .with_replication_mode(ReplicationMode::ActiveActive);
 //!
-//! let backend = MultiRegionS3Backend::new(config).await.unwrap();
+//! let backend = MultiRegionS3Backend::new(config).await?;
+//! # Ok(())
+//! # }
 //! ```
 
 use crate::audit::{AuditBackend, AuditEntry, AuditError};

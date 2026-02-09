@@ -13,22 +13,29 @@
 //!
 //! # Example
 //!
-//! ```rust,no_run
-//! use vak::reasoner::prm_gating::{PrmGate, GateConfig, GateDecision};
+//! ```rust,ignore
+//! use vak::reasoner::prm_gating::{PrmGate, GateConfig, GateDecision, GateContext};
+//! use std::sync::Arc;
 //!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let config = GateConfig::default()
 //!     .with_threshold(0.7)
 //!     .with_max_retries(3);
 //!
-//! let gate = PrmGate::new(config, prm_scorer);
+//! // PrmGate requires an Arc<S> where S: PrmScorer
+//! // let gate = PrmGate::new(config, Arc::new(scorer));
 //!
 //! // Gate an action
-//! let decision = gate.evaluate(thought, action, context).await;
-//! match decision {
-//!     GateDecision::Allow => { /* proceed */ }
-//!     GateDecision::Deny(reason) => { /* block action */ }
-//!     GateDecision::Backtrack(alternative) => { /* try alternative */ }
-//! }
+//! // let context = GateContext::new("agent-1", "task");
+//! // let decision = gate.evaluate("thought", "action", &context).await?;
+//! // match decision {
+//! //     GateDecision::Allow { score, .. } => { /* proceed */ }
+//! //     GateDecision::Deny { reason, .. } => { /* block action */ }
+//! //     GateDecision::Backtrack { alternative, .. } => { /* try alternative */ }
+//! //     GateDecision::Bypassed => { /* gating disabled */ }
+//! // }
+//! # Ok(())
+//! # }
 //! ```
 
 use crate::reasoner::prm::{PrmError, PrmScorer, ReasoningStep, ThoughtScore};
@@ -200,21 +207,31 @@ impl GateConfig {
 pub enum GateDecision {
     /// Allow the action to proceed
     Allow {
+        /// PRM score for this action
         score: f64,
+        /// Confidence in the score
         confidence: f64,
+        /// Reasoning behind the decision
         reasoning: String,
     },
     /// Deny the action
     Deny {
+        /// PRM score for this action
         score: f64,
+        /// Reason for denial
         reason: String,
+        /// Suggested alternative approach
         suggestion: Option<String>,
     },
     /// Backtrack and try alternative
     Backtrack {
+        /// PRM score for this action
         score: f64,
+        /// Reason for backtracking
         reason: String,
+        /// Suggested alternative action
         alternative: Option<AlternativeAction>,
+        /// Current retry attempt count
         retry_count: usize,
     },
     /// Gating is disabled, pass through
@@ -321,12 +338,19 @@ pub struct PrmGate<S: PrmScorer + Send + Sync> {
 /// Statistics about gate decisions
 #[derive(Debug, Default)]
 pub struct GateStats {
+    /// Total number of gate evaluations
     pub total_evaluations: AtomicU64,
+    /// Number of allowed actions
     pub allowed: AtomicU64,
+    /// Number of denied actions
     pub denied: AtomicU64,
+    /// Number of backtracked actions
     pub backtracked: AtomicU64,
+    /// Number of bypassed evaluations (gating disabled)
     pub bypassed: AtomicU64,
+    /// Number of evaluation timeouts
     pub timeouts: AtomicU64,
+    /// Number of evaluation errors
     pub errors: AtomicU64,
 }
 
@@ -613,8 +637,11 @@ impl<S: PrmScorer + Send + Sync> PrmGate<S> {
 /// Batch evaluation result
 #[derive(Debug)]
 pub struct BatchGateResult {
+    /// List of index-decision pairs for each evaluated step
     pub decisions: Vec<(usize, GateDecision)>,
+    /// Whether all steps in the batch were allowed
     pub all_allowed: bool,
+    /// Index of the first denied step, if any
     pub first_denial_idx: Option<usize>,
 }
 

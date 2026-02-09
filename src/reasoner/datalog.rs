@@ -85,12 +85,19 @@ pub enum Fact {
 
     /// An agent has a specific capability
     AgentCapability {
+        /// Unique identifier of the agent
         agent_id: String,
+        /// The capability the agent possesses
         capability: String,
     },
 
     /// An agent has a risk score (stored as integer basis points for Hash/Eq)
-    AgentRiskScore { agent_id: String, score_bp: u32 },
+    AgentRiskScore {
+        /// Unique identifier of the agent
+        agent_id: String,
+        /// Risk score in basis points (1/100th of a percent)
+        score_bp: u32,
+    },
 
     /// A tool is available
     AvailableTool(String),
@@ -100,14 +107,19 @@ pub enum Fact {
 
     /// An action was proposed
     ProposedAction {
+        /// Type of the proposed action
         action_type: String,
+        /// Target of the proposed action
         target: String,
+        /// Identifier of the agent proposing the action
         agent_id: String,
     },
 
     /// Custom fact with key-value
     Custom {
+        /// Predicate name for the custom fact
         predicate: String,
+        /// Arguments for the custom fact
         args: Vec<String>,
     },
 }
@@ -314,7 +326,12 @@ pub enum SafetyVerdict {
     Violation(Vec<Violation>),
 
     /// Action requires additional review (warning)
-    Warning { message: String, risk_score: f64 },
+    Warning {
+        /// Description of the warning condition
+        message: String,
+        /// Computed risk score for the action
+        risk_score: f64,
+    },
 
     /// Could not determine safety (fail-closed: treat as unsafe)
     Unknown(String),

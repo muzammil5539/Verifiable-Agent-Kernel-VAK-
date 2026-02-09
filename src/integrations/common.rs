@@ -17,11 +17,21 @@ pub enum AdapterError {
 
     /// PRM score too low
     #[error("PRM score {score} below threshold {threshold}")]
-    LowPrmScore { score: f64, threshold: f64 },
+    LowPrmScore {
+        /// The actual PRM score
+        score: f64,
+        /// The required minimum threshold
+        threshold: f64,
+    },
 
     /// Action blocked
     #[error("Action '{action}' blocked: {reason}")]
-    ActionBlocked { action: String, reason: String },
+    ActionBlocked {
+        /// The action that was blocked
+        action: String,
+        /// The reason for blocking
+        reason: String,
+    },
 
     /// Rate limited
     #[error("Rate limited: {0}")]
@@ -53,23 +63,37 @@ pub enum HookDecision {
     /// Allow the action to proceed
     Allow,
     /// Block the action with a reason
-    Block { reason: String },
+    Block {
+        /// The reason for blocking the action
+        reason: String,
+    },
     /// Modify the action parameters
     Modify {
+        /// Replacement parameters for the action
         new_params: HashMap<String, serde_json::Value>,
     },
     /// Require human approval before proceeding
-    RequireApproval { prompt: String },
+    RequireApproval {
+        /// Prompt message shown to request approval
+        prompt: String,
+    },
     /// Log and monitor but allow
-    Monitor { alert_level: AlertLevel },
+    Monitor {
+        /// Severity level for the monitoring alert
+        alert_level: AlertLevel,
+    },
 }
 
 /// Alert severity levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum AlertLevel {
+    /// Low severity alert
     Low,
+    /// Medium severity alert
     Medium,
+    /// High severity alert
     High,
+    /// Critical severity alert requiring immediate attention
     Critical,
 }
 

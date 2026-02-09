@@ -48,21 +48,25 @@ impl Default for DashboardConfig {
 }
 
 impl DashboardConfig {
+    /// Sets the server port.
     pub fn with_port(mut self, port: u16) -> Self {
         self.port = port;
         self
     }
 
+    /// Sets the server bind address.
     pub fn with_bind_address(mut self, address: impl Into<String>) -> Self {
         self.bind_address = address.into();
         self
     }
 
+    /// Sets the dashboard title.
     pub fn with_title(mut self, title: impl Into<String>) -> Self {
         self.title = title.into();
         self
     }
 
+    /// Creates a configuration with only metrics and health endpoints enabled.
     pub fn metrics_only() -> Self {
         Self {
             enable_dashboard: false,
@@ -215,12 +219,16 @@ impl DashboardServer {
 /// Simple HTTP response
 #[derive(Debug, Clone)]
 pub struct HttpResponse {
+    /// HTTP status code.
     pub status: u16,
+    /// Content-Type header value.
     pub content_type: String,
+    /// Response body content.
     pub body: String,
 }
 
 impl HttpResponse {
+    /// Formats this response as a raw HTTP/1.1 response string.
     pub fn to_http_string(&self) -> String {
         let status_text = match self.status {
             200 => "OK",

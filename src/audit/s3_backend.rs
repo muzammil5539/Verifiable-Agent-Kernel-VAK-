@@ -14,8 +14,12 @@
 //! ```rust,no_run
 //! use vak::audit::s3_backend::{S3AuditBackend, S3Config};
 //!
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let config = S3Config::new("my-audit-bucket", "us-east-1");
-//! let backend = S3AuditBackend::new(config).await.unwrap();
+//! let backend = S3AuditBackend::new(config).await?;
+//! # Ok(())
+//! # }
 //! ```
 
 use crate::audit::{AuditBackend, AuditEntry, AuditError};

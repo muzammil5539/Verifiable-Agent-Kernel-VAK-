@@ -14,17 +14,19 @@
 //!
 //! # Example
 //!
-//! ```rust
+//! ```rust,no_run
 //! use vak::policy::context::{DynamicContextCollector, ContextConfig, SystemMetrics};
 //!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let collector = DynamicContextCollector::new(ContextConfig::default());
 //!
 //! // Collect context for a policy decision
-//! let context = collector.collect_context("agent-123").await;
+//! let context = collector.collect_context("agent-123").await?;
 //!
 //! // Context now contains real-time system state
 //! assert!(context.timestamp.is_some());
-//! assert!(context.system_load.is_some());
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # References

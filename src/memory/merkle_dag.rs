@@ -669,18 +669,26 @@ impl std::fmt::Debug for MerkleDag {
 /// Diff between two DAG nodes
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DagDiff {
+    /// Content ID of the old node
     pub old_id: ContentId,
+    /// Content ID of the new node
     pub new_id: ContentId,
+    /// Number of bytes added
     pub bytes_added: usize,
+    /// Number of bytes removed
     pub bytes_removed: usize,
+    /// Whether the content is identical
     pub is_identical: bool,
 }
 
 /// Exportable DAG format
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DagExport {
+    /// All nodes in the DAG
     pub nodes: Vec<DagNode>,
+    /// Branch heads mapping branch name to content ID
     pub heads: HashMap<String, ContentId>,
+    /// Name of the default branch
     pub default_branch: String,
 }
 

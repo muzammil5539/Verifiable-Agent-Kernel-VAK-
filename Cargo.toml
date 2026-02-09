@@ -1,5 +1,11 @@
 [workspace]
-members = ["skills/calculator"]
+members = [
+    ".github/skills/calculator",
+    ".github/skills/crypto-hash",
+    ".github/skills/json-validator",
+    ".github/skills/text-analyzer",
+    ".github/skills/regex-matcher",
+]
 resolver = "2"
 
 [workspace.package]
@@ -142,9 +148,6 @@ python = ["pyo3"]
 proptest.workspace = true
 criterion.workspace = true
 tokio-test = "0.4"
-
-# Add glob to dependencies for skill registry pattern matching
-glob.workspace = true
 
 [[bench]]
 name = "kernel_benchmarks"

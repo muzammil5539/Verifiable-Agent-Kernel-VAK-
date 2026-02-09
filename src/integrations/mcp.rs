@@ -30,8 +30,16 @@
 //! let server = McpServer::new(config);
 //!
 //! // Register VAK tools
-//! server.register_tool("verify_plan", "Verify an agent's proposed plan")?;
-//! server.register_tool("execute_skill", "Execute a WASM skill")?;
+//! server.register_simple_tool(
+//!     "verify_plan",
+//!     "Verify an agent's proposed plan",
+//!     serde_json::json!({"type": "object"}),
+//! ).await;
+//! server.register_simple_tool(
+//!     "execute_skill",
+//!     "Execute a WASM skill",
+//!     serde_json::json!({"type": "object"}),
+//! ).await;
 //!
 //! // Start the server
 //! server.serve_stdio().await?;

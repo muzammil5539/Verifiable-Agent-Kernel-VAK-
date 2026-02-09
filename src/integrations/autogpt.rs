@@ -17,6 +17,8 @@
 //! ```rust,no_run
 //! use vak::integrations::autogpt::{AutoGPTAdapter, AutoGPTConfig, TaskPlan, ExecutionResult};
 //!
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Create adapter with configuration
 //! let config = AutoGPTConfig::default()
 //!     .with_prm_threshold(0.7)
@@ -31,6 +33,8 @@
 //!     .with_step("Save to disk");
 //!
 //! let decision = adapter.evaluate_plan(&plan, "agent-1").await?;
+//! # Ok(())
+//! # }
 //! ```
 
 use crate::integrations::common::{
@@ -176,11 +180,17 @@ pub struct TaskStep {
 /// Status of a task step
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StepStatus {
+    /// Step is waiting to be executed
     Pending,
+    /// Step is currently being executed
     InProgress,
+    /// Step has finished successfully
     Completed,
+    /// Step execution failed
     Failed,
+    /// Step is blocked by a dependency or policy
     Blocked,
+    /// Step was skipped during execution
     Skipped,
 }
 
@@ -1114,9 +1124,13 @@ pub struct VerificationOptions {
 /// Risk level for operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum RiskLevel {
+    /// Low risk, no special action needed
     Low,
+    /// Medium risk, may require additional review
     Medium,
+    /// High risk, requires careful evaluation
     High,
+    /// Critical risk, should be blocked or escalated
     Critical,
 }
 
@@ -1180,20 +1194,29 @@ pub struct RiskKeyword {
 /// Keyword severity
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum KeywordSeverity {
+    /// Low severity keyword
     Low,
+    /// Medium severity keyword
     Medium,
+    /// High severity keyword
     High,
 }
 
 /// Goal category
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GoalCategory {
+    /// General purpose goal
     #[default]
     General,
+    /// Goal involves file system operations
     FileOperation,
+    /// Goal involves network or HTTP operations
     NetworkOperation,
+    /// Goal involves database queries or mutations
     DatabaseOperation,
+    /// Goal involves code or script execution
     CodeExecution,
+    /// Goal involves system administration tasks
     SystemAdmin,
 }
 
@@ -1269,8 +1292,11 @@ pub struct VerificationRecommendation {
 /// Recommendation level
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RecommendationLevel {
+    /// Informational recommendation, does not prevent execution
     Advisory,
+    /// Required action that should be addressed before proceeding
     Required,
+    /// Blocking issue that prevents execution
     Blocking,
 }
 

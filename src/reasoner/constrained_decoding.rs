@@ -7,42 +7,63 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
 
+/// Errors that can occur during constrained decoding
 #[derive(Debug, Error)]
 pub enum ConstraintError {
+    /// Output violates the specified grammar
     #[error("Grammar violation: {0}")]
     GrammarViolation(String),
+    /// Output fails JSON schema validation
     #[error("Schema validation failed: {0}")]
     SchemaValidation(String),
+    /// Output contains invalid Datalog syntax
     #[error("Datalog syntax error: {0}")]
     DatalogSyntax(String),
+    /// Output does not match the expected pattern
     #[error("Pattern match failed: {0}")]
     PatternMismatch(String),
+    /// Decoder configuration is invalid
     #[error("Invalid configuration: {0}")]
     InvalidConfig(String),
 }
 
+/// Result type for constrained decoding operations
 pub type ConstraintResult<T> = Result<T, ConstraintError>;
 
+/// Type of grammar constraint applied to LLM output
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GrammarType {
+    /// JSON Schema validation
     JsonSchema,
+    /// Datalog syntax validation
     Datalog,
+    /// Regular expression pattern matching
     Regex,
+    /// Enumerated set of allowed values
     Enum,
+    /// Unconstrained free text
     FreeText,
+    /// Composite of multiple grammar types
     Composite,
 }
 
+/// A single grammar rule used to validate LLM output
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GrammarRule {
+    /// Name identifier for this rule
     pub name: String,
+    /// Type of grammar constraint
     pub rule_type: GrammarType,
+    /// Rule definition as a JSON value
     pub definition: serde_json::Value,
+    /// Whether this rule must be satisfied
     pub required: bool,
+    /// Custom error message on failure
     pub error_message: Option<String>,
 }
 
 impl GrammarRule {
+    /// Create a JSON schema grammar rule
     pub fn json_schema(name: impl Into<String>, schema: serde_json::Value) -> Self {
         Self {
             name: name.into(),
@@ -53,6 +74,7 @@ impl GrammarRule {
         }
     }
 
+    /// Create a Datalog syntax grammar rule
     pub fn datalog(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -63,6 +85,7 @@ impl GrammarRule {
         }
     }
 
+    /// Create a regex pattern grammar rule
     pub fn regex(name: impl Into<String>, pattern: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -73,6 +96,7 @@ impl GrammarRule {
         }
     }
 
+    /// Create an enum-based grammar rule with allowed values
     pub fn enum_values(name: impl Into<String>, values: Vec<String>) -> Self {
         Self {
             name: name.into(),
@@ -83,21 +107,28 @@ impl GrammarRule {
         }
     }
 
+    /// Mark this rule as optional (not required)
     pub fn optional(mut self) -> Self {
         self.required = false;
         self
     }
 }
 
+/// Grammar specification for constraining LLM output
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutputGrammar {
+    /// Name identifier for this grammar
     pub name: String,
+    /// List of grammar rules to apply
     pub rules: Vec<GrammarRule>,
+    /// Whether to allow additional unvalidated content
     pub allow_additional: bool,
+    /// Whether to attempt automatic repair of invalid output
     pub attempt_repair: bool,
 }
 
 impl OutputGrammar {
+    /// Create a new empty output grammar
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -107,34 +138,44 @@ impl OutputGrammar {
         }
     }
 
+    /// Create an output grammar with a JSON schema rule
     pub fn json_schema(name: impl Into<String>, schema: serde_json::Value) -> Self {
         let mut g = Self::new(name);
         g.rules.push(GrammarRule::json_schema("schema", schema));
         g
     }
 
+    /// Create an output grammar with a Datalog syntax rule
     pub fn datalog(name: impl Into<String>) -> Self {
         let mut g = Self::new(name);
         g.rules.push(GrammarRule::datalog("datalog"));
         g
     }
 
+    /// Add a grammar rule to this output grammar
     pub fn with_rule(mut self, rule: GrammarRule) -> Self {
         self.rules.push(rule);
         self
     }
 }
 
+/// Result of validating LLM output against a grammar
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidationResult {
+    /// Whether the output passed all required rules
     pub valid: bool,
+    /// Parsed value if validation succeeded
     pub parsed_value: Option<serde_json::Value>,
+    /// List of validation errors encountered
     pub errors: Vec<ValidationError>,
+    /// Suggested repairs for invalid output
     pub suggestions: Vec<RepairSuggestion>,
+    /// Confidence score for the validation (0.0-1.0)
     pub confidence: f64,
 }
 
 impl ValidationResult {
+    /// Create a successful validation result with the parsed value
     pub fn success(value: serde_json::Value) -> Self {
         Self {
             valid: true,
@@ -145,6 +186,7 @@ impl ValidationResult {
         }
     }
 
+    /// Create a failed validation result with errors
     pub fn failure(errors: Vec<ValidationError>) -> Self {
         Self {
             valid: false,
@@ -156,46 +198,70 @@ impl ValidationResult {
     }
 }
 
+/// An error encountered during output validation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidationError {
+    /// Name of the rule that failed
     pub rule_name: String,
+    /// Human-readable error message
     pub message: String,
+    /// Location in the output where the error occurred
     pub location: Option<String>,
+    /// Severity level of the error
     pub severity: ErrorSeverity,
 }
 
+/// Severity level for validation errors
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ErrorSeverity {
+    /// Informational message, does not affect validity
     Info,
+    /// Warning that may indicate a problem
     Warning,
+    /// Error that causes validation failure
     Error,
+    /// Critical error that must be addressed immediately
     Critical,
 }
 
+/// A suggested repair for invalid LLM output
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepairSuggestion {
+    /// Type of repair to apply
     pub repair_type: RepairType,
+    /// Human-readable description of the repair
     pub description: String,
+    /// Suggested fix string if available
     pub suggested_fix: Option<String>,
+    /// Confidence that this repair will succeed (0.0-1.0)
     pub confidence: f64,
 }
 
+/// Type of repair action for invalid output
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RepairType {
+    /// Add a missing required field
     AddField,
+    /// Remove an extraneous field
     RemoveField,
+    /// Change the type of a value
     ChangeType,
+    /// Fix syntax errors in the output
     FixSyntax,
+    /// Wrap output in the expected structure
     WrapStructure,
+    /// Extract valid content from surrounding text
     ExtractSubstring,
 }
 
+/// Decoder that validates and constrains LLM output against a grammar
 pub struct ConstrainedDecoder {
     grammar: OutputGrammar,
     compiled_patterns: HashMap<String, Regex>,
 }
 
 impl ConstrainedDecoder {
+    /// Create a new constrained decoder with the given grammar
     pub fn new(grammar: OutputGrammar) -> ConstraintResult<Self> {
         let mut compiled_patterns = HashMap::new();
         for rule in &grammar.rules {
@@ -214,6 +280,7 @@ impl ConstrainedDecoder {
         })
     }
 
+    /// Validate LLM output against the configured grammar rules
     pub fn validate(&self, output: &str) -> ValidationResult {
         let mut errors = Vec::new();
         let mut parsed_value = None;
@@ -425,6 +492,7 @@ impl ConstrainedDecoder {
         suggestions
     }
 
+    /// Attempt to repair invalid output by extracting valid content
     pub fn repair(&self, output: &str) -> Option<String> {
         let trimmed = output.trim();
         if let Some(start) = trimmed.find('{') {

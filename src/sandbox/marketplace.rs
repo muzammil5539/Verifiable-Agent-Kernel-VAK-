@@ -18,15 +18,18 @@
 //! ```rust,no_run
 //! use vak::sandbox::marketplace::{MarketplaceClient, MarketplaceConfig, SkillQuery};
 //!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let config = MarketplaceConfig::default();
-//! let client = MarketplaceClient::new(config).await.unwrap();
+//! let client = MarketplaceClient::new(config).await?;
 //!
 //! // Search for skills
 //! let query = SkillQuery::new("calculator").with_category("math");
-//! let results = client.search(&query).await.unwrap();
+//! let results = client.search(&query).await?;
 //!
 //! // Install a skill
-//! client.install("calculator", "1.0.0").await.unwrap();
+//! client.install("calculator", "1.0.0").await?;
+//! # Ok(())
+//! # }
 //! ```
 
 use serde::{Deserialize, Serialize};
@@ -509,11 +512,19 @@ pub enum MarketplaceError {
 
     /// Skill not found
     #[error("Skill not found: {name}")]
-    SkillNotFound { name: String },
+    SkillNotFound {
+        /// Name of the skill that was not found
+        name: String,
+    },
 
     /// Version not found
     #[error("Version {version} not found for skill {name}")]
-    VersionNotFound { name: String, version: String },
+    VersionNotFound {
+        /// Name of the skill
+        name: String,
+        /// Version that was not found
+        version: String,
+    },
 
     /// Authentication required
     #[error("Authentication required")]
@@ -529,7 +540,10 @@ pub enum MarketplaceError {
 
     /// Invalid signature
     #[error("Invalid signature for skill {name}")]
-    InvalidSignature { name: String },
+    InvalidSignature {
+        /// Name of the skill with the invalid signature
+        name: String,
+    },
 
     /// Untrusted publisher
     #[error("Untrusted publisher: {0}")]
@@ -546,8 +560,11 @@ pub enum MarketplaceError {
     /// Hash mismatch
     #[error("Hash mismatch for {name}: expected {expected}, got {actual}")]
     HashMismatch {
+        /// Name of the skill with the hash mismatch
         name: String,
+        /// Expected hash value
         expected: String,
+        /// Actual hash value that was computed
         actual: String,
     },
 
@@ -565,7 +582,12 @@ pub enum MarketplaceError {
 
     /// Skill already exists
     #[error("Skill already exists: {name} v{version}")]
-    SkillExists { name: String, version: String },
+    SkillExists {
+        /// Name of the existing skill
+        name: String,
+        /// Version of the existing skill
+        version: String,
+    },
 
     /// Invalid version
     #[error("Invalid version: {0}")]
@@ -573,7 +595,10 @@ pub enum MarketplaceError {
 
     /// Rate limited
     #[error("Rate limited, retry after {retry_after_secs} seconds")]
-    RateLimited { retry_after_secs: u64 },
+    RateLimited {
+        /// Number of seconds to wait before retrying
+        retry_after_secs: u64,
+    },
 }
 
 // ============================================================================

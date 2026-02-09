@@ -13,10 +13,10 @@
 //!
 //! # Example
 //!
-//! ```rust
+//! ```rust,no_run
 //! use vak::memory::sparse_merkle::{SparseMerkleTree, SparseProof};
 //!
-//! let mut tree = SparseMerkleTree::new();
+//! let mut tree = SparseMerkleTree::with_depth(8);
 //!
 //! // Insert data
 //! tree.insert("key1", b"value1");

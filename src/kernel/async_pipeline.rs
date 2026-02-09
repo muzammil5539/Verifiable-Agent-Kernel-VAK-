@@ -28,18 +28,34 @@
 //!
 //! ```rust,no_run
 //! use vak::kernel::async_pipeline::{
-//!     AsyncPipeline, PipelineConfig, RequestBatch,
+//!     AsyncPipeline, PipelineConfig, PipelineHandle, RequestBatch,
 //! };
+//! use vak::kernel::types::{AgentId, SessionId, PolicyDecision, ToolRequest};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let config = PipelineConfig::default()
 //!     .with_max_concurrent(50)
 //!     .with_queue_size(1000);
 //!
-//! let pipeline = AsyncPipeline::new(config).await?;
+//! // Create the pipeline with a handler and policy evaluator
+//! let (handle, pipeline) = AsyncPipeline::new(
+//!     config,
+//!     |req| Ok(serde_json::json!({"status": "ok"})),
+//!     |agent, req| PolicyDecision::Allow {
+//!         reason: "allowed".to_string(),
+//!         constraints: None,
+//!     },
+//! ).await?;
 //!
-//! // Submit requests
-//! let response = pipeline.submit(request).await?;
+//! // Run the pipeline in the background
+//! tokio::spawn(async move { pipeline.run().await });
+//!
+//! // Submit requests via the handle
+//! let response = handle.submit(
+//!     AgentId::new(),
+//!     SessionId::new(),
+//!     ToolRequest::new("my_tool", serde_json::json!({})),
+//! ).await?;
 //! # Ok(())
 //! # }
 //! ```

@@ -14,14 +14,15 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use vak::audit::tracing::{VakTracer, TracingConfig, SpanKind};
+//! use vak::audit::otel::{VakTracer, TracingConfig, SpanKind};
 //!
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let config = TracingConfig::default();
 //! let tracer = VakTracer::new(config)?;
 //!
 //! // Create a span for an operation
-//! let span = tracer.start_span("policy_eval", SpanKind::PolicyEval);
+//! let mut span = tracer.start_trace("policy_eval", SpanKind::PolicyEval).await;
 //! // ... perform operation ...
 //! span.end();
 //! # Ok(())

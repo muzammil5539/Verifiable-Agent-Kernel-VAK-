@@ -1,0 +1,26 @@
+[package]
+name = "text_analyzer_skill"
+version = "0.1.0"
+edition = "2021"
+description = "Text analysis skill for VAK - word count, character frequency, similarity"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+
+[features]
+default = []
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+panic = "abort"

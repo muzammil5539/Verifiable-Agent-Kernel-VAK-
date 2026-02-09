@@ -45,7 +45,12 @@ pub enum VectorStoreError {
     /// Duplicate entry ID
     DuplicateEntry(String),
     /// Invalid embedding dimension
-    DimensionMismatch { expected: usize, actual: usize },
+    DimensionMismatch {
+        /// Expected embedding dimension
+        expected: usize,
+        /// Actual embedding dimension provided
+        actual: usize,
+    },
     /// Collection not found
     CollectionNotFound(String),
     /// Backend connection error
@@ -189,9 +194,17 @@ pub enum IndexType {
     /// Flat index (exact search)
     Flat,
     /// IVF (Inverted File) index for approximate search
-    IvfFlat { num_partitions: usize },
+    IvfFlat {
+        /// Number of partitions for the IVF index
+        num_partitions: usize,
+    },
     /// HNSW (Hierarchical Navigable Small World) index
-    Hnsw { m: usize, ef_construction: usize },
+    Hnsw {
+        /// Maximum number of connections per node
+        m: usize,
+        /// Size of the dynamic candidate list during construction
+        ef_construction: usize,
+    },
 }
 
 // ============================================================================

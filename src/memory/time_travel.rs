@@ -66,15 +66,20 @@ pub enum TimeTravelError {
     NoSnapshotsAvailable,
     /// Snapshot verification failed
     VerificationFailed {
+        /// ID of the snapshot that failed verification
         snapshot_id: SnapshotId,
+        /// Reason for the verification failure
         reason: String,
     },
     /// Branch not found
     BranchNotFound(String),
     /// Cannot merge - conflicts detected
     MergeConflict {
+        /// Key where the conflict occurred
         key: String,
+        /// First snapshot involved in the conflict
         snapshot_a: SnapshotId,
+        /// Second snapshot involved in the conflict
         snapshot_b: SnapshotId,
     },
     /// Maximum history depth exceeded
@@ -962,27 +967,50 @@ pub struct ReplayStep {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ReplayAction {
     /// Memory write
-    Write { key: String, size: usize },
+    Write {
+        /// Key being written to
+        key: String,
+        /// Size of the written value in bytes
+        size: usize,
+    },
     /// Memory read
-    Read { key: String },
+    Read {
+        /// Key being read
+        key: String,
+    },
     /// Memory delete
-    Delete { key: String },
+    Delete {
+        /// Key being deleted
+        key: String,
+    },
     /// Tool execution
     ToolExec {
+        /// Name of the tool being executed
         tool: String,
+        /// Parameters passed to the tool
         params: serde_json::Value,
     },
     /// Policy evaluation
     PolicyEval {
+        /// Action being evaluated
         action: String,
+        /// Resource being accessed
         resource: String,
+        /// Policy decision result
         decision: String,
     },
     /// LLM inference
-    Inference { model: String, tokens: u64 },
+    Inference {
+        /// Model identifier used for inference
+        model: String,
+        /// Number of tokens consumed
+        tokens: u64,
+    },
     /// Custom action
     Custom {
+        /// Type of the custom action
         action_type: String,
+        /// Additional details about the action
         details: serde_json::Value,
     },
 }
@@ -1419,6 +1447,8 @@ impl TimeTravelManager {
     }
 
     /// Compute the current merkle root from working state
+    // Retained for future integrity verification of working state.
+    #[allow(dead_code)]
     fn compute_current_merkle_root(&self) -> [u8; 32] {
         let mut hasher = Sha256::new();
         let mut keys: Vec<_> = self.working_state.keys().collect();

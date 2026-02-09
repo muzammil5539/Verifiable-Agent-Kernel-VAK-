@@ -34,7 +34,7 @@
 //! let action = Action::new("File", "read");
 //! let resource = Resource::file("/data/config.json");
 //!
-//! let decision = enforcer.authorize(&principal, &action, &resource, None)?;
+//! let decision = enforcer.authorize(&principal, &action, &resource, None).await?;
 //! if decision.is_allowed() {
 //!     // Proceed with action
 //! }
@@ -69,9 +69,13 @@ pub enum EnforcerError {
     /// Authorization denied
     #[error("Authorization denied: {action} on {resource} by {principal}")]
     Denied {
+        /// The principal whose request was denied
         principal: String,
+        /// The action that was denied
         action: String,
+        /// The resource the action targeted
         resource: String,
+        /// Explanation of why authorization was denied
         reason: String,
     },
 

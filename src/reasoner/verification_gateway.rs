@@ -18,19 +18,28 @@
 //! use vak::reasoner::verification_gateway::{
 //!     VerificationGateway, GatewayConfig, HighStakesAction,
 //! };
+//! use vak::reasoner::verifier::{ConstraintKind, ConstraintValue};
+//! use std::collections::HashMap;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let gateway = VerificationGateway::new(GatewayConfig::default()).await?;
 //!
 //! // Register high-stakes action with invariants
 //! gateway.register_action(
-//!     "transfer_funds",
 //!     HighStakesAction::new("transfer_funds")
-//!         .with_precondition("amount <= balance")
-//!         .with_postcondition("new_balance == balance - amount")
-//! );
+//!         .with_precondition("amount_positive", ConstraintKind::GreaterThan {
+//!             field: "amount".to_string(),
+//!             value: 0.0.into(),
+//!         })
+//!         .with_postcondition("amount_within_limit", ConstraintKind::LessThan {
+//!             field: "amount".to_string(),
+//!             value: 10000.0.into(),
+//!         })
+//! ).await;
 //!
 //! // Verify before execution
+//! let mut context = HashMap::new();
+//! context.insert("amount".to_string(), ConstraintValue::Integer(500));
 //! let result = gateway.verify_action("transfer_funds", &context).await?;
 //! if result.is_safe() {
 //!     // Proceed with execution
@@ -1073,7 +1082,7 @@ mod tests {
 
         // After clearing, next call should not hit cache
         let _ = gateway.verify_action("file_write", &context).await;
-        let stats = gateway.stats().await;
+        let _stats = gateway.stats().await;
         // cache_hits should be 0 after clear (second call doesn't hit)
         // But we had one hit from the test before clear_cache...
         // Actually the stats aren't cleared, just the cache

@@ -29,11 +29,10 @@
 //!
 //! // Constrain output to valid Datalog facts
 //! let constraint = OutputConstraint::Datalog(DatalogConstraint::facts_only());
-//! let grammar = decoder.build_grammar(&constraint);
 //!
-//! // Use grammar during LLM inference to constrain output
-//! let valid_output = decoder.decode_with_grammar("Action(read, /data/file.txt)", &grammar);
-//! assert!(valid_output.is_ok());
+//! // Validate that output conforms to the constraint
+//! let result = decoder.validate("Action(read, /data/file.txt)", &constraint);
+//! assert!(result.is_ok());
 //! ```
 //!
 //! # References
@@ -59,7 +58,12 @@ pub enum ConstraintError {
 
     /// Output does not match constraint
     #[error("Output does not match constraint: expected {expected}, got {actual}")]
-    ConstraintViolation { expected: String, actual: String },
+    ConstraintViolation {
+        /// The expected output format or pattern
+        expected: String,
+        /// The actual output that was received
+        actual: String,
+    },
 
     /// Grammar compilation failed
     #[error("Grammar compilation failed: {0}")]
@@ -93,6 +97,7 @@ pub struct Grammar {
     /// Non-terminal symbols
     non_terminals: HashSet<String>,
     /// Start symbol
+    #[allow(dead_code)] // Retained for future grammar expansion and validation.
     start_symbol: String,
     /// Validation regex (for quick validation)
     validation_regex: Option<Regex>,
@@ -458,7 +463,9 @@ pub enum DatalogTerm {
     Variable(String),
     /// Compound term
     Compound {
+        /// The functor name of the compound term
         functor: String,
+        /// The arguments of the compound term
         args: Vec<DatalogTerm>,
     },
 }
@@ -502,6 +509,7 @@ pub struct ParsedVakAction {
 #[derive(Debug)]
 pub struct ConstrainedDecoder {
     /// Precompiled grammars cache
+    #[allow(dead_code)] // Retained for future caching of compiled grammars.
     grammar_cache: HashMap<String, Grammar>,
     /// Datalog fact regex
     datalog_fact_regex: Regex,

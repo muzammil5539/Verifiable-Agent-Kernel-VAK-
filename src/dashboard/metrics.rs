@@ -44,11 +44,13 @@ impl Default for MetricsConfig {
 }
 
 impl MetricsConfig {
+    /// Sets the metrics endpoint path.
     pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> Self {
         self.endpoint = endpoint.into();
         self
     }
 
+    /// Adds a global label applied to all exported metrics.
     pub fn with_label(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.global_labels.insert(key.into(), value.into());
         self
@@ -69,6 +71,7 @@ pub struct Counter {
 }
 
 impl Counter {
+    /// Creates a new counter with the given name and help text.
     pub fn new(name: impl Into<String>, help: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -78,23 +81,28 @@ impl Counter {
         }
     }
 
+    /// Attaches labels to this counter.
     pub fn with_labels(mut self, labels: HashMap<String, String>) -> Self {
         self.labels = labels;
         self
     }
 
+    /// Increments the counter by one.
     pub fn inc(&self) {
         self.value.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Increments the counter by the given amount.
     pub fn inc_by(&self, n: u64) {
         self.value.fetch_add(n, Ordering::Relaxed);
     }
 
+    /// Returns the current value of the counter.
     pub fn get(&self) -> u64 {
         self.value.load(Ordering::Relaxed)
     }
 
+    /// Exports this counter in Prometheus text format.
     pub fn to_prometheus(&self, global_labels: &HashMap<String, String>) -> String {
         let labels = self.format_labels(global_labels);
         format!(
@@ -133,6 +141,7 @@ pub struct Gauge {
 }
 
 impl Gauge {
+    /// Creates a new gauge with the given name and help text.
     pub fn new(name: impl Into<String>, help: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -142,33 +151,39 @@ impl Gauge {
         }
     }
 
+    /// Attaches labels to this gauge.
     pub fn with_labels(mut self, labels: HashMap<String, String>) -> Self {
         self.labels = labels;
         self
     }
 
+    /// Sets the gauge to the given value.
     pub fn set(&self, v: f64) {
         if let Ok(mut value) = self.value.write() {
             *value = v;
         }
     }
 
+    /// Increments the gauge by one.
     pub fn inc(&self) {
         if let Ok(mut value) = self.value.write() {
             *value += 1.0;
         }
     }
 
+    /// Decrements the gauge by one.
     pub fn dec(&self) {
         if let Ok(mut value) = self.value.write() {
             *value -= 1.0;
         }
     }
 
+    /// Returns the current value of the gauge.
     pub fn get(&self) -> f64 {
         self.value.read().map(|v| *v).unwrap_or(0.0)
     }
 
+    /// Exports this gauge in Prometheus text format.
     pub fn to_prometheus(&self, global_labels: &HashMap<String, String>) -> String {
         let labels = self.format_labels(global_labels);
         format!(
@@ -210,6 +225,7 @@ pub struct Histogram {
 }
 
 impl Histogram {
+    /// Creates a new histogram with the given name, help text, and bucket boundaries.
     pub fn new(name: impl Into<String>, help: impl Into<String>, buckets: Vec<f64>) -> Self {
         let bucket_counts = buckets.iter().map(|_| AtomicU64::new(0)).collect();
         Self {
@@ -223,11 +239,13 @@ impl Histogram {
         }
     }
 
+    /// Attaches labels to this histogram.
     pub fn with_labels(mut self, labels: HashMap<String, String>) -> Self {
         self.labels = labels;
         self
     }
 
+    /// Records an observed value into the histogram buckets.
     pub fn observe(&self, value: f64) {
         for (i, &bucket) in self.buckets.iter().enumerate() {
             if value <= bucket {
@@ -240,18 +258,22 @@ impl Histogram {
         self.count.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Records a duration observation, converting to milliseconds.
     pub fn observe_duration(&self, duration: Duration) {
         self.observe(duration.as_secs_f64() * 1000.0); // Convert to ms
     }
 
+    /// Returns the total number of observations recorded.
     pub fn get_count(&self) -> u64 {
         self.count.load(Ordering::Relaxed)
     }
 
+    /// Returns the sum of all observed values.
     pub fn get_sum(&self) -> f64 {
         self.sum.read().map(|s| *s).unwrap_or(0.0)
     }
 
+    /// Exports this histogram in Prometheus text format.
     pub fn to_prometheus(&self, global_labels: &HashMap<String, String>) -> String {
         let base_labels = self.format_labels(global_labels);
         let mut output = format!(
@@ -579,6 +601,7 @@ impl std::fmt::Debug for PrometheusExporter {
 }
 
 impl PrometheusExporter {
+    /// Creates a new Prometheus exporter backed by the given metrics collector.
     pub fn new(collector: Arc<MetricsCollector>) -> Self {
         Self { collector }
     }

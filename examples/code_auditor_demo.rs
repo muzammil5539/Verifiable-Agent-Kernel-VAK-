@@ -13,7 +13,6 @@
 //! Run with: `cargo run --example code_auditor_demo`
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use vak::audit::{AuditDecision, AuditLogger};
 use vak::memory::{Episode, EpisodicMemory, KnowledgeGraph, TimeTravelManager};
@@ -622,7 +621,7 @@ impl CodeAuditor {
 
     /// Generate a cryptographic receipt for the audit
     fn generate_audit_receipt(&self) -> AuditReceipt {
-        let entries = self.audit_logger.entries();
+        let entries = self.audit_logger.load_all_entries().unwrap_or_default();
         let chain_hash = if entries.is_empty() {
             "0".repeat(64)
         } else {

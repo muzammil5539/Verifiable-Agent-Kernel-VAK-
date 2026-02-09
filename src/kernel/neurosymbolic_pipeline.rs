@@ -82,9 +82,13 @@ pub enum PipelineError {
     /// Policy check denied
     #[error("Policy denied: {action} on {resource} for {principal}")]
     PolicyDenied {
+        /// The principal (agent) that was denied
         principal: String,
+        /// The action that was denied
         action: String,
+        /// The resource that was denied access to
         resource: String,
+        /// The reason for denial
         reason: String,
     },
 
