@@ -161,3 +161,19 @@ Core principles all agents must follow:
 4. **WASM Isolation**: Tools run in sandboxes
 5. **Quadratic Voting**: Prevents sycophancy in multi-agent systems
 6. **PRM at Every Step**: Reasoning evaluated before execution
+
+## GitHub Copilot Agent Skills
+
+VAK provides a set of skills that enable GitHub Copilot to interact with the kernel. These are located in `.github/skills/` and can be used by Copilot to perform verifiable actions.
+
+### Available Skills
+
+| Skill | Description | Usage |
+|-------|-------------|-------|
+| `vak-audit` | Query audit logs | "Show me the audit trail for agent X" |
+| `vak-execute` | Execute tools | "Run the calculator tool" |
+| `vak-policy` | Check policies | "Can I read this file?" |
+| `vak-manage` | Manage agents | "List registered agents" |
+| `vak-sdk-gen` | Generate SDK code | "Generate Python wrapper for Struct" |
+
+These skills automatically handle the VAK Python SDK installation and configuration, providing a seamless experience for Copilot users.

@@ -24,6 +24,7 @@
 - [Usage Examples](#usage-examples)
 - [Development Roadmap](#development-roadmap)
 - [Skills Development](#skills-development)
+- [Agent Skills (GitHub Copilot)](#agent-skills-github-copilot)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -583,6 +584,22 @@ cargo build --target wasm32-unknown-unknown --release
 ```
 
 For detailed skill development guide, see [skills/README.md](skills/README.md).
+
+---
+
+## Agent Skills (GitHub Copilot)
+
+VAK supports [GitHub Copilot Agent Skills](https://docs.github.com/en/copilot/concepts/agents/about-agent-skills), allowing AI agents to interact directly with the kernel.
+
+These skills are located in `.github/skills/` and include:
+
+- **`vak-audit`**: Query and inspect audit logs.
+- **`vak-execute`**: Execute tools securely via the kernel.
+- **`vak-policy`**: Verify if actions are allowed by policy.
+- **`vak-manage`**: Manage agents and inspect tools.
+- **`vak-sdk-gen`**: Generate Python SDK wrapper code.
+
+These skills enable Copilot to act as a verified operator, checking permissions and leaving audit trails for all actions.
 
 ---
 

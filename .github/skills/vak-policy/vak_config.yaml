@@ -1,0 +1,8 @@
+# Policy file for VAK Skills (loaded by PyKernel::from_config)
+rules:
+  - id: "allow_all"
+    effect: allow
+    resource_pattern: "*"
+    action_pattern: "*"
+    priority: 0
+    conditions: []
