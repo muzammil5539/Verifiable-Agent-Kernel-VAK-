@@ -326,7 +326,8 @@ impl AsyncHostContext {
 
     /// Register a custom operation handler
     pub async fn register_handler(&self, name: impl Into<String>, handler: Arc<dyn CustomHandler>) {
-        self.register_handler_with_timeout(name, handler, None).await;
+        self.register_handler_with_timeout(name, handler, None)
+            .await;
     }
 
     /// Register a custom operation handler with configuration
@@ -337,10 +338,7 @@ impl AsyncHostContext {
         timeout: Option<Duration>,
     ) {
         let mut handlers = self.custom_handlers.write().await;
-        handlers.insert(
-            name.into(),
-            HandlerRegistration { handler, timeout },
-        );
+        handlers.insert(name.into(), HandlerRegistration { handler, timeout });
     }
 
     /// Execute an async operation with policy check
@@ -450,7 +448,7 @@ impl AsyncHostContext {
         // Evaluate policy
         let principal = Principal::agent(&self.agent_id);
         let action = Action::new("Agent", operation.action_name());
-        let resource = Resource::new("Resource", &operation.resource_name());
+        let resource = Resource::new("Resource", operation.resource_name());
 
         let decision = self
             .enforcer

@@ -545,21 +545,19 @@ impl ActiveReplay {
     /// Compare original and replayed results
     fn compare_step(&self, original: &FlightEvent, replayed: &ReplayedResult) -> StepComparison {
         // Compare decisions if enabled
-        if self.config.compare_policies {
-            if original.decision != replayed.decision {
+        if self.config.compare_policies
+            && original.decision != replayed.decision {
                 return StepComparison::Mismatch;
             }
-        }
 
         // Compare outputs if enabled
-        if self.config.compare_outputs {
-            if original.output != replayed.output {
+        if self.config.compare_outputs
+            && original.output != replayed.output {
                 // Check if it's just a minor difference
                 if original.output.is_some() && replayed.output.is_some() {
                     return StepComparison::MinorDiff;
                 }
             }
-        }
 
         StepComparison::Match
     }

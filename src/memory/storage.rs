@@ -86,8 +86,10 @@ pub type StorageResult<T> = Result<T, StorageError>;
 
 /// Types of storage backends
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum BackendType {
     /// In-memory storage (non-persistent, for testing)
+    #[default]
     Memory,
     /// File-based storage
     File,
@@ -97,11 +99,6 @@ pub enum BackendType {
     KeyValue,
 }
 
-impl Default for BackendType {
-    fn default() -> Self {
-        BackendType::Memory
-    }
-}
 
 // ============================================================================
 // Storage Configuration

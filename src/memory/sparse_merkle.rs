@@ -234,7 +234,7 @@ impl From<&SparseProof> for CompactProof {
                 current_byte = 0;
             }
         }
-        if proof.path.len() % 8 != 0 {
+        if !proof.path.len().is_multiple_of(8) {
             path_bits.push(current_byte);
         }
 
@@ -372,7 +372,7 @@ impl SparseMerkleTree {
             .get(key)
             .and_then(|leaf_hash| self.nodes.get(leaf_hash))
             .and_then(|node| node.value.as_ref())
-            .map(|v| hex::encode(v));
+            .map(hex::encode);
 
         for level in (0..self.depth).rev() {
             let bit = get_bit(&key_hash, self.depth - 1 - level);
@@ -413,7 +413,7 @@ impl SparseMerkleTree {
             self.nodes
                 .get(h)
                 .and_then(|n| n.key.as_ref())
-                .map_or(false, |k| compute_hash(k.as_bytes()) == *key_hash)
+                .is_some_and(|k| compute_hash(k.as_bytes()) == *key_hash)
         }) {
             leaf.clone()
         } else {

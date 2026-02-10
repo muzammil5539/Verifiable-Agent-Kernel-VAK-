@@ -87,8 +87,8 @@ impl fmt::Display for ChainVerificationError {
                     f,
                     "Chain broken at episode {}: expected prev_hash {:?}, got {:?}",
                     index,
-                    expected.map(|h| hex::encode(h)),
-                    actual.map(|h| hex::encode(h))
+                    expected.map(hex::encode),
+                    actual.map(hex::encode)
                 )
             }
             ChainVerificationError::InvalidGenesisEpisode => {

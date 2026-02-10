@@ -84,10 +84,18 @@ struct SkillOutput {
 
 impl SkillOutput {
     fn success_val(val: serde_json::Value) -> Self {
-        Self { success: true, result: Some(val), error: None }
+        Self {
+            success: true,
+            result: Some(val),
+            error: None,
+        }
     }
     fn error(msg: &str) -> Self {
-        Self { success: false, result: None, error: Some(String::from(msg)) }
+        Self {
+            success: false,
+            result: None,
+            error: Some(String::from(msg)),
+        }
     }
 }
 
@@ -130,14 +138,25 @@ fn glob_match_helper(pat: &[char], txt: &[char], pi: usize, ti: usize) -> bool {
 }
 
 /// Find all occurrences of a substring
-fn find_all_occurrences(text: &str, pattern: &str, case_insensitive: bool, max_results: usize) -> Vec<serde_json::Value> {
+fn find_all_occurrences(
+    text: &str,
+    pattern: &str,
+    case_insensitive: bool,
+    max_results: usize,
+) -> Vec<serde_json::Value> {
     let (search_text, search_pattern);
     let text_ref: &str;
     let pattern_ref: &str;
 
     if case_insensitive {
-        search_text = text.chars().map(|c| c.to_lowercase().next().unwrap_or(c)).collect::<String>();
-        search_pattern = pattern.chars().map(|c| c.to_lowercase().next().unwrap_or(c)).collect::<String>();
+        search_text = text
+            .chars()
+            .map(|c| c.to_lowercase().next().unwrap_or(c))
+            .collect::<String>();
+        search_pattern = pattern
+            .chars()
+            .map(|c| c.to_lowercase().next().unwrap_or(c))
+            .collect::<String>();
         text_ref = &search_text;
         pattern_ref = &search_pattern;
     } else {
@@ -208,7 +227,9 @@ fn extract_patterns(text: &str) -> serde_json::Value {
     let mut emails = Vec::new();
     let words: Vec<&str> = text.split_whitespace().collect();
     for word in &words {
-        let trimmed = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '@' && c != '.' && c != '_' && c != '-');
+        let trimmed = word.trim_matches(|c: char| {
+            !c.is_alphanumeric() && c != '@' && c != '.' && c != '_' && c != '-'
+        });
         if trimmed.contains('@') && trimmed.contains('.') {
             let parts: Vec<&str> = trimmed.split('@').collect();
             if parts.len() == 2 && !parts[0].is_empty() && parts[1].contains('.') {
@@ -240,12 +261,22 @@ fn process_input(input: &str) -> SkillOutput {
                 return SkillOutput::error("Pattern is required");
             }
             let text = if input.params.case_insensitive {
-                input.params.text.chars().map(|c| c.to_lowercase().next().unwrap_or(c)).collect::<String>()
+                input
+                    .params
+                    .text
+                    .chars()
+                    .map(|c| c.to_lowercase().next().unwrap_or(c))
+                    .collect::<String>()
             } else {
                 input.params.text.clone()
             };
             let pattern = if input.params.case_insensitive {
-                input.params.pattern.chars().map(|c| c.to_lowercase().next().unwrap_or(c)).collect::<String>()
+                input
+                    .params
+                    .pattern
+                    .chars()
+                    .map(|c| c.to_lowercase().next().unwrap_or(c))
+                    .collect::<String>()
             } else {
                 input.params.pattern.clone()
             };
@@ -272,7 +303,11 @@ fn process_input(input: &str) -> SkillOutput {
             if input.params.pattern.is_empty() {
                 return SkillOutput::error("Pattern is required for replace");
             }
-            let result = replace_all(&input.params.text, &input.params.pattern, &input.params.replacement);
+            let result = replace_all(
+                &input.params.text,
+                &input.params.pattern,
+                &input.params.replacement,
+            );
             SkillOutput::success_val(serde_json::json!({"result": result}))
         }
         "split" => {
@@ -281,7 +316,9 @@ fn process_input(input: &str) -> SkillOutput {
             } else {
                 &input.params.delimiter
             };
-            let parts: Vec<serde_json::Value> = input.params.text
+            let parts: Vec<serde_json::Value> = input
+                .params
+                .text
                 .split(delimiter)
                 .map(|s| serde_json::Value::String(String::from(s)))
                 .collect();
@@ -290,10 +327,10 @@ fn process_input(input: &str) -> SkillOutput {
                 "parts": parts,
             }))
         }
-        "extract_patterns" => {
-            SkillOutput::success_val(extract_patterns(&input.params.text))
-        }
-        _ => SkillOutput::error("Unknown action. Supported: match, glob, find_all, replace, split, extract_patterns"),
+        "extract_patterns" => SkillOutput::success_val(extract_patterns(&input.params.text)),
+        _ => SkillOutput::error(
+            "Unknown action. Supported: match, glob, find_all, replace, split, extract_patterns",
+        ),
     }
 }
 
@@ -357,7 +394,8 @@ mod tests {
 
     #[test]
     fn test_find_all() {
-        let input = r#"{"action":"find_all","params":{"text":"the cat sat on the mat","pattern":"the"}}"#;
+        let input =
+            r#"{"action":"find_all","params":{"text":"the cat sat on the mat","pattern":"the"}}"#;
         let output = process_input(input);
         assert!(output.success);
     }

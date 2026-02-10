@@ -79,10 +79,18 @@ struct SkillOutput {
 
 impl SkillOutput {
     fn success_val(val: serde_json::Value) -> Self {
-        Self { success: true, result: Some(val), error: None }
+        Self {
+            success: true,
+            result: Some(val),
+            error: None,
+        }
     }
     fn error(msg: &str) -> Self {
-        Self { success: false, result: None, error: Some(String::from(msg)) }
+        Self {
+            success: false,
+            result: None,
+            error: Some(String::from(msg)),
+        }
     }
 }
 
@@ -117,7 +125,9 @@ fn char_frequency(text: &str, top_n: usize) -> serde_json::Value {
     let mut freq: BTreeMap<char, usize> = BTreeMap::new();
     for c in text.chars() {
         if !c.is_whitespace() {
-            *freq.entry(c.to_lowercase().next().unwrap_or(c)).or_insert(0) += 1;
+            *freq
+                .entry(c.to_lowercase().next().unwrap_or(c))
+                .or_insert(0) += 1;
         }
     }
 
@@ -200,10 +210,13 @@ fn ln_approx(x: f64) -> f64 {
 fn text_summary(text: &str) -> serde_json::Value {
     let words = word_count(text);
     let chars = text.chars().count();
-    let lines = if text.is_empty() { 0 } else { text.lines().count() };
-    let sentences = text.matches('.').count()
-        + text.matches('!').count()
-        + text.matches('?').count();
+    let lines = if text.is_empty() {
+        0
+    } else {
+        text.lines().count()
+    };
+    let sentences =
+        text.matches('.').count() + text.matches('!').count() + text.matches('?').count();
     let avg_word_len = if words > 0 {
         text.split_whitespace().map(|w| w.len()).sum::<usize>() as f64 / words as f64
     } else {

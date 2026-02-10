@@ -434,7 +434,7 @@ impl SkillVerifier {
 
         // Load public key (from manifest or provided)
         let verifying_key = match public_key {
-            Some(key) => key.clone(),
+            Some(key) => *key,
             None => load_public_key(&sig_info.public_key)?,
         };
 

@@ -231,7 +231,7 @@ impl IntegratedPolicyEngine {
     /// Create a new integrated policy engine
     pub fn new(config: IntegrationConfig) -> IntegrationResult<Self> {
         let enforcer = CedarEnforcer::new(config.enforcer.clone())
-            .map_err(|e| IntegrationError::PolicyError(e))?;
+            .map_err(IntegrationError::PolicyError)?;
         let context_collector = DynamicContextCollector::new(config.context.clone());
 
         Ok(Self {
@@ -420,15 +420,13 @@ impl IntegratedPolicyEngine {
         }
 
         // Factor 3: Sensitive resource access
-        let sensitive_patterns = vec![
-            "secret",
+        let sensitive_patterns = ["secret",
             "password",
             "key",
             "credential",
             "private",
             "/etc/",
-            ".env",
-        ];
+            ".env"];
         if sensitive_patterns
             .iter()
             .any(|p| resource.to_lowercase().contains(p))
@@ -442,7 +440,7 @@ impl IntegratedPolicyEngine {
         }
 
         // Factor 4: Destructive action
-        let destructive_actions = vec!["delete", "drop", "remove", "truncate", "destroy"];
+        let destructive_actions = ["delete", "drop", "remove", "truncate", "destroy"];
         if destructive_actions
             .iter()
             .any(|a| action.to_lowercase().contains(a))
@@ -537,7 +535,7 @@ impl IntegratedPolicyEngine {
         self.enforcer
             .load_policies(path)
             .await
-            .map_err(|e| IntegrationError::PolicyError(e))
+            .map_err(IntegrationError::PolicyError)
     }
 }
 

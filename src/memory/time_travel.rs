@@ -276,7 +276,7 @@ impl StateCheckpoint {
         keys.sort();
         for key in keys {
             hasher.update(key.as_bytes());
-            hasher.update(&self.state[key].value_hash);
+            hasher.update(self.state[key].value_hash);
         }
 
         // Include metadata in deterministic order
@@ -312,7 +312,7 @@ impl StateCheckpoint {
         keys.sort();
         for key in keys {
             hasher.update(key.as_bytes());
-            hasher.update(&self.state[key].value_hash);
+            hasher.update(self.state[key].value_hash);
         }
 
         let mut meta_keys: Vec<_> = self.metadata.keys().collect();
@@ -766,14 +766,13 @@ impl TimeTravelManager {
             }
 
             // Verify parent linkage (except for genesis)
-            if i < history.len() - 1 {
-                if snapshot.parent_id != Some(history[i + 1].id) {
+            if i < history.len() - 1
+                && snapshot.parent_id != Some(history[i + 1].id) {
                     return Err(TimeTravelError::VerificationFailed {
                         snapshot_id: snapshot.id,
                         reason: "Parent ID mismatch".to_string(),
                     });
                 }
-            }
         }
 
         // Verify genesis has no parent
@@ -1182,7 +1181,7 @@ impl TimeTravelManager {
         // Calculate state summary before checkout
         let keys: Vec<String> = snapshot.state.keys().cloned().collect();
         let total_bytes: usize = snapshot.state.values().map(|v| v.value.len()).sum();
-        let state_hash = hex::encode(&snapshot.hash);
+        let state_hash = hex::encode(snapshot.hash);
 
         // Restore working state
         if !options.preserve_working_state {
@@ -1238,9 +1237,9 @@ impl TimeTravelManager {
         // Build provenance chain
         for (i, s) in chain_snapshots.iter().enumerate() {
             provenance_chain.push(ProvenanceLink {
-                state_hash: hex::encode(&s.hash),
+                state_hash: hex::encode(s.hash),
                 previous_hash: if i > 0 {
-                    Some(hex::encode(&chain_snapshots[i - 1].hash))
+                    Some(hex::encode(chain_snapshots[i - 1].hash))
                 } else {
                     None
                 },
@@ -1262,7 +1261,7 @@ impl TimeTravelManager {
 
         Some(FullCheckout {
             snapshot_id: *snapshot_id,
-            merkle_root: hex::encode(&snapshot.hash),
+            merkle_root: hex::encode(snapshot.hash),
             state_data,
             metadata: CheckoutMetadata {
                 created_at: chrono::Utc::now(),
@@ -1378,8 +1377,8 @@ impl TimeTravelManager {
 
                 // Find added/modified keys
                 for (key, entry) in &snapshot.state {
-                    let new_hash = Some(hex::encode(&entry.value_hash));
-                    let previous_hash = prev.state.get(key).map(|e| hex::encode(&e.value_hash));
+                    let new_hash = Some(hex::encode(entry.value_hash));
+                    let previous_hash = prev.state.get(key).map(|e| hex::encode(e.value_hash));
 
                     if previous_hash != new_hash {
                         changes.push(StateChange {
@@ -1395,7 +1394,7 @@ impl TimeTravelManager {
                     if !snapshot.state.contains_key(key) {
                         changes.push(StateChange {
                             key: key.clone(),
-                            previous_hash: prev.state.get(key).map(|e| hex::encode(&e.value_hash)),
+                            previous_hash: prev.state.get(key).map(|e| hex::encode(e.value_hash)),
                             new_hash: None,
                         });
                     }
@@ -1436,7 +1435,7 @@ impl TimeTravelManager {
 
             steps.push(ReplayStep {
                 step: (i + 1) as u64,
-                state_hash: hex::encode(&snapshot.hash),
+                state_hash: hex::encode(snapshot.hash),
                 action: replay_action,
                 changes,
                 timestamp: snapshot.created_at,
@@ -1491,7 +1490,7 @@ impl TimeTravelManager {
 
         Some(ReplayStep {
             step: 1,
-            state_hash: hex::encode(&next_snapshot.hash),
+            state_hash: hex::encode(next_snapshot.hash),
             action: ReplayAction::Custom {
                 action_type,
                 details: serde_json::json!(next_snapshot.metadata),

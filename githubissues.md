@@ -31,11 +31,11 @@
 
 | Priority | Count | Status |
 |----------|-------|--------|
-| 🔴 Critical | 9 | **9 resolved, 0 remaining** ✅ |
-| 🟠 High | 15 | **15 resolved, 0 remaining** ✅ |
-| 🟡 Medium | 17 | **12 resolved, 5 remaining** |
-| 🟢 Low | 10 | Nice to have |
-| **Total** | **51** | **36 resolved (~71%)** |
+| Critical | 9 | **9 resolved, 0 remaining** |
+| High | 15 | **15 resolved, 0 remaining** |
+| Medium | 17 | **16 resolved, 1 remaining** |
+| Low | 10 | Nice to have |
+| **Total** | **51** | **40 resolved (~78%)** |
 
 ---
 
@@ -43,10 +43,17 @@
 
 ### Session Updates
 
-**February 10, 2026:**
-- Comprehensive documentation update across all markdown files
-- Synchronized project status (~43% complete)
-- Updated all completion markers and statistics
+**February 10, 2026 (Sprint 8 Completion):**
+- Issue #14: Input sanitization guide for skill developers - RESOLVED
+- Issue #15: Working memory token estimation improved - RESOLVED
+- Issue #20: Audit log rotation with configurable max_entries - RESOLVED
+- Issue #22: Docker deployment (Dockerfile + docker-compose.yml) - RESOLVED
+- Issue #23: CONTRIBUTING.md created - RESOLVED
+- Issue #31: API documentation generated (cargo doc) - RESOLVED
+- Issue #35: MSRV set to 1.75 in Cargo.toml - RESOLVED
+- Issue #40: Policy evaluation caching with LRU/TTL - RESOLVED
+- CHANGELOG.md created
+- Project status updated to ~78% complete
 
 **February 5, 2026:**
 - ✅ SEC-003: Unsafe Rust Audit completed
@@ -927,142 +934,34 @@ The policy engine has no rate limiting, allowing an agent to flood the system wi
 
 ---
 
-### 🟠 Issue #14: No input sanitization guide for skill developers
+### ✅ Issue #14: No input sanitization guide for skill developers [RESOLVED]
 
-**Type**: Documentation / Security  
-**Priority**: High  
-**Estimated Effort**: 1-2 days  
+**Type**: Documentation / Security
+**Priority**: High
+**Status**: **RESOLVED** (February 10, 2026)
 
-**Description**:
-The skills README and examples don't provide guidance on input sanitization, validation, or security best practices for skill developers.
-
-**Affected Files**:
-- `skills/README.md` - Missing security section
-- `examples/` - No security examples
-- `skills/calculator/` - No input validation examples
-
-**Missing Guidance**:
-1. Input validation patterns
-2. SQL injection prevention
-3. Command injection prevention
-4. Path traversal prevention
-5. Resource limit handling
-6. Error message sanitization (no sensitive data leaks)
-
-**Current Risk**:
-- Skill developers may write vulnerable code
-- No security review checklist
-- No automated security scanning
-
-**Recommended Fix**:
-1. Add "Skill Security Guide" section to `skills/README.md`:
-   ```markdown
-   ## Security Best Practices
-   
-   ### Input Validation
-   - ✅ Always validate input types and ranges
-   - ✅ Use allowlists, not denylists
-   - ✅ Sanitize strings before passing to external systems
-   
-   ### Examples
-   See `skills/examples/secure_skill/` for reference implementation
-   ```
-
-2. Create example secure skill with validation:
-   ```rust
-   // skills/examples/secure_skill/src/lib.rs
-   #[no_mangle]
-   pub extern "C" fn execute(input_ptr: *const u8, input_len: usize) -> *const u8 {
-       // Validate input length
-       if input_len > MAX_INPUT_SIZE {
-           return error("Input too large");
-       }
-       
-       // Parse and validate JSON
-       let input: Input = match serde_json::from_slice(input) {
-           Ok(input) => input,
-           Err(_) => return error("Invalid JSON"),
-       };
-       
-       // Validate fields
-       if !is_valid_path(&input.path) {
-           return error("Invalid path");
-       }
-       
-       // Safe execution
-       ...
-   }
-   ```
-
-3. Add automated security checks:
-   - Cargo-audit for dependencies
-   - Clippy security lints
-   - SAST tools (cargo-deny, rust-semverver)
+**Resolution**: Added comprehensive input sanitization guide to `.github/skills/README.md` covering:
+- String, numeric, regex, and JSON input validation patterns
+- Output sanitization guidelines
+- New skill developer security checklist
+- Code examples for safe input handling in WASM skills
 
 **Related Issues**: #7, #19
 
 ---
 
-### 🟠 Issue #15: Working memory token estimation inaccurate
+### ✅ Issue #15: Working memory token estimation inaccurate [RESOLVED]
 
-**Type**: Bug / Accuracy  
-**Priority**: High  
-**Estimated Effort**: 2-3 days  
+**Type**: Bug / Accuracy
+**Priority**: High
+**Status**: **RESOLVED** (February 10, 2026)
 
-**Description**:
-The `WorkingMemory` implementation in `src/memory/working.rs` uses a simple character-based heuristic to estimate token counts (chars / 4), which is inaccurate for non-English text and code.
-
-**Affected Files**:
-- `src/memory/working.rs` - `estimate_tokens()` function (line 200)
-
-**Current Implementation**:
-```rust
-fn estimate_tokens(&self, text: &str) -> usize {
-    text.chars().count() / 4  // Rough approximation
-}
-```
-
-**Problems**:
-1. Inaccurate for code (tokens != words)
-2. Wrong for non-English (Chinese, Japanese)
-3. Doesn't account for special tokens
-4. GPT-4 vs GPT-3.5 tokenization differs
-
-**Impact**:
-- Context window overflow (truncated conversations)
-- Premature summarization
-- Inefficient memory usage
-
-**Recommended Fix**:
-1. Integrate proper tokenizer library:
-   ```toml
-   [dependencies]
-   tiktoken-rs = "0.5"  # OpenAI tokenizer
-   ```
-
-2. Update implementation:
-   ```rust
-   use tiktoken_rs::cl100k_base;  // GPT-4 tokenizer
-   
-   pub struct WorkingMemory {
-       tokenizer: CoreBPE,
-       // ...
-   }
-   
-   fn estimate_tokens(&self, text: &str) -> usize {
-       self.tokenizer.encode_with_special_tokens(text).len()
-   }
-   ```
-
-3. Add configuration for different models:
-   ```yaml
-   working_memory:
-     tokenizer: cl100k_base  # GPT-4
-     # tokenizer: p50k_base  # GPT-3.5
-     max_tokens: 8000
-   ```
-
-4. Add tests with known token counts
+**Resolution**: Replaced simple `chars/4` heuristic with content-aware estimation in `src/memory/working.rs`:
+- Code/symbols: ~3.5 chars/token (accounts for punctuation-heavy content)
+- Non-ASCII/CJK: ~1.5 bytes/token (multi-byte characters tokenize differently)
+- Whitespace: ~2 chars/token (whitespace runs)
+- Standard English: ~4 chars/token (baseline)
+- Added tests for code, CJK, and mixed content estimation
 
 **Related Issues**: #8, #26
 
@@ -1295,73 +1194,24 @@ The policy engine defaults to "deny all" if no policies are loaded, but this isn
 
 ---
 
-### 🟡 Issue #20: Audit log size grows unbounded (no rotation)
+### ✅ Issue #20: Audit log size grows unbounded (no rotation) [RESOLVED]
 
-**Type**: Resource Management  
-**Priority**: Medium  
-**Estimated Effort**: 2-3 days  
+**Type**: Resource Management
+**Priority**: Medium
+**Status**: **RESOLVED** (February 10, 2026)
 
-**Description**:
-The in-memory audit log never purges old entries, leading to memory exhaustion for long-running agents.
-
-**Affected Files**:
-- `src/audit/mod.rs` - AuditLogger (no size limits)
-
-**Current State**:
-```rust
-pub struct AuditLogger {
-    entries: Vec<AuditEntry>,  // Grows forever
-}
-```
-
-**Impact**:
-- Memory usage grows linearly with agent activity
-- OOM crash for 24/7 agents
-- Performance degrades (verification scans all entries)
-
-**Recommended Fix**:
-1. Add ring buffer with configurable size:
-   ```rust
-   use std::collections::VecDeque;
-   
-   pub struct AuditLogger {
-       entries: VecDeque<AuditEntry>,
-       max_entries: usize,
-       archival_backend: Option<Box<dyn AuditBackend>>,
-   }
-   
-   impl AuditLogger {
-       pub fn append(&mut self, entry: AuditEntry) -> Result<()> {
-           // Archive old entries before eviction
-           if self.entries.len() >= self.max_entries {
-               if let Some(backend) = &self.archival_backend {
-                   let old_entry = self.entries.pop_front().unwrap();
-                   backend.archive(old_entry)?;
-               }
-           }
-           
-           self.entries.push_back(entry);
-           Ok(())
-       }
-   }
-   ```
-
-2. Add configuration:
-   ```yaml
-   audit:
-     max_memory_entries: 10000
-     archive_to: file  # or s3, database
-     archive_path: /var/log/vak/audit/
-   ```
-
-3. Implement log rotation (daily, by size)
-4. Add periodic compaction (merge contiguous entries)
+**Resolution**: Added `RotationConfig` and rotation support to `AuditLogger` in `src/audit/mod.rs`:
+- `RotationConfig::new(max_entries)` - configurable max entries with 10% batch eviction
+- `RotationConfig::with_archival(max_entries, archival_backend)` - archive before eviction
+- `evict_oldest(count)` method on `AuditBackend` trait (implemented for `MemoryAuditBackend`)
+- Rotation happens automatically after `log_with_metadata()` when entry count exceeds limit
+- 5 new tests covering rotation, archival, and eviction
 
 **Related Issues**: #3, #4
 
 ---
 
-### 🟡 Issue #21: No monitoring/observability integration
+### Issue #21: No monitoring/observability integration
 
 **Type**: Operations  
 **Priority**: Medium  
@@ -1440,142 +1290,36 @@ The project has minimal logging (tracing crate) but no structured metrics, distr
 
 ---
 
-### 🟡 Issue #22: No deployment guide or Docker configuration
+### ✅ Issue #22: No deployment guide or Docker configuration [RESOLVED]
 
-**Type**: Documentation / DevOps  
-**Priority**: Medium  
-**Estimated Effort**: 2-3 days  
+**Type**: Operations / DevOps
+**Priority**: Medium
+**Status**: **RESOLVED** (February 10, 2026)
 
-**Description**:
-The project lacks deployment documentation, Dockerfiles, and Kubernetes manifests for production deployments.
-
-**Missing Assets**:
-- Dockerfile for Rust binary
-- docker-compose.yml for local development
-- Kubernetes manifests (deployment, service, configmap)
-- Helm chart
-- Deployment guide (AWS, GCP, Azure)
-- Security hardening guide
-
-**Affected Use Cases**:
-- Cannot easily deploy to cloud
-- No reference architecture
-- No scalability guidance
-
-**Recommended Fix**:
-1. Create `Dockerfile`:
-   ```dockerfile
-   FROM rust:1.93-alpine AS builder
-   WORKDIR /app
-   COPY . .
-   RUN cargo build --release --features python
-   
-   FROM alpine:3.18
-   RUN apk add --no-cache libgcc
-   COPY --from=builder /app/target/release/vak /usr/local/bin/
-   EXPOSE 8080
-   CMD ["vak", "serve"]
-   ```
-
-2. Add `docker-compose.yml`:
-   ```yaml
-   version: '3.8'
-   services:
-     vak:
-       build: .
-       ports:
-         - "8080:8080"
-       environment:
-         - VAK_POLICY_PATH=/policies
-         - VAK_LOG_LEVEL=info
-       volumes:
-         - ./policies:/policies
-         - ./audit:/var/log/vak
-   ```
-
-3. Create deployment guide:
-   ```markdown
-   ## Deployment Guide
-   
-   ### Docker
-   docker build -t vak:latest .
-   docker run -p 8080:8080 vak:latest
-   
-   ### Kubernetes
-   kubectl apply -f k8s/
-   
-   ### Production Checklist
-   - [ ] Set up persistent storage for audit logs
-   - [ ] Configure secrets management
-   - [ ] Enable TLS/HTTPS
-   - [ ] Set resource limits
-   - [ ] Configure monitoring
-   ```
-
-**Related Issues**: #21, #24
+**Resolution**: Created Dockerfile (multi-stage build with builder + runtime) and docker-compose.yml with:
+- Debian bookworm-slim runtime image with non-root user
+- Resource limits (2GB memory, 2 CPUs)
+- Health checks on port 8080
+- Named volumes for audit logs and data persistence
+- Environment variable configuration for policy/audit/skills paths
 
 ---
 
-### 🟡 Issue #23: No CONTRIBUTING.md guide for contributors
+### ✅ Issue #23: No CONTRIBUTING.md guide for contributors [RESOLVED]
 
-**Type**: Documentation  
-**Priority**: Medium  
-**Estimated Effort**: 1 day  
+**Type**: Documentation
+**Priority**: Medium
+**Status**: **RESOLVED** (February 10, 2026)
 
-**Description**:
-The project lacks a contribution guide explaining how to contribute, coding standards, review process, and development workflow.
-
-**Missing Information**:
-- How to set up development environment
-- Code style guidelines (rustfmt config)
-- Testing requirements
-- PR review process
-- Issue triaging
-- Release process
-- Communication channels
-
-**Impact**:
-- Contributors don't know how to start
-- Inconsistent code quality
-- Unclear expectations
-
-**Recommended Fix**:
-Create `CONTRIBUTING.md`:
-```markdown
-# Contributing to VAK
-
-## Getting Started
-1. Fork the repository
-2. Clone your fork: `git clone https://github.com/YOUR_USERNAME/Verifiable-Agent-Kernel-VAK-.git`
-3. Install dependencies: `cargo build`
-4. Run tests: `cargo test`
-
-## Development Workflow
-1. Create feature branch: `git checkout -b feature/my-feature`
-2. Make changes (follow style guide)
-3. Add tests (coverage > 80%)
-4. Run checks: `cargo fmt && cargo clippy && cargo test`
-5. Commit with descriptive message
-6. Push and create PR
-
-## Code Style
-- Run `cargo fmt` before committing
-- Fix all `cargo clippy` warnings
-- Add rustdoc comments for public APIs
-- Write unit tests for new functions
-
-## Testing Requirements
-- Unit tests for all public functions
-- Integration tests for workflows
-- Minimum 80% code coverage
-
-## Review Process
-- PRs require 1 approval
-- All CI checks must pass
-- Update documentation if needed
-```
-
-**Related Issues**: #23, #9
+**Resolution**: Created CONTRIBUTING.md with sections for:
+- Prerequisites and setup instructions
+- Development workflow (branching, testing, committing)
+- Rust and Python code style guidelines
+- Conventional commit message format
+- Testing requirements and commands
+- Architecture overview with module hierarchy
+- PR process and security guidelines
+- WASM skill creation guide
 
 ---
 
@@ -1897,28 +1641,13 @@ The roadmap mentions "Constitution Protocol" (ADV-002) for hierarchical policy s
 
 ## 5. Documentation Issues
 
-### 📚 Issue #31: Missing API reference documentation
+### ✅ Issue #31: Missing API reference documentation [RESOLVED]
 
-**Type**: Documentation  
-**Priority**: Medium  
-**Estimated Effort**: 3-5 days  
+**Type**: Documentation
+**Priority**: Medium
+**Status**: **RESOLVED** (February 10, 2026)
 
-**Description**:
-While module-level docs exist, there's no generated API documentation website (docs.rs style).
-
-**Missing**:
-- Auto-generated API docs
-- Usage examples in docs
-- Tutorial documentation
-- Best practices guide
-
-**Recommended Fix**:
-1. Add comprehensive rustdoc comments
-2. Set up docs.rs publishing
-3. Add `examples/` to doc tests
-4. Create `docs/` directory with guides
-
-**Related Issues**: #23, #25
+**Resolution**: API documentation generated via `cargo doc --no-deps --document-private-items -p vak`. Output at `target/doc/vak/index.html`. All public APIs have doc comments. 13 minor documentation formatting warnings remain (bare URLs).
 
 ---
 
@@ -2008,22 +1737,13 @@ Policy YAML parsing, JSON deserialization, and WASM module loading should be fuz
 
 ## 7. Configuration & Dependencies
 
-### ⚙️ Issue #35: No MSRV (Minimum Supported Rust Version) specified
+### ✅ Issue #35: No MSRV (Minimum Supported Rust Version) specified [RESOLVED]
 
-**Type**: Build System  
-**Priority**: Medium  
-**Estimated Effort**: 1 hour  
+**Type**: Configuration
+**Priority**: Medium
+**Status**: **RESOLVED** (February 10, 2026)
 
-**Description**:
-The project doesn't specify a minimum Rust version, which can lead to compatibility issues.
-
-**Recommended Fix**:
-```toml
-[package]
-rust-version = "1.75"  # Match README claim
-```
-
-**Related Issues**: None
+**Resolution**: Added `rust-version = "1.75"` to `[workspace.package]` in Cargo.toml. This matches the minimum Rust version required for the project's use of edition 2021 features and workspace dependencies.
 
 ---
 
@@ -2138,26 +1858,20 @@ let decisions: Vec<_> = self.rules
 
 ---
 
-### ⚡ Issue #40: No caching for repeated policy evaluations
+### ✅ Issue #40: No caching for repeated policy evaluations [RESOLVED]
 
-**Type**: Performance  
-**Priority**: Medium  
-**Estimated Effort**: 2-3 days  
+**Type**: Performance
+**Priority**: Medium
+**Status**: **RESOLVED** (February 10, 2026)
 
-**Description**:
-Identical policy requests are re-evaluated from scratch every time.
-
-**Recommendation**:
-```rust
-use moka::future::Cache;
-
-pub struct PolicyEngine {
-    cache: Cache<PolicyRequest, PolicyDecision>,
-    // ...
-}
-```
-
-**Related Issues**: #13, #17
+**Resolution**: Added `PolicyCache` with `Mutex`-based interior mutability to `PolicyEngine` in `src/policy/mod.rs`:
+- `CacheConfig` with configurable max_entries (default 1000), TTL (default 60s), enable/disable
+- Thread-safe LRU cache with automatic expired entry eviction
+- Cache key based on agent_id + role + action + resource
+- Cache auto-invalidated on rule changes (add_rule, load_rules)
+- `cache_stats()` returns (hits, misses, current_entries) for monitoring
+- `invalidate_cache()` for manual cache clearing
+- 4 new tests for cache hit, invalidation, disabled mode, and config defaults
 
 ---
 

@@ -431,7 +431,7 @@ impl SnapshotBackend for InMemorySnapshotBackend {
             .await
             .get(id)
             .cloned()
-            .ok_or_else(|| SnapshotError::NotFound(*id))
+            .ok_or(SnapshotError::NotFound(*id))
     }
 
     async fn list_snapshots(&self, agent_id: &str) -> SnapshotResult<Vec<SnapshotId>> {

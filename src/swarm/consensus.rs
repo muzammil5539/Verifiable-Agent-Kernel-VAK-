@@ -68,8 +68,10 @@ pub enum ConsensusError {
 
 /// Types of consensus mechanisms
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum ConsensusMechanism {
     /// Simple majority (>50%)
+    #[default]
     SimpleMajority,
     /// Super majority (>66%)
     SuperMajority,
@@ -85,11 +87,6 @@ pub enum ConsensusMechanism {
     QuadraticMajority,
 }
 
-impl Default for ConsensusMechanism {
-    fn default() -> Self {
-        ConsensusMechanism::SimpleMajority
-    }
-}
 
 // ============================================================================
 // Consensus Configuration
@@ -590,7 +587,7 @@ impl ConsensusProtocol for BftConsensus {
                 }
                 continue; // Skip duplicate votes
             }
-            seen_agents.insert(vote.agent_id.clone(), vote.direction.clone());
+            seen_agents.insert(vote.agent_id.clone(), vote.direction);
 
             match vote.direction {
                 VoteDirection::For => votes_for += vote.weight,

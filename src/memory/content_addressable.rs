@@ -107,8 +107,10 @@ pub struct ContentId {
 /// Supported hash algorithms
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum HashAlgorithm {
     /// SHA-256 (default)
+    #[default]
     Sha256,
     /// SHA-384
     Sha384,
@@ -116,11 +118,6 @@ pub enum HashAlgorithm {
     Sha512,
 }
 
-impl Default for HashAlgorithm {
-    fn default() -> Self {
-        HashAlgorithm::Sha256
-    }
-}
 
 impl ContentId {
     /// Create a new ContentId from raw hash bytes

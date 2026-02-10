@@ -206,10 +206,10 @@ impl S3AuditBackend {
         for entry in entries {
             let json = serde_json::to_string(entry)
                 .map_err(|e| AuditError::SerializationError(e.to_string()))?;
-            writeln!(encoder, "{}", json).map_err(|e| AuditError::IoError(e))?;
+            writeln!(encoder, "{}", json).map_err(AuditError::IoError)?;
         }
 
-        encoder.finish().map_err(|e| AuditError::IoError(e))
+        encoder.finish().map_err(AuditError::IoError)
     }
 
     /// Serialize entries to JSONL format
@@ -219,7 +219,7 @@ impl S3AuditBackend {
         for entry in entries {
             let json = serde_json::to_string(entry)
                 .map_err(|e| AuditError::SerializationError(e.to_string()))?;
-            writeln!(output, "{}", json).map_err(|e| AuditError::IoError(e))?;
+            writeln!(output, "{}", json).map_err(AuditError::IoError)?;
         }
 
         Ok(output)

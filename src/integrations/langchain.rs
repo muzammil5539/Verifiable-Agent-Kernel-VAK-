@@ -676,11 +676,10 @@ impl LangChainAdapter {
         // Penalize if action seems risky without proper justification
         let risky_actions = ["delete", "write", "execute", "modify", "remove"];
         let action_lower = action.to_lowercase();
-        if risky_actions.iter().any(|r| action_lower.contains(r)) {
-            if ctx.reasoning_steps.len() < 3 || !ctx.has_plan {
+        if risky_actions.iter().any(|r| action_lower.contains(r))
+            && (ctx.reasoning_steps.len() < 3 || !ctx.has_plan) {
                 score -= 0.2;
             }
-        }
 
         score.clamp(0.0, 1.0)
     }

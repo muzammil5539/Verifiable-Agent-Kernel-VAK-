@@ -97,8 +97,10 @@ pub struct ContentId {
 
 /// Content codec types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum Codec {
     /// Raw binary data
+    #[default]
     Raw,
     /// DAG-CBOR (structured data)
     DagCbor,
@@ -108,11 +110,6 @@ pub enum Codec {
     Protobuf,
 }
 
-impl Default for Codec {
-    fn default() -> Self {
-        Codec::Raw
-    }
-}
 
 impl ContentId {
     /// Create a new CID from content

@@ -43,25 +43,24 @@ use tokio::sync::mpsc;
 
 /// Replication mode for multi-region setup
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum ReplicationMode {
     /// Active-Active: Write to all regions simultaneously
     ActiveActive,
     /// Active-Passive: Write to primary, replicate asynchronously to replicas
+    #[default]
     ActivePassive,
     /// Primary-Only: Write only to primary with manual failover
     PrimaryOnly,
 }
 
-impl Default for ReplicationMode {
-    fn default() -> Self {
-        Self::ActivePassive
-    }
-}
 
 /// Failover strategy when primary region is unavailable
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum FailoverStrategy {
     /// Automatic failover to healthy replica
+    #[default]
     Automatic,
     /// Manual failover requires explicit trigger
     Manual,
@@ -69,11 +68,6 @@ pub enum FailoverStrategy {
     FailClosed,
 }
 
-impl Default for FailoverStrategy {
-    fn default() -> Self {
-        Self::Automatic
-    }
-}
 
 /// Configuration for a single region
 #[derive(Debug, Clone, Serialize, Deserialize)]

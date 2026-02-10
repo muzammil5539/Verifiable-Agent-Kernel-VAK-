@@ -503,12 +503,14 @@ impl Default for AuditConfig {
 /// Log level for audit entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum LogLevel {
     /// Trace level - most verbose.
     Trace,
     /// Debug level.
     Debug,
     /// Info level - default.
+    #[default]
     Info,
     /// Warning level.
     Warn,
@@ -516,11 +518,6 @@ pub enum LogLevel {
     Error,
 }
 
-impl Default for LogLevel {
-    fn default() -> Self {
-        Self::Info
-    }
-}
 
 /// Policy engine configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -565,18 +562,15 @@ impl Default for PolicyConfig {
 /// Default policy decision when no policy matches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum DefaultPolicyDecision {
     /// Allow by default (open policy).
     Allow,
     /// Deny by default (closed policy - recommended).
+    #[default]
     Deny,
 }
 
-impl Default for DefaultPolicyDecision {
-    fn default() -> Self {
-        Self::Deny
-    }
-}
 
 /// Resource limits configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]

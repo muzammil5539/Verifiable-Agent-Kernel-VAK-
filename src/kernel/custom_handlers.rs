@@ -257,7 +257,7 @@ impl CustomHandlerRegistry {
         // Execute with timeout
         let handler = Arc::clone(handler);
         let call_clone = tool_call.clone();
-        let agent_clone = agent_id.clone();
+        let agent_clone = *agent_id;
 
         let result = tokio::time::timeout(
             std::time::Duration::from_millis(self.default_timeout_ms),

@@ -139,8 +139,10 @@ impl NodeStats {
 
 /// State of a node in the search tree
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum NodeState {
     /// Node is unexplored
+    #[default]
     Unexplored,
     /// Node is being expanded
     Expanding,
@@ -152,11 +154,6 @@ pub enum NodeState {
     DeadEnd,
 }
 
-impl Default for NodeState {
-    fn default() -> Self {
-        NodeState::Unexplored
-    }
-}
 
 /// A node in the Monte Carlo Tree Search
 #[derive(Debug, Clone, Serialize, Deserialize)]

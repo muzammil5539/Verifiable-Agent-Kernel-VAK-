@@ -90,13 +90,28 @@ struct SkillOutput {
 
 impl SkillOutput {
     fn success(result: String) -> Self {
-        Self { success: true, result: Some(result), valid: None, error: None }
+        Self {
+            success: true,
+            result: Some(result),
+            valid: None,
+            error: None,
+        }
     }
     fn validation(valid: bool, message: String) -> Self {
-        Self { success: true, result: Some(message), valid: Some(valid), error: None }
+        Self {
+            success: true,
+            result: Some(message),
+            valid: Some(valid),
+            error: None,
+        }
     }
     fn error(msg: &str) -> Self {
-        Self { success: false, result: None, valid: None, error: Some(String::from(msg)) }
+        Self {
+            success: false,
+            result: None,
+            valid: None,
+            error: Some(String::from(msg)),
+        }
     }
 }
 
@@ -173,24 +188,20 @@ fn process_input(input: &str) -> SkillOutput {
                 Err(e) => SkillOutput::validation(false, format!("Invalid JSON: {}", e)),
             }
         }
-        "pretty" => {
-            match serde_json::from_str::<serde_json::Value>(&input.params.json) {
-                Ok(val) => match serde_json::to_string_pretty(&val) {
-                    Ok(pretty) => SkillOutput::success(pretty),
-                    Err(e) => SkillOutput::error(&format!("Formatting error: {}", e)),
-                },
-                Err(e) => SkillOutput::error(&format!("Parse error: {}", e)),
-            }
-        }
-        "minify" => {
-            match serde_json::from_str::<serde_json::Value>(&input.params.json) {
-                Ok(val) => match serde_json::to_string(&val) {
-                    Ok(minified) => SkillOutput::success(minified),
-                    Err(e) => SkillOutput::error(&format!("Formatting error: {}", e)),
-                },
-                Err(e) => SkillOutput::error(&format!("Parse error: {}", e)),
-            }
-        }
+        "pretty" => match serde_json::from_str::<serde_json::Value>(&input.params.json) {
+            Ok(val) => match serde_json::to_string_pretty(&val) {
+                Ok(pretty) => SkillOutput::success(pretty),
+                Err(e) => SkillOutput::error(&format!("Formatting error: {}", e)),
+            },
+            Err(e) => SkillOutput::error(&format!("Parse error: {}", e)),
+        },
+        "minify" => match serde_json::from_str::<serde_json::Value>(&input.params.json) {
+            Ok(val) => match serde_json::to_string(&val) {
+                Ok(minified) => SkillOutput::success(minified),
+                Err(e) => SkillOutput::error(&format!("Formatting error: {}", e)),
+            },
+            Err(e) => SkillOutput::error(&format!("Parse error: {}", e)),
+        },
         "extract" => {
             if input.params.path.is_empty() {
                 return SkillOutput::error("Path is required for extract action");
@@ -240,7 +251,9 @@ fn process_input(input: &str) -> SkillOutput {
                 _ => SkillOutput::error("Could not parse one or both JSON inputs"),
             }
         }
-        _ => SkillOutput::error("Unknown action. Supported: validate, pretty, minify, extract, merge, diff"),
+        _ => SkillOutput::error(
+            "Unknown action. Supported: validate, pretty, minify, extract, merge, diff",
+        ),
     }
 }
 

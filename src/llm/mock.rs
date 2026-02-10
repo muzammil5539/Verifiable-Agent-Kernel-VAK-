@@ -419,8 +419,8 @@ impl LlmProvider for MockLlmProvider {
                 let seed = text.len() as f32 + i as f32;
                 (0..embeddings.dimension)
                     .map(|j| {
-                        let value = ((seed + j as f32) * 0.1).sin() * 0.5;
-                        value
+                        
+                        ((seed + j as f32) * 0.1).sin() * 0.5
                     })
                     .collect()
             })

@@ -498,7 +498,9 @@ impl Z3FormalVerifier {
                     let name = parts[1].to_string();
                     let value_str = parts
                         .last()
-                        .ok_or_else(|| Z3Error::ParseError("Missing value in model line".to_string()))?
+                        .ok_or_else(|| {
+                            Z3Error::ParseError("Missing value in model line".to_string())
+                        })?
                         .trim_end_matches(')');
 
                     let value = if let Ok(i) = value_str.parse::<i64>() {

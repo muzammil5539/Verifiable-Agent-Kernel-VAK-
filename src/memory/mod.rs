@@ -645,9 +645,7 @@ impl InMemoryMerkleStore {
 
         // Simplified Merkle root computation
         // In production, use a proper sparse Merkle tree
-        let mut hashes: Vec<[u8; 32]> = store
-            .iter()
-            .map(|(_k, v)| {
+        let mut hashes: Vec<[u8; 32]> = store.values().map(|v| {
                 // Hash just the value data for the leaf
                 MerkleProof::hash_leaf(&v.data)
             })

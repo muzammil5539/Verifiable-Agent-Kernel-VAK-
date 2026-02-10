@@ -257,7 +257,7 @@ impl DatalogConstraint {
     pub fn with_arity(mut self, predicate: impl Into<String>, arity: usize) -> Self {
         self.allowed_arities
             .entry(predicate.into())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(arity);
         self
     }

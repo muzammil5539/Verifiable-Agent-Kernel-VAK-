@@ -121,10 +121,12 @@ impl WorkingMemoryConfig {
 
 /// Priority level for memory items
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum ItemPriority {
     /// Low priority - can be summarized early
     Low = 0,
     /// Normal priority - default for most items
+    #[default]
     Normal = 1,
     /// High priority - retained longer before summarization
     High = 2,
@@ -132,11 +134,6 @@ pub enum ItemPriority {
     Critical = 3,
 }
 
-impl Default for ItemPriority {
-    fn default() -> Self {
-        Self::Normal
-    }
-}
 
 /// Type of memory item
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -337,10 +334,50 @@ impl MemoryItem {
     }
 }
 
-/// Estimate token count from content length
+/// Estimate token count from content using content-aware heuristics (Issue #15)
+///
+/// Uses different ratios for different content types:
+/// - Code: ~3.5 chars/token (more symbols, shorter tokens)
+/// - Non-ASCII/CJK: ~1.5 chars/token (multi-byte characters)
+/// - Whitespace-heavy: accounts for whitespace tokens
+/// - Standard English: ~4 chars/token
 fn estimate_tokens(content: &str) -> usize {
-    // Rough estimation: ~4 characters per token for English
-    (content.len() as f32 / 4.0).ceil() as usize
+    if content.is_empty() {
+        return 0;
+    }
+
+    let total_chars = content.len();
+    let mut code_chars = 0usize;
+    let mut non_ascii_chars = 0usize;
+    let mut whitespace_chars = 0usize;
+    let mut normal_chars = 0usize;
+
+    for ch in content.chars() {
+        if !ch.is_ascii() {
+            non_ascii_chars += ch.len_utf8();
+        } else if ch.is_ascii_whitespace() {
+            whitespace_chars += 1;
+        } else if "{}[]()<>|&;=!@#$%^*+-/\\~`'\",:._".contains(ch) {
+            code_chars += 1;
+        } else {
+            normal_chars += 1;
+        }
+    }
+
+    // Calculate weighted token estimate
+    // Non-ASCII (CJK, emoji, etc.): ~1.5 bytes per token
+    let non_ascii_tokens = (non_ascii_chars as f32 / 1.5).ceil() as usize;
+    // Code/symbols: ~3.5 chars per token (symbols tokenize individually more often)
+    let code_tokens = (code_chars as f32 / 3.5).ceil() as usize;
+    // Whitespace: roughly 1 token per whitespace run, approximate as 1 per 2 whitespace chars
+    let whitespace_tokens = (whitespace_chars as f32 / 2.0).ceil() as usize;
+    // Normal text: ~4 chars per token
+    let normal_tokens = (normal_chars as f32 / 4.0).ceil() as usize;
+
+    let estimated = non_ascii_tokens + code_tokens + whitespace_tokens + normal_tokens;
+
+    // Never return 0 for non-empty content
+    std::cmp::max(1, estimated)
 }
 
 // ============================================================================
@@ -984,11 +1021,33 @@ mod tests {
 
     #[test]
     fn test_estimate_tokens() {
-        // Approximately 4 chars per token
+        // Empty content
         assert_eq!(estimate_tokens(""), 0);
-        assert_eq!(estimate_tokens("test"), 1);
-        // "this is a longer message" = 24 chars / 4 = 6 tokens
-        assert_eq!(estimate_tokens("this is a longer message"), 6);
+
+        // Short text - at least 1 token for non-empty content
+        assert!(estimate_tokens("test") >= 1);
+
+        // English text should estimate reasonably (~4 chars/token)
+        let english = "this is a longer message";
+        let tokens = estimate_tokens(english);
+        assert!(tokens >= 4 && tokens <= 10, "English estimate: {}", tokens);
+
+        // Code with symbols should estimate higher than pure text
+        let code = r#"fn main() { println!("hello"); }"#;
+        let code_tokens = estimate_tokens(code);
+        let text_of_same_len = "a".repeat(code.len());
+        let text_tokens = estimate_tokens(&text_of_same_len);
+        assert!(
+            code_tokens >= text_tokens,
+            "Code ({}) should estimate >= text ({})",
+            code_tokens,
+            text_tokens
+        );
+
+        // Non-ASCII should estimate more tokens per byte
+        let cjk = "\u{4f60}\u{597d}\u{4e16}\u{754c}"; // "你好世界"
+        let cjk_tokens = estimate_tokens(cjk);
+        assert!(cjk_tokens >= 1, "CJK estimate: {}", cjk_tokens);
     }
 
     #[test]

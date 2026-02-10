@@ -397,7 +397,7 @@ impl CodeAuditor {
                     self.audit_logger.log(
                         "code-auditor",
                         "report_finding",
-                        &format!("{}:{}", file_path, line_num + 1),
+                        format!("{}:{}", file_path, line_num + 1),
                         AuditDecision::Allowed,
                     );
                 }
@@ -663,7 +663,7 @@ impl CodeAuditor {
     fn get_episodic_root_hash(&self) -> String {
         self.episodic_memory
             .get_chain_root_hash()
-            .map(|h| hex::encode(h))
+            .map(hex::encode)
             .unwrap_or_else(|| "0".repeat(64))
     }
 }

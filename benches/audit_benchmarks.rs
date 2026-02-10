@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use vak::audit::{AuditBackend, AuditDecision, AuditLogger, FileAuditBackend};
 use std::fs;
 use std::path::PathBuf;
+use vak::audit::{AuditBackend, AuditDecision, AuditLogger, FileAuditBackend};
 
 fn setup_benchmark(temp_dir: &PathBuf) -> PathBuf {
     let backend_path = temp_dir.join("audit_bench");

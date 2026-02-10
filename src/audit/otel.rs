@@ -750,7 +750,7 @@ impl OtlpExporter {
         });
 
         self.client
-            .post(&format!("{}/v1/traces", self.endpoint))
+            .post(format!("{}/v1/traces", self.endpoint))
             .header("Content-Type", "application/json")
             .json(&payload)
             .send()

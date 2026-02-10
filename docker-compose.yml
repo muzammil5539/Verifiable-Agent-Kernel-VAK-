@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  vak:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - VAK_POLICY_PATH=/app/policies
+      - VAK_AUDIT_PATH=/app/audit
+      - VAK_SKILLS_PATH=/app/skills
+      - VAK_LOG_LEVEL=info
+      - RUST_LOG=vak=info
+    volumes:
+      - ./policies:/app/policies:ro
+      - ./prompts:/app/prompts:ro
+      - vak-audit:/app/audit
+      - vak-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+
+volumes:
+  vak-audit:
+    driver: local
+  vak-data:
+    driver: local

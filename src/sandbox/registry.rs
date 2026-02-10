@@ -566,7 +566,7 @@ impl SkillSignatureVerifier {
                 })?;
 
             let wasm_hash = Sha256::digest(&wasm_bytes);
-            hasher.update(&wasm_hash);
+            hasher.update(wasm_hash);
         } else {
             // For manifests without WASM yet, use the path
             hasher.update(manifest.wasm_path.to_string_lossy().as_bytes());
@@ -780,7 +780,7 @@ impl SkillRegistry {
             if let Ok(entries) = glob::glob(&pattern) {
                 for entry in entries.flatten() {
                     // Skip non-manifest files (e.g., test files, config files)
-                    if entry.file_name().map_or(false, |n| {
+                    if entry.file_name().is_some_and(|n| {
                         let name = n.to_string_lossy();
                         name.starts_with('_') || name.contains("test")
                     }) {
@@ -881,24 +881,20 @@ impl SkillRegistry {
         }
 
         // Check filesystem permissions
-        Self::check_glob_permissions(
-            &requested.filesystem,
-            &allowed.filesystem,
-            |path| PermissionError::FilesystemPathNotAllowed {
+        Self::check_glob_permissions(&requested.filesystem, &allowed.filesystem, |path| {
+            PermissionError::FilesystemPathNotAllowed {
                 skill_id: *skill_id,
                 path: path.to_string(),
-            },
-        )?;
+            }
+        })?;
 
         // Check env var permissions
-        Self::check_glob_permissions(
-            &requested.env_vars,
-            &allowed.env_vars,
-            |var| PermissionError::EnvVarNotAllowed {
+        Self::check_glob_permissions(&requested.env_vars, &allowed.env_vars, |var| {
+            PermissionError::EnvVarNotAllowed {
                 skill_id: *skill_id,
                 var: var.to_string(),
-            },
-        )?;
+            }
+        })?;
 
         // Check memory limit
         if requested.max_memory_mb > allowed.max_memory_mb {

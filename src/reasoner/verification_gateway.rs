@@ -202,10 +202,12 @@ pub enum ActionCategory {
 
 /// Risk level for an action
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum RiskLevel {
     /// Low risk - logging only
     Low = 0,
     /// Medium risk - soft verification
+    #[default]
     Medium = 1,
     /// High risk - strict verification required
     High = 2,
@@ -213,11 +215,6 @@ pub enum RiskLevel {
     Critical = 3,
 }
 
-impl Default for RiskLevel {
-    fn default() -> Self {
-        Self::Medium
-    }
-}
 
 // ============================================================================
 // High-Stakes Action Definition

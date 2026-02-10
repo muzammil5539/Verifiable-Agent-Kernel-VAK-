@@ -55,7 +55,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Policy effect: allow or deny
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -293,12 +293,180 @@ impl Default for RateLimiter {
     }
 }
 
+// =============================================================================
+// Policy Evaluation Cache (Issue #40)
+// =============================================================================
+
+/// Configuration for policy evaluation caching
+#[derive(Debug, Clone)]
+pub struct CacheConfig {
+    /// Whether caching is enabled
+    pub enabled: bool,
+    /// Maximum number of cached entries
+    pub max_entries: usize,
+    /// Time-to-live for cache entries
+    pub ttl: Duration,
+}
+
+impl Default for CacheConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_entries: 1000,
+            ttl: Duration::from_secs(60),
+        }
+    }
+}
+
+impl CacheConfig {
+    /// Create a disabled cache config
+    pub fn disabled() -> Self {
+        Self {
+            enabled: false,
+            max_entries: 0,
+            ttl: Duration::ZERO,
+        }
+    }
+}
+
+/// A cached policy decision with expiry time
+#[derive(Debug, Clone)]
+struct CachedDecision {
+    decision: PolicyDecision,
+    expires_at: Instant,
+}
+
+/// LRU-style policy evaluation cache (Issue #40)
+#[derive(Debug)]
+struct PolicyCache {
+    inner: Mutex<PolicyCacheInner>,
+}
+
+#[derive(Debug)]
+struct PolicyCacheInner {
+    entries: HashMap<String, CachedDecision>,
+    config: CacheConfig,
+    hits: u64,
+    misses: u64,
+}
+
+impl PolicyCache {
+    fn new(config: CacheConfig) -> Self {
+        let max_entries = config.max_entries;
+        Self {
+            inner: Mutex::new(PolicyCacheInner {
+                entries: HashMap::with_capacity(max_entries),
+                config,
+                hits: 0,
+                misses: 0,
+            }),
+        }
+    }
+
+    /// Build a cache key from evaluation parameters
+    fn cache_key(resource: &str, action: &str, context: &PolicyContext) -> String {
+        format!(
+            "{}:{}:{}:{}",
+            context.agent_id, context.role, action, resource
+        )
+    }
+
+    /// Look up a cached decision
+    fn get(&self, key: &str) -> Option<PolicyDecision> {
+        let mut inner = match self.inner.lock() {
+            Ok(g) => g,
+            Err(_) => return None,
+        };
+
+        if !inner.config.enabled {
+            return None;
+        }
+
+        let result = inner.entries.get(key).and_then(|cached| {
+            if Instant::now() < cached.expires_at {
+                Some(cached.decision.clone())
+            } else {
+                None
+            }
+        });
+
+        match result {
+            Some(decision) => {
+                inner.hits += 1;
+                Some(decision)
+            }
+            None => {
+                // Remove expired entry if it exists
+                inner.entries.remove(key);
+                inner.misses += 1;
+                None
+            }
+        }
+    }
+
+    /// Insert a decision into the cache
+    fn insert(&self, key: String, decision: PolicyDecision) {
+        let mut inner = match self.inner.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+
+        if !inner.config.enabled {
+            return;
+        }
+
+        // Evict expired entries if at capacity
+        if inner.entries.len() >= inner.config.max_entries {
+            let now = Instant::now();
+            inner.entries.retain(|_, v| now < v.expires_at);
+
+            // If still at capacity, evict oldest
+            if inner.entries.len() >= inner.config.max_entries {
+                if let Some(oldest_key) = inner
+                    .entries
+                    .iter()
+                    .min_by_key(|(_, v)| v.expires_at)
+                    .map(|(k, _)| k.clone())
+                {
+                    inner.entries.remove(&oldest_key);
+                }
+            }
+        }
+
+        let ttl = inner.config.ttl;
+        inner.entries.insert(
+            key,
+            CachedDecision {
+                decision,
+                expires_at: Instant::now() + ttl,
+            },
+        );
+    }
+
+    /// Invalidate the entire cache (called when rules change)
+    fn invalidate(&self) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.entries.clear();
+        }
+    }
+
+    /// Get cache statistics
+    fn stats(&self) -> (u64, u64, usize) {
+        match self.inner.lock() {
+            Ok(inner) => (inner.hits, inner.misses, inner.entries.len()),
+            Err(_) => (0, 0, 0),
+        }
+    }
+}
+
 /// The ABAC Policy Engine
 #[derive(Debug)]
 pub struct PolicyEngine {
     rules: Vec<PolicyRule>,
     /// Rate limiter for preventing DoS attacks (Issue #13)
     rate_limiter: RateLimiter,
+    /// Evaluation result cache (Issue #40)
+    cache: PolicyCache,
 }
 
 impl Default for PolicyEngine {
@@ -308,11 +476,12 @@ impl Default for PolicyEngine {
 }
 
 impl PolicyEngine {
-    /// Create a new empty policy engine with default rate limiting
+    /// Create a new empty policy engine with default rate limiting and caching
     pub fn new() -> Self {
         Self {
             rules: Vec::new(),
             rate_limiter: RateLimiter::default(),
+            cache: PolicyCache::new(CacheConfig::default()),
         }
     }
 
@@ -321,6 +490,16 @@ impl PolicyEngine {
         Self {
             rules: Vec::new(),
             rate_limiter: RateLimiter::new(config),
+            cache: PolicyCache::new(CacheConfig::default()),
+        }
+    }
+
+    /// Create a new policy engine with custom cache configuration
+    pub fn with_cache(config: CacheConfig) -> Self {
+        Self {
+            rules: Vec::new(),
+            rate_limiter: RateLimiter::default(),
+            cache: PolicyCache::new(config),
         }
     }
 
@@ -329,6 +508,7 @@ impl PolicyEngine {
         Self {
             rules: Vec::new(),
             rate_limiter: RateLimiter::new(RateLimitConfig::permissive()),
+            cache: PolicyCache::new(CacheConfig::disabled()),
         }
     }
 
@@ -340,6 +520,7 @@ impl PolicyEngine {
             serde_yaml::from_str(&content).map_err(|e| PolicyError::ParseError(e.to_string()))?;
         self.rules = config.rules;
         self.rules.sort_by(|a, b| b.priority.cmp(&a.priority));
+        self.cache.invalidate(); // Rules changed, clear cache
         Ok(())
     }
 
@@ -347,6 +528,7 @@ impl PolicyEngine {
     pub fn add_rule(&mut self, rule: PolicyRule) {
         self.rules.push(rule);
         self.rules.sort_by(|a, b| b.priority.cmp(&a.priority));
+        self.cache.invalidate(); // Rules changed, clear cache
     }
 
     /// Check if the engine has any Allow rules (Issue #19: Default deny validation)
@@ -388,6 +570,19 @@ impl PolicyEngine {
         warnings
     }
 
+    /// Get cache statistics: (hits, misses, current_entries) (Issue #40)
+    pub fn cache_stats(&self) -> (u64, u64, usize) {
+        self.cache.stats()
+    }
+
+    /// Invalidate the evaluation cache (Issue #40)
+    ///
+    /// Call this when external factors change that may affect policy decisions
+    /// (e.g., context changes, reputation updates).
+    pub fn invalidate_cache(&mut self) {
+        self.cache.invalidate();
+    }
+
     /// Evaluate a request against loaded policies with rate limiting
     ///
     /// Security: Implements "deny on error" behavior - if any condition evaluation
@@ -409,7 +604,32 @@ impl PolicyEngine {
     ///
     /// Security: Implements "deny on error" behavior - if any condition evaluation
     /// fails, the request is denied to prevent security bypasses.
+    ///
+    /// Results are cached for repeated evaluations with the same parameters (Issue #40).
     pub fn evaluate(
+        &self,
+        resource: &str,
+        action: &str,
+        context: &PolicyContext,
+    ) -> PolicyDecision {
+        // Check cache first (Issue #40)
+        let cache_key = PolicyCache::cache_key(resource, action, context);
+        if let Some(cached) = self.cache.get(&cache_key) {
+            return cached;
+        }
+
+        let decision = self.evaluate_uncached(resource, action, context);
+
+        // Only cache successful evaluations (no errors)
+        if decision.evaluation_errors.is_empty() {
+            self.cache.insert(cache_key, decision.clone());
+        }
+
+        decision
+    }
+
+    /// Evaluate without consulting cache (internal)
+    fn evaluate_uncached(
         &self,
         resource: &str,
         action: &str,
@@ -487,12 +707,10 @@ impl PolicyEngine {
         if pattern == "*" {
             return true;
         }
-        if pattern.ends_with('*') {
-            let prefix = &pattern[..pattern.len() - 1];
+        if let Some(prefix) = pattern.strip_suffix('*') {
             return value.starts_with(prefix);
         }
-        if pattern.starts_with('*') {
-            let suffix = &pattern[1..];
+        if let Some(suffix) = pattern.strip_prefix('*') {
             return value.ends_with(suffix);
         }
         pattern == value
@@ -972,5 +1190,102 @@ mod tests {
         let warnings = engine.validate_config();
         assert!(!warnings.is_empty());
         assert!(warnings[0].contains("overly permissive"));
+    }
+
+    // Issue #40: Caching tests
+    #[test]
+    fn test_cache_hit() {
+        let mut engine = PolicyEngine::new();
+        engine.add_rule(PolicyRule {
+            id: "allow-read".to_string(),
+            effect: PolicyEffect::Allow,
+            resource_pattern: "files/*".to_string(),
+            action_pattern: "read".to_string(),
+            conditions: vec![],
+            priority: 1,
+            description: None,
+        });
+
+        let ctx = test_context();
+
+        // First evaluation is a cache miss
+        let decision1 = engine.evaluate("files/test.txt", "read", &ctx);
+        assert!(decision1.allowed);
+
+        let (hits, misses, _) = engine.cache_stats();
+        assert_eq!(hits, 0);
+        assert_eq!(misses, 1);
+
+        // Second evaluation should be a cache hit
+        let decision2 = engine.evaluate("files/test.txt", "read", &ctx);
+        assert!(decision2.allowed);
+
+        let (hits, misses, _) = engine.cache_stats();
+        assert_eq!(hits, 1);
+        assert_eq!(misses, 1);
+    }
+
+    #[test]
+    fn test_cache_invalidated_on_rule_change() {
+        let mut engine = PolicyEngine::new();
+        engine.add_rule(PolicyRule {
+            id: "allow-read".to_string(),
+            effect: PolicyEffect::Allow,
+            resource_pattern: "files/*".to_string(),
+            action_pattern: "read".to_string(),
+            conditions: vec![],
+            priority: 1,
+            description: None,
+        });
+
+        let ctx = test_context();
+        engine.evaluate("files/test.txt", "read", &ctx);
+
+        let (_, _, entries) = engine.cache_stats();
+        assert_eq!(entries, 1);
+
+        // Adding a new rule should invalidate cache
+        engine.add_rule(PolicyRule {
+            id: "deny-write".to_string(),
+            effect: PolicyEffect::Deny,
+            resource_pattern: "*".to_string(),
+            action_pattern: "write".to_string(),
+            conditions: vec![],
+            priority: 2,
+            description: None,
+        });
+
+        let (_, _, entries) = engine.cache_stats();
+        assert_eq!(entries, 0);
+    }
+
+    #[test]
+    fn test_cache_disabled() {
+        let mut engine = PolicyEngine::new_unlimited(); // Cache disabled for unlimited
+        engine.add_rule(PolicyRule {
+            id: "allow-read".to_string(),
+            effect: PolicyEffect::Allow,
+            resource_pattern: "files/*".to_string(),
+            action_pattern: "read".to_string(),
+            conditions: vec![],
+            priority: 1,
+            description: None,
+        });
+
+        let ctx = test_context();
+        engine.evaluate("files/test.txt", "read", &ctx);
+        engine.evaluate("files/test.txt", "read", &ctx);
+
+        let (hits, _, entries) = engine.cache_stats();
+        assert_eq!(hits, 0);
+        assert_eq!(entries, 0);
+    }
+
+    #[test]
+    fn test_cache_config_defaults() {
+        let config = CacheConfig::default();
+        assert!(config.enabled);
+        assert_eq!(config.max_entries, 1000);
+        assert_eq!(config.ttl, Duration::from_secs(60));
     }
 }

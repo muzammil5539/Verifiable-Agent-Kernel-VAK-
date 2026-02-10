@@ -373,8 +373,10 @@ pub struct SkillReview {
 /// Sort order for search results
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum SortOrder {
     /// Most relevant first
+    #[default]
     Relevance,
     /// Most downloads first
     Downloads,
@@ -388,11 +390,6 @@ pub enum SortOrder {
     Name,
 }
 
-impl Default for SortOrder {
-    fn default() -> Self {
-        Self::Relevance
-    }
-}
 
 /// Query for searching skills
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

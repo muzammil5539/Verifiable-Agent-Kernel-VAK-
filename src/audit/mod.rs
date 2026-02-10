@@ -158,6 +158,15 @@ pub trait AuditBackend: Send + Sync + std::fmt::Debug {
 
     /// Get entry by ID
     fn get_entry(&self, id: u64) -> Result<Option<AuditEntry>, AuditError>;
+
+    /// Evict the oldest N entries from the backend (Issue #20)
+    ///
+    /// Backends that don't support in-place eviction should return an error.
+    fn evict_oldest(&mut self, _count: usize) -> Result<(), AuditError> {
+        Err(AuditError::BackendError(
+            "Eviction not supported by this backend".to_string(),
+        ))
+    }
 }
 
 /// Errors that can occur in audit operations
@@ -178,6 +187,10 @@ pub enum AuditError {
     /// Chain verification failed
     #[error("Chain verification failed: {0}")]
     ChainVerificationFailed(String),
+
+    /// Backend operation error (Issue #20)
+    #[error("Backend error: {0}")]
+    BackendError(String),
 }
 
 // ============================================================================
@@ -252,11 +265,13 @@ impl AuditBackend for MemoryAuditBackend {
     fn get_entry(&self, id: u64) -> Result<Option<AuditEntry>, AuditError> {
         Ok(self.entries.iter().find(|e| e.id == id).cloned())
     }
-}
 
-// ============================================================================
-// File Backend (Issue #3 - Persistent Storage)
-// ============================================================================
+    fn evict_oldest(&mut self, count: usize) -> Result<(), AuditError> {
+        let drain_count = std::cmp::min(count, self.entries.len());
+        self.entries.drain(..drain_count);
+        Ok(())
+    }
+}
 
 /// File-based audit backend with append-only storage
 ///
@@ -317,9 +332,9 @@ impl FileAuditBackend {
                 .open(&self.current_file)?;
             self.file_handle = Some(file);
         }
-        self.file_handle
-            .as_mut()
-            .ok_or_else(|| AuditError::BackendNotAvailable("File handle failed to initialize".to_string()))
+        self.file_handle.as_mut().ok_or_else(|| {
+            AuditError::BackendNotAvailable("File handle failed to initialize".to_string())
+        })
     }
 
     /// Rotate log file (create new file with timestamp)
@@ -783,7 +798,8 @@ impl AuditBackend for SqliteAuditBackend {
             .map_err(|e| AuditError::BackendNotAvailable(format!("Query: {}", e)))?;
 
         for row in rows {
-            let entry = row.map_err(|e| AuditError::BackendNotAvailable(format!("Row mapping: {}", e)))?;
+            let entry =
+                row.map_err(|e| AuditError::BackendNotAvailable(format!("Row mapping: {}", e)))?;
             f(&entry)?;
         }
         Ok(())
@@ -803,8 +819,13 @@ impl AuditBackend for SqliteAuditBackend {
             .query(params![id])
             .map_err(|e| AuditError::BackendNotAvailable(format!("Query: {}", e)))?;
 
-        match rows.next().map_err(|e| AuditError::BackendNotAvailable(format!("Row fetch: {}", e)))? {
-            Some(row) => Ok(Some(Self::row_to_entry(row).map_err(|e| AuditError::BackendNotAvailable(format!("Row mapping: {}", e)))?)),
+        match rows
+            .next()
+            .map_err(|e| AuditError::BackendNotAvailable(format!("Row fetch: {}", e)))?
+        {
+            Some(row) => Ok(Some(Self::row_to_entry(row).map_err(|e| {
+                AuditError::BackendNotAvailable(format!("Row mapping: {}", e))
+            })?)),
             None => Ok(None),
         }
     }
@@ -926,6 +947,42 @@ impl Default for AuditSigner {
 ///
 /// Now supports pluggable storage backends (Issue #3) for persistent
 /// audit trails that survive restarts.
+/// Configuration for audit log rotation (Issue #20)
+#[derive(Debug)]
+pub struct RotationConfig {
+    /// Maximum number of entries to keep in the primary backend.
+    /// When exceeded, oldest entries are archived before eviction.
+    pub max_entries: usize,
+    /// Optional archival backend for evicted entries.
+    /// If None, evicted entries are discarded.
+    pub archival_backend: Option<Box<dyn AuditBackend>>,
+    /// Number of entries to evict per rotation cycle.
+    /// Defaults to 10% of max_entries.
+    pub eviction_batch_size: usize,
+}
+
+impl RotationConfig {
+    /// Create a rotation config with a max entry limit
+    pub fn new(max_entries: usize) -> Self {
+        let eviction_batch_size = std::cmp::max(1, max_entries / 10);
+        Self {
+            max_entries,
+            archival_backend: None,
+            eviction_batch_size,
+        }
+    }
+
+    /// Create a rotation config with archival backend
+    pub fn with_archival(max_entries: usize, archival: Box<dyn AuditBackend>) -> Self {
+        let eviction_batch_size = std::cmp::max(1, max_entries / 10);
+        Self {
+            max_entries,
+            archival_backend: Some(archival),
+            eviction_batch_size,
+        }
+    }
+}
+
 pub struct AuditLogger {
     /// Storage backend for audit entries
     backend: Box<dyn AuditBackend>,
@@ -937,6 +994,10 @@ pub struct AuditLogger {
     chain_verified: bool,
     /// Optional signer for ed25519 signatures (Issue #51)
     signer: Option<AuditSigner>,
+    /// Optional rotation configuration (Issue #20)
+    rotation: Option<RotationConfig>,
+    /// Count of entries rotated out
+    rotated_count: u64,
 }
 
 impl std::fmt::Debug for AuditLogger {
@@ -945,6 +1006,11 @@ impl std::fmt::Debug for AuditLogger {
             .field("next_id", &self.next_id)
             .field("chain_verified", &self.chain_verified)
             .field("signing_enabled", &self.signer.is_some())
+            .field(
+                "rotation_enabled",
+                &self.rotation.as_ref().map(|r| r.max_entries),
+            )
+            .field("rotated_count", &self.rotated_count)
             .finish()
     }
 }
@@ -958,6 +1024,8 @@ impl AuditLogger {
             next_id: 1,
             chain_verified: true,
             signer: None,
+            rotation: None,
+            rotated_count: 0,
         }
     }
 
@@ -969,6 +1037,8 @@ impl AuditLogger {
             next_id: 1,
             chain_verified: true,
             signer: Some(AuditSigner::new()),
+            rotation: None,
+            rotated_count: 0,
         }
     }
 
@@ -989,6 +1059,8 @@ impl AuditLogger {
             next_id: 1,
             chain_verified: false,
             signer: None,
+            rotation: None,
+            rotated_count: 0,
         };
 
         // Verify chain integrity on startup and get last entry
@@ -1032,6 +1104,22 @@ impl AuditLogger {
     /// Enable signing with a specific signer
     pub fn set_signer(&mut self, signer: AuditSigner) {
         self.signer = Some(signer);
+    }
+
+    /// Configure rotation for this logger (Issue #20)
+    ///
+    /// When rotation is enabled, the logger will archive and evict
+    /// oldest entries when `max_entries` is exceeded.
+    ///
+    /// # Arguments
+    /// * `config` - Rotation configuration specifying limits and optional archival backend
+    pub fn set_rotation(&mut self, config: RotationConfig) {
+        self.rotation = Some(config);
+    }
+
+    /// Get the number of entries that have been rotated out
+    pub fn rotated_count(&self) -> u64 {
+        self.rotated_count
     }
 
     /// Get the public key if signing is enabled
@@ -1105,9 +1193,68 @@ impl AuditLogger {
         self.last_entry_cache = Some(entry);
         self.next_id += 1;
 
+        // Check if rotation is needed (Issue #20)
+        self.maybe_rotate();
+
         // SAFETY: We just set last_entry_cache to Some(entry)
         #[allow(clippy::unwrap_used)]
         self.last_entry_cache.as_ref().unwrap()
+    }
+
+    /// Perform rotation if configured and entry count exceeds limit (Issue #20)
+    fn maybe_rotate(&mut self) {
+        let (max_entries, eviction_batch_size) = match &self.rotation {
+            Some(config) => (config.max_entries, config.eviction_batch_size),
+            None => return,
+        };
+
+        let current_count = match self.backend.count() {
+            Ok(c) => c as usize,
+            Err(_) => return,
+        };
+
+        if current_count <= max_entries {
+            return;
+        }
+
+        let to_evict = std::cmp::min(eviction_batch_size, current_count - max_entries);
+
+        // Load entries to archive before eviction
+        let entries_to_archive = match self.backend.load_all() {
+            Ok(entries) => entries.into_iter().take(to_evict).collect::<Vec<_>>(),
+            Err(e) => {
+                tracing::error!("Failed to load entries for rotation: {:?}", e);
+                return;
+            }
+        };
+
+        // Archive to archival backend if configured
+        if let Some(ref mut archival) = self.rotation.as_mut().and_then(|r| r.archival_backend.as_mut()) {
+            for entry in &entries_to_archive {
+                if let Err(e) = archival.append(entry) {
+                    tracing::error!("Failed to archive audit entry {}: {:?}", entry.id, e);
+                }
+            }
+            if let Err(e) = archival.flush() {
+                tracing::error!("Failed to flush archival backend: {:?}", e);
+            }
+        }
+
+        // Evict from primary backend (for MemoryAuditBackend)
+        if let Err(e) = self.backend.evict_oldest(to_evict) {
+            tracing::warn!(
+                "Backend does not support eviction or eviction failed: {:?}. \
+                 Rotation will rely on external cleanup.",
+                e
+            );
+        } else {
+            self.rotated_count += to_evict as u64;
+            tracing::info!(
+                "Rotated {} audit entries (total rotated: {})",
+                to_evict,
+                self.rotated_count
+            );
+        }
     }
 
     /// Static hash computation function (for use before self is available)
@@ -1181,13 +1328,11 @@ impl AuditLogger {
         self.backend
             .for_each_entry(&mut verify_fn)
             .map_err(|e| match e {
-                AuditError::ChainVerificationFailed(msg) => {
-                    AuditVerificationError::BrokenChain {
-                        entry_id: 0,
-                        expected: String::new(),
-                        found: msg,
-                    }
-                }
+                AuditError::ChainVerificationFailed(msg) => AuditVerificationError::BrokenChain {
+                    entry_id: 0,
+                    expected: String::new(),
+                    found: msg,
+                },
                 e => AuditVerificationError::BrokenChain {
                     entry_id: 0,
                     expected: String::new(),
@@ -1403,10 +1548,7 @@ mod tests {
         logger.log("agent-1", "read", "/data/file.txt", AuditDecision::Allowed);
 
         assert_eq!(logger.count().unwrap(), 1);
-        assert_eq!(
-            logger.load_all_entries().unwrap()[0].agent_id,
-            "agent-1"
-        );
+        assert_eq!(logger.load_all_entries().unwrap()[0].agent_id, "agent-1");
     }
 
     #[test]
@@ -1823,5 +1965,115 @@ mod tests {
         )
         .unwrap();
         assert!(result);
+    }
+
+    // ========================================================================
+    // Rotation Tests (Issue #20)
+    // ========================================================================
+
+    #[test]
+    fn test_rotation_evicts_oldest_entries() {
+        let mut logger = AuditLogger::new();
+        logger.set_rotation(RotationConfig::new(5));
+
+        // Add 8 entries - should trigger rotation after exceeding 5
+        for i in 0..8 {
+            logger.log(
+                format!("agent-{}", i),
+                "read",
+                "/data/file.txt",
+                AuditDecision::Allowed,
+            );
+        }
+
+        // After rotation, count should not exceed max_entries
+        let count = logger.count().unwrap();
+        assert!(count <= 5, "Expected <= 5 entries, got {}", count);
+        assert!(logger.rotated_count() > 0, "Expected some entries to be rotated out");
+    }
+
+    #[test]
+    fn test_rotation_archives_to_backend() {
+        let mut logger = AuditLogger::new();
+
+        let archival = Box::new(MemoryAuditBackend::new());
+        logger.set_rotation(RotationConfig::with_archival(
+            3,
+            archival,
+        ));
+
+        // Add 5 entries
+        for i in 0..5 {
+            logger.log(
+                format!("agent-{}", i),
+                "read",
+                "/data/file.txt",
+                AuditDecision::Allowed,
+            );
+        }
+
+        // Primary should have at most 3 entries
+        let count = logger.count().unwrap();
+        assert!(count <= 3, "Primary backend should have <= 3 entries, got {}", count);
+    }
+
+    #[test]
+    fn test_rotation_disabled_by_default() {
+        let mut logger = AuditLogger::new();
+
+        // Add many entries without rotation configured
+        for i in 0..20 {
+            logger.log(
+                format!("agent-{}", i),
+                "read",
+                "/data/file.txt",
+                AuditDecision::Allowed,
+            );
+        }
+
+        // All entries should be present
+        assert_eq!(logger.count().unwrap(), 20);
+        assert_eq!(logger.rotated_count(), 0);
+    }
+
+    #[test]
+    fn test_rotation_config_defaults() {
+        let config = RotationConfig::new(100);
+        assert_eq!(config.max_entries, 100);
+        assert_eq!(config.eviction_batch_size, 10); // 10% of 100
+        assert!(config.archival_backend.is_none());
+    }
+
+    #[test]
+    fn test_memory_backend_evict_oldest() {
+        let mut backend = MemoryAuditBackend::new();
+
+        for i in 0..5 {
+            let entry = AuditEntry {
+                id: i + 1,
+                timestamp: 1000 + i,
+                agent_id: format!("agent-{}", i),
+                action: "read".to_string(),
+                resource: "/test".to_string(),
+                decision: AuditDecision::Allowed,
+                hash: format!("hash-{}", i),
+                prev_hash: if i == 0 { "0".repeat(64) } else { format!("hash-{}", i - 1) },
+                signature: None,
+                metadata: None,
+            };
+            backend.append(&entry).unwrap();
+        }
+
+        assert_eq!(backend.count().unwrap(), 5);
+
+        // Evict oldest 2
+        backend.evict_oldest(2).unwrap();
+        assert_eq!(backend.count().unwrap(), 3);
+
+        // Verify remaining entries are the newest ones
+        let remaining = backend.load_all().unwrap();
+        assert_eq!(remaining[0].id, 3);
+        assert_eq!(remaining[1].id, 4);
+        assert_eq!(remaining[2].id, 5);
     }
 }

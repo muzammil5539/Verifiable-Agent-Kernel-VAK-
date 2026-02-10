@@ -219,10 +219,12 @@ impl PipelineConfig {
 
 /// Priority level for requests
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum RequestPriority {
     /// Low priority (background tasks)
     Low = 0,
     /// Normal priority (default)
+    #[default]
     Normal = 1,
     /// High priority (user-initiated)
     High = 2,
@@ -230,11 +232,6 @@ pub enum RequestPriority {
     Critical = 3,
 }
 
-impl Default for RequestPriority {
-    fn default() -> Self {
-        Self::Normal
-    }
-}
 
 /// A request envelope containing the tool request and metadata
 #[derive(Debug)]

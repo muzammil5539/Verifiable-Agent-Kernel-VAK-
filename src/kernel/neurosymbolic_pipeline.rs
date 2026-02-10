@@ -762,7 +762,7 @@ impl PrmScorer for DefaultPrmScorer {
         // Action specificity (based on parameters)
         let specificity = if action.parameters.len() > 2 {
             0.9
-        } else if action.parameters.len() > 0 {
+        } else if !action.parameters.is_empty() {
             0.6
         } else {
             0.3

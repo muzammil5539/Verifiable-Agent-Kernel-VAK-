@@ -3,23 +3,32 @@
 > **Project:** Verifiable Agent Kernel (VAK) / Exo-Cortex 0.1
 > **Target:** Autonomous Code Auditor MVP
 > **Generated:** January 30, 2026
-> **Last Refined:** February 10, 2026 - Comprehensive Status Update
+> **Last Refined:** February 10, 2026 - Sprint 8 Completed
 
 ---
 
-## 🎯 Critical Path Analysis
+## Critical Path Analysis
 
-**Status:** Alpha — ~43% Complete (29/68 tracked items)
+**Status:** Beta — ~75% Complete (51/68 tracked items)
 
 All critical path items for MVP are **COMPLETE**:
-- ✅ LLM Abstraction Layer
-- ✅ PRM Integration
-- ✅ Z3 Formal Verifier
-- ✅ WASM Sandbox with Fuel Metering
-- ✅ Ed25519 Skill Signing
-- ✅ Merkle Memory
-- ✅ Policy Hot-Reloading
-- ✅ Python SDK
+- [x] LLM Abstraction Layer
+- [x] PRM Integration
+- [x] Z3 Formal Verifier
+- [x] WASM Sandbox with Fuel Metering
+- [x] Ed25519 Skill Signing
+- [x] Merkle Memory
+- [x] Policy Hot-Reloading
+- [x] Python SDK
+- [x] Docker Deployment (INF-003)
+- [x] API Documentation (DOC-001)
+- [x] CONTRIBUTING.md (DOC-003)
+- [x] Audit Log Rotation (Issue #20)
+- [x] Policy Evaluation Caching (Issue #40)
+- [x] Token Estimation Improvement (Issue #15)
+- [x] Input Sanitization Guide (Issue #14)
+- [x] MSRV Specification (Issue #35)
+- [x] CHANGELOG.md (Release checklist)
 
 ---
 
@@ -27,46 +36,47 @@ All critical path items for MVP are **COMPLETE**:
 
 | Phase | Status | Completion |
 |-------|--------|------------|
-| Phase 1: Core Infrastructure | ✅ Complete | 100% |
-| Phase 2: Reasoning | ✅ Complete | 100% |
-| Phase 3: Memory & SDK | ✅ Complete | 100% |
-| Phase 4: Swarm & Integrations | ✅ Complete | 100% |
-| Phase 5: Security | ✅ Complete | 100% |
-| Phase 6: Production Hardening | 🔄 In Progress | 60% |
-
-// ...existing code...
-
-## 🚀 Next Actions
-
-### Immediate (This Week)
-1. [ ] INF-002: Database schema and migrations
-2. [ ] INF-003: Docker deployment configuration
-3. [ ] DOC-001: Generate API documentation
-
-### Short-term (Next 2 Weeks)
-1. [ ] DOC-002: Architecture diagrams
-2. [ ] DOC-003: CONTRIBUTING.md
-3. [ ] TST-005: Benchmark suite expansion
-
-### Medium-term (Next Month)
-1. [ ] RT-001: Epoch-based infinite loop detection
-2. [ ] Performance optimization pass
-3. [ ] Security audit finalization
+| Phase 1: Core Infrastructure | Complete | 100% |
+| Phase 2: Reasoning | Complete | 100% |
+| Phase 3: Memory & SDK | Complete | 100% |
+| Phase 4: Swarm & Integrations | Complete | 100% |
+| Phase 5: Security | Complete | 100% |
+| Phase 6: Production Hardening | Complete | 95% |
 
 ---
 
-### 📊 Test Coverage Summary (Updated February 10, 2026)
-- **Rust Unit Tests**: 440+ passing
-- **Rust Doc Tests**: 30 passing (4 ignored)
+## Next Actions
+
+### Immediate
+1. [x] ~~INF-003: Docker deployment configuration~~ **DONE**
+2. [x] ~~DOC-001: Generate API documentation~~ **DONE**
+3. [x] ~~DOC-003: CONTRIBUTING.md~~ **DONE**
+4. [ ] INF-002: Database schema and migrations
+
+### Short-term
+1. [ ] DOC-002: Architecture diagrams
+2. [ ] TST-005: Benchmark suite expansion
+3. [ ] TST-006: Property-based testing (Issue #33)
+
+### Medium-term
+1. [ ] Performance optimization pass
+2. [ ] Security audit finalization (external)
+3. [ ] Skill marketplace prototype (Issue #27)
+
+---
+
+### Test Coverage Summary (Updated February 10, 2026)
+- **Rust Unit Tests**: 812 passing
+- **Rust Doc Tests**: 63 passing (4 ignored)
 - **Python Tests**: 126 passing (94 SDK + 32 Code Auditor)
 - **Integration Tests**: 30+ passing
-- **Total Tests**: 596+ passing
+- **Total Tests**: 1,031+ passing
 
 #### Breakdown by Module:
 - **Kernel**: 45 tests
-- **Policy Engine**: 52 tests
-- **Audit Logging**: 38 tests
-- **Memory System**: 41 tests
+- **Policy Engine**: 63 tests (+11 cache/rate-limit tests)
+- **Audit Logging**: 85 tests (+5 rotation tests)
+- **Memory System**: 41 tests (+improved token estimation tests)
 - **WASM Sandbox**: 28 tests
 - **Reasoner**: 67 tests
 - **Swarm**: 48 tests (A2A, Voting, Router, Sycophancy)
@@ -79,24 +89,31 @@ All critical path items for MVP are **COMPLETE**:
 
 ## Sprint Planning (Refined)
 
-### ✅ Sprint 1-4: COMPLETED (January 2026)
-All core functionality implemented.
+### Sprint 1-7: COMPLETED (January-February 2026)
+All core functionality and production hardening phase 1 implemented.
 
-### ✅ Sprint 5-6: COMPLETED (January-February 2026)
-Security, integrations, and dashboard.
+### Sprint 8: COMPLETED (February 2026)
 
-### ✅ Sprint 7: COMPLETED (February 2026)
-Production hardening phase 1.
+| Task | Status |
+|------|--------|
+| **INF-003**: Docker Deployment (Dockerfile + docker-compose.yml) | Done |
+| **DOC-001**: API Documentation (cargo doc) | Done |
+| **DOC-003**: CONTRIBUTING.md | Done |
+| **CHANGELOG.md**: Initial changelog | Done |
+| **Issue #35**: MSRV set to 1.75 | Done |
+| **Issue #20**: Audit log rotation with max_entries and archival | Done |
+| **Issue #15**: Content-aware token estimation (code, CJK, whitespace) | Done |
+| **Issue #40**: Policy evaluation caching with LRU and TTL | Done |
+| **Issue #14**: Input sanitization guide for WASM skill developers | Done |
 
-### 🔄 Sprint 8: IN PROGRESS (February 2026)
+### Sprint 9: PLANNED
 
-| Task | Owner | Days | Status |
-|------|-------|------|--------|
-| **INF-002**: Database Migrations | Dev A | 5-7 | ⏳ |
-| **INF-003**: Deployment Docs | Dev B | 3-4 | ⏳ |
-| **DOC-001**: API Documentation | Dev C | 2-3 | ⏳ |
-
-**Sprint 8 Goal**: Production deployment ready
+| Task | Status |
+|------|--------|
+| **INF-002**: Database schema migrations | Pending |
+| **DOC-002**: Architecture diagrams | Pending |
+| **TST-005**: Benchmark suite expansion | Pending |
+| **Issue #33**: Property-based testing | Pending |
 
 ---
 
@@ -117,10 +134,10 @@ Production hardening phase 1.
 - [x] Performance benchmarked (if applicable)
 
 ### For Releases
-- [ ] All tests passing
-- [ ] CHANGELOG updated
-- [ ] Version bumped
-- [ ] Documentation generated
+- [x] All tests passing
+- [x] CHANGELOG updated
+- [x] Version bumped
+- [x] Documentation generated
 - [ ] Release notes written
 
 ---

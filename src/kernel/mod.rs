@@ -332,8 +332,8 @@ impl Kernel {
 
         // Step 2: Log the request
         let audit_entry = AuditEntry::new(
-            agent_id.clone(),
-            session_id.clone(),
+            *agent_id,
+            *session_id,
             request.tool_name.clone(),
             decision,
         );

@@ -424,8 +424,8 @@ impl AutoGPTAdapter {
             .collect();
 
         // Unwrap is safe here because we are escaping all inputs
-        let blocked_commands_set = regex::RegexSet::new(patterns)
-            .expect("Failed to compile blocked commands regex set");
+        let blocked_commands_set =
+            regex::RegexSet::new(patterns).expect("Failed to compile blocked commands regex set");
 
         Self {
             config,
@@ -1123,8 +1123,10 @@ pub struct VerificationOptions {
 
 /// Risk level for operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum RiskLevel {
     /// Low risk, no special action needed
+    #[default]
     Low,
     /// Medium risk, may require additional review
     Medium,
@@ -1134,11 +1136,6 @@ pub enum RiskLevel {
     Critical,
 }
 
-impl Default for RiskLevel {
-    fn default() -> Self {
-        RiskLevel::Low
-    }
-}
 
 /// Full verification result (INT-004)
 #[derive(Debug, Clone, Serialize, Deserialize)]
