@@ -1,5 +1,5 @@
 [package]
-name = "crypto_hash_skill"
+name = "crypto-hash"
 version = "0.1.0"
 edition = "2021"
 description = "Cryptographic hashing skill for VAK - supports SHA-256, SHA-512, and BLAKE3"
@@ -15,12 +15,3 @@ serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 [features]
 default = []
 
-[profile.release]
-opt-level = "s"
-lto = true
-codegen-units = 1
-panic = "abort"
-strip = true
-
-[profile.dev]
-panic = "abort"

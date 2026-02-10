@@ -183,3 +183,12 @@ strip = "none"
 # Profile for faster builds during development
 [profile.dev.package."*"]
 opt-level = 2
+
+# Custom profile for WASM skill builds - optimized for size
+[profile.wasm-release]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
