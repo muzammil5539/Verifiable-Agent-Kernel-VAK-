@@ -7,9 +7,21 @@ Verifiable Agent Kernel Python SDK.
 Example::
 
     from vak.kernel import VakKernel
+    from vak.config import KernelConfig, SecurityConfig
+    from vak.policy import PolicyRule
+    from vak.reasoner import Constraint
 
-    kernel = VakKernel.default()
-    kernel.register_agent(agent)
+    kernel = VakKernel(config=KernelConfig(
+        security=SecurityConfig(default_policy_effect="deny"),
+    ))
+
+    kernel.load_policies([
+        PolicyRule(id="allow-read", effect="permit", action="data.read", resource="*"),
+    ])
+
+    kernel.add_constraint(Constraint(name="max-steps", kind="max_steps", value=50))
+
+    kernel.register_agent(AgentConfig(agent_id="my-agent", name="My Agent"))
     response = kernel.execute_tool("my-agent", "calculator", "add", {"a": 1, "b": 2})
 """
 
@@ -23,6 +35,7 @@ from typing import TYPE_CHECKING, Any, Iterator
 from vak._stub import _StubKernel
 from vak.agent import AgentConfig, _AgentContext
 from vak.audit import AuditEntry, AuditLevel
+from vak.config import KernelConfig
 from vak.exceptions import (
     AgentNotFoundError,
     AuditError,
@@ -30,7 +43,9 @@ from vak.exceptions import (
     ToolExecutionError,
     VakError,
 )
-from vak.policy import PolicyDecision, PolicyEffect
+from vak.policy import PolicyDecision, PolicyEffect, PolicyEngine, PolicyRule
+from vak.reasoner import Constraint, ConstraintResult, ReasonerConfig, SafetyRule
+from vak.skills import SkillManifest
 from vak.tools import ToolRequest, ToolResponse
 
 if TYPE_CHECKING:
@@ -53,19 +68,38 @@ class VakKernel:
         is_initialized: Whether the kernel has been initialized.
     """
 
-    def __init__(self, config_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        config_path: str | Path | None = None,
+        *,
+        config: KernelConfig | None = None,
+    ) -> None:
         """
         Initialize a new VAK Kernel instance.
 
         Args:
             config_path: Optional path to a YAML configuration file.
                         If not provided, uses default configuration.
+            config: Optional KernelConfig object for programmatic configuration.
+                   Takes precedence over config_path if both are provided.
         """
-        self._config_path = Path(config_path) if config_path else None
+        if config and config.config_path:
+            self._config_path = Path(config.config_path)
+        elif config_path:
+            self._config_path = Path(config_path)
+        else:
+            self._config_path = None
+
+        self._config = config or KernelConfig()
         self._is_initialized = False
         self._native_kernel: Any = None  # PyO3 binding to Rust kernel
         self._registered_agents: dict[str, AgentConfig] = {}
         self._policy_hooks: list[Callable[[str, str, dict[str, Any]], PolicyDecision | None]] = []
+        self._policy_engine = PolicyEngine(
+            default_effect=self._config.security.default_policy_effect
+        )
+        self._reasoner = ReasonerConfig()
+        self._skills: dict[str, SkillManifest] = {}
 
     @classmethod
     def from_config(cls, config_path: str | Path) -> VakKernel:
@@ -104,9 +138,24 @@ class VakKernel:
         return self._config_path
 
     @property
+    def config(self) -> KernelConfig:
+        """Get the kernel configuration."""
+        return self._config
+
+    @property
     def is_initialized(self) -> bool:
         """Check if the kernel has been initialized."""
         return self._is_initialized
+
+    @property
+    def policy_engine(self) -> PolicyEngine:
+        """Get the local policy engine for direct rule management."""
+        return self._policy_engine
+
+    @property
+    def reasoner(self) -> ReasonerConfig:
+        """Get the reasoner configuration."""
+        return self._reasoner
 
     def initialize(self) -> None:
         """
@@ -123,7 +172,6 @@ class VakKernel:
 
         try:
             # Import the native Rust module (compiled via PyO3)
-            # This will be available when the Rust crate is built with PyO3
             try:
                 from vak import _vak_native  # type: ignore[attr-defined]
 
@@ -165,9 +213,6 @@ class VakKernel:
         """
         Register an agent with the kernel.
 
-        The agent will be subject to all configured policies and can
-        execute tools based on its granted permissions.
-
         Args:
             config: The agent configuration.
 
@@ -177,7 +222,6 @@ class VakKernel:
         """
         self._ensure_initialized()
 
-        # Evaluate registration policy
         decision = self.evaluate_policy(
             agent_id="system",
             action="agent.register",
@@ -210,54 +254,75 @@ class VakKernel:
         self._registered_agents[config.agent_id] = config
 
     def unregister_agent(self, agent_id: str) -> None:
-        """
-        Unregister an agent from the kernel.
-
-        Args:
-            agent_id: The ID of the agent to unregister.
-
-        Raises:
-            AgentNotFoundError: If the agent is not registered.
-        """
+        """Unregister an agent from the kernel."""
         self._ensure_initialized()
-
         if agent_id not in self._registered_agents:
             raise AgentNotFoundError(agent_id)
-
         if self._native_kernel and hasattr(self._native_kernel, "unregister_agent"):
             self._native_kernel.unregister_agent(agent_id)
-
         del self._registered_agents[agent_id]
 
     def get_agent(self, agent_id: str) -> AgentConfig:
-        """
-        Get the configuration for a registered agent.
-
-        Args:
-            agent_id: The ID of the agent.
-
-        Returns:
-            The agent's configuration.
-
-        Raises:
-            AgentNotFoundError: If the agent is not registered.
-        """
+        """Get the configuration for a registered agent."""
         if agent_id not in self._registered_agents:
             raise AgentNotFoundError(agent_id)
         return self._registered_agents[agent_id]
 
     def list_agents(self) -> list[str]:
-        """
-        Get a list of all registered agent IDs.
-
-        Returns:
-            List of registered agent IDs.
-        """
+        """Get a list of all registered agent IDs."""
         return list(self._registered_agents.keys())
 
     # =========================================================================
-    # Policy Evaluation
+    # Policy Management
     # =========================================================================
+
+    def load_policies(self, rules: list[PolicyRule]) -> None:
+        """
+        Load policy rules into the kernel's policy engine.
+
+        Users define PolicyRule objects in their own project and pass
+        them to the kernel. Rules are evaluated in priority order with
+        deny-overrides semantics.
+
+        Args:
+            rules: List of PolicyRule objects to load.
+
+        Example::
+
+            from vak.policy import PolicyRule, PolicyCondition
+
+            kernel.load_policies([
+                PolicyRule(
+                    id="admin-full-access",
+                    effect="permit",
+                    principal="admin",
+                    action="*",
+                    resource="*",
+                    priority=100,
+                ),
+                PolicyRule(
+                    id="block-untrusted-write",
+                    effect="forbid",
+                    action="*.write",
+                    resource="*",
+                    conditions=[PolicyCondition("trusted", "equals", False)],
+                    priority=200,
+                ),
+            ])
+        """
+        self._policy_engine.add_rules(rules)
+
+        if self._native_kernel and hasattr(self._native_kernel, "add_policy_rule"):
+            for rule in rules:
+                self._native_kernel.add_policy_rule(
+                    rule.id,
+                    rule.effect,
+                    rule.resource,
+                    rule.action,
+                    {c.attribute: c.value for c in rule.conditions},
+                    rule.priority,
+                    rule.description,
+                )
 
     def evaluate_policy(
         self,
@@ -268,24 +333,53 @@ class VakKernel:
         """
         Evaluate a policy for a given action.
 
+        Evaluation order:
+        1. Custom policy hooks (Python callbacks)
+        2. Local policy engine (PolicyRule objects)
+        3. Native Rust policy engine (if available)
+        4. Default allow (stub mode)
+
         Args:
             agent_id: The ID of the agent requesting the action.
-            action: The action to evaluate (e.g., "tool.execute", "data.read").
+            action: The action to evaluate.
             context: Additional context for policy evaluation.
 
         Returns:
-            The policy decision indicating whether the action is allowed.
+            The policy decision.
         """
         self._ensure_initialized()
         context = context or {}
 
-        # Check custom policy hooks first
+        # 1. Check custom policy hooks first
         for hook in self._policy_hooks:
             decision = hook(agent_id, action, context)
             if decision is not None:
                 return decision
 
-        # Evaluate via native kernel
+        # 2. Check local policy engine (Python-side rules)
+        if self._policy_engine.rules:
+            role = "*"
+            if agent_id in self._registered_agents:
+                role = self._registered_agents[agent_id].role
+            resource = context.get("resource", context.get("tool_id", "*"))
+            decision = self._policy_engine.evaluate(
+                role=role,
+                action=action,
+                resource=resource,
+                context=context,
+            )
+            # If a concrete rule matched, use its decision immediately.
+            if decision.matched_rules:
+                return decision
+            # No rules matched. For regular agents, return the engine's
+            # default decision (typically deny).  For the internal "system"
+            # caller (used by register_agent, etc.), fall through so that
+            # management operations aren't blocked by the absence of
+            # explicit rules covering them.
+            if agent_id != "system":
+                return decision
+
+        # 3. Evaluate via native kernel
         if self._native_kernel and hasattr(self._native_kernel, "evaluate_policy"):
             result = self._native_kernel.evaluate_policy(
                 agent_id, action, context
@@ -298,7 +392,7 @@ class VakKernel:
                 metadata=result.get("metadata", {}),
             )
 
-        # Default allow for stub mode
+        # 4. Default allow for stub mode
         return PolicyDecision(
             effect=PolicyEffect.ALLOW,
             policy_id="default",
@@ -309,31 +403,78 @@ class VakKernel:
         self,
         hook: Callable[[str, str, dict[str, Any]], PolicyDecision | None],
     ) -> None:
-        """
-        Add a custom policy evaluation hook.
-
-        Hooks are evaluated before the native policy engine. If a hook
-        returns a PolicyDecision, that decision is used. If it returns
-        None, evaluation continues to the next hook or the native engine.
-
-        Args:
-            hook: A callable that takes (agent_id, action, context) and
-                  returns a PolicyDecision or None.
-        """
+        """Add a custom policy evaluation hook."""
         self._policy_hooks.append(hook)
 
     def remove_policy_hook(
         self,
         hook: Callable[[str, str, dict[str, Any]], PolicyDecision | None],
     ) -> None:
-        """
-        Remove a previously added policy hook.
-
-        Args:
-            hook: The hook to remove.
-        """
+        """Remove a previously added policy hook."""
         if hook in self._policy_hooks:
             self._policy_hooks.remove(hook)
+
+    # =========================================================================
+    # Constraints & Safety
+    # =========================================================================
+
+    def add_constraint(self, constraint: Constraint) -> None:
+        """Add a formal constraint to the reasoner.
+
+        Example::
+
+            kernel.add_constraint(
+                Constraint(name="max-steps", kind="max_steps", value=50)
+            )
+        """
+        self._reasoner.add_constraint(constraint)
+
+    def add_safety_rule(self, rule: SafetyRule) -> None:
+        """Add a safety rule to the reasoner.
+
+        Example::
+
+            kernel.add_safety_rule(
+                SafetyRule(name="no-delete", pattern="file.delete", action="block")
+            )
+        """
+        self._reasoner.add_safety_rule(rule)
+
+    def check_constraints(self, context: dict[str, Any]) -> list[ConstraintResult]:
+        """Check all constraints against current execution context."""
+        return self._reasoner.check_constraints(context)
+
+    def configure_reasoner(self, config: ReasonerConfig) -> None:
+        """Set the full reasoner configuration."""
+        self._reasoner = config
+
+    # =========================================================================
+    # Skill Registration
+    # =========================================================================
+
+    def register_skill(self, manifest: SkillManifest) -> None:
+        """Register a WASM skill with the kernel.
+
+        Example::
+
+            kernel.register_skill(SkillManifest(
+                id="my-tool", name="My Tool", actions=["analyze"],
+            ))
+        """
+        self._ensure_initialized()
+        self._skills[manifest.id] = manifest
+        if self._native_kernel and hasattr(self._native_kernel, "register_skill"):
+            self._native_kernel.register_skill(
+                manifest.id, manifest.wasm_path or "", manifest.to_dict(),
+            )
+
+    def list_skills(self) -> list[str]:
+        """Get a list of all registered skill IDs."""
+        return list(self._skills.keys())
+
+    def get_skill(self, skill_id: str) -> SkillManifest | None:
+        """Get a skill manifest by ID."""
+        return self._skills.get(skill_id)
 
     # =========================================================================
     # Tool Execution
@@ -352,8 +493,7 @@ class VakKernel:
         """
         Execute a tool action on behalf of an agent.
 
-        This method evaluates policies, executes the tool in a sandbox,
-        and creates audit log entries.
+        Pipeline: constraints -> safety rules -> policy -> sandbox execution -> audit.
 
         Args:
             agent_id: The ID of the agent making the request.
@@ -361,14 +501,14 @@ class VakKernel:
             action: The action/method to invoke on the tool.
             parameters: Input parameters for the tool.
             timeout_ms: Maximum execution time in milliseconds.
-            memory_limit_bytes: Maximum memory allocation (uses agent default if None).
+            memory_limit_bytes: Maximum memory allocation.
 
         Returns:
             The tool execution response.
 
         Raises:
             AgentNotFoundError: If the agent is not registered.
-            PolicyViolationError: If the action is denied by policy.
+            PolicyViolationError: If the action is denied by policy or safety rules.
             ToolExecutionError: If tool execution fails.
         """
         self._ensure_initialized()
@@ -379,6 +519,16 @@ class VakKernel:
         agent = self._registered_agents[agent_id]
         parameters = parameters or {}
         memory_limit = memory_limit_bytes or agent.memory_limit_bytes
+
+        # Check safety rules
+        matching_safety = self._reasoner.check_safety(f"tool.{action}")
+        for sr in matching_safety:
+            if sr.action == "block":
+                raise PolicyViolationError(PolicyDecision(
+                    effect=PolicyEffect.DENY,
+                    policy_id=f"safety:{sr.name}",
+                    reason=sr.description or f"Blocked by safety rule '{sr.name}'",
+                ))
 
         # Create the request
         request = ToolRequest(
@@ -408,12 +558,7 @@ class VakKernel:
         if self._native_kernel and hasattr(self._native_kernel, "execute_tool"):
             try:
                 result = self._native_kernel.execute_tool(
-                    tool_id,
-                    agent_id,
-                    action,
-                    parameters,
-                    timeout_ms,
-                    memory_limit,
+                    tool_id, agent_id, action, parameters, timeout_ms, memory_limit,
                 )
                 return ToolResponse(
                     request_id=result.get("request_id", ""),
@@ -436,15 +581,7 @@ class VakKernel:
         )
 
     def execute_tool_request(self, request: ToolRequest) -> ToolResponse:
-        """
-        Execute a tool using a ToolRequest object.
-
-        Args:
-            request: The tool request to execute.
-
-        Returns:
-            The tool execution response.
-        """
+        """Execute a tool using a ToolRequest object."""
         return self.execute_tool(
             agent_id=request.agent_id,
             tool_id=request.tool_id,
@@ -455,17 +592,10 @@ class VakKernel:
         )
 
     def list_tools(self) -> list[str]:
-        """
-        Get a list of all available tool IDs.
-
-        Returns:
-            List of tool IDs.
-        """
+        """Get a list of all available tool IDs."""
         self._ensure_initialized()
-
         if self._native_kernel and hasattr(self._native_kernel, "list_tools"):
             return self._native_kernel.list_tools()
-
         return []
 
     # =========================================================================
@@ -483,23 +613,8 @@ class VakKernel:
         limit: int = 100,
         offset: int = 0,
     ) -> list[AuditEntry]:
-        """
-        Retrieve audit log entries with optional filtering.
-
-        Args:
-            agent_id: Filter by agent ID.
-            level: Filter by minimum audit level.
-            action: Filter by action pattern (supports wildcards).
-            start_time: Filter entries after this time.
-            end_time: Filter entries before this time.
-            limit: Maximum number of entries to return.
-            offset: Number of entries to skip (for pagination).
-
-        Returns:
-            List of matching audit entries.
-        """
+        """Retrieve audit log entries with optional filtering."""
         self._ensure_initialized()
-
         filters = {
             "agent_id": agent_id,
             "level": level.value if level else None,
@@ -509,30 +624,18 @@ class VakKernel:
             "limit": limit,
             "offset": offset,
         }
-
         if self._native_kernel and hasattr(self._native_kernel, "get_audit_logs"):
             results = self._native_kernel.get_audit_logs(filters)
             return [self._parse_audit_entry(entry) for entry in results]
-
         return []
 
     def get_audit_entry(self, entry_id: str) -> AuditEntry | None:
-        """
-        Retrieve a specific audit entry by ID.
-
-        Args:
-            entry_id: The unique identifier of the audit entry.
-
-        Returns:
-            The audit entry, or None if not found.
-        """
+        """Retrieve a specific audit entry by ID."""
         self._ensure_initialized()
-
         if self._native_kernel and hasattr(self._native_kernel, "get_audit_entry"):
             result = self._native_kernel.get_audit_entry(entry_id)
             if result:
                 return self._parse_audit_entry(result)
-
         return None
 
     def create_audit_entry(
@@ -545,22 +648,8 @@ class VakKernel:
         details: dict[str, Any] | None = None,
         parent_entry_id: str | None = None,
     ) -> str:
-        """
-        Create a new audit log entry.
-
-        Args:
-            agent_id: The agent associated with this entry.
-            action: The action being audited.
-            resource: The resource being accessed/modified.
-            level: The severity level of the entry.
-            details: Additional context about the event.
-            parent_entry_id: ID of a parent entry for hierarchical auditing.
-
-        Returns:
-            The ID of the created audit entry.
-        """
+        """Create a new audit log entry."""
         self._ensure_initialized()
-
         entry_data = {
             "agent_id": agent_id,
             "action": action,
@@ -569,10 +658,8 @@ class VakKernel:
             "details": details or {},
             "parent_entry_id": parent_entry_id,
         }
-
         if self._native_kernel and hasattr(self._native_kernel, "create_audit_entry"):
             return self._native_kernel.create_audit_entry(entry_data)
-
         return f"stub-audit-{datetime.now().timestamp()}"
 
     # =========================================================================
@@ -581,47 +668,18 @@ class VakKernel:
 
     @contextmanager
     def agent_context(self, agent_id: str) -> Iterator[_AgentContext]:
-        """
-        Create a context manager for executing operations as an agent.
-
-        Args:
-            agent_id: The ID of the agent.
-
-        Yields:
-            An AgentContext for executing operations.
-
-        Example:
-            >>> with kernel.agent_context("my-agent") as ctx:
-            ...     result = ctx.execute_tool("calculator", "add", {"a": 1, "b": 2})
-        """
+        """Create a context manager for executing operations as an agent."""
         if agent_id not in self._registered_agents:
             raise AgentNotFoundError(agent_id)
-
         ctx = _AgentContext(self, agent_id)
         try:
             yield ctx
         finally:
-            pass  # Cleanup if needed
+            pass
 
     @contextmanager
     def session(self, agent: AgentConfig) -> Iterator[VakKernel]:
-        """Context manager for agent sessions.
-
-        Registers the agent on entry and unregisters on exit.
-
-        Args:
-            agent: Agent configuration.
-
-        Yields:
-            The kernel instance for use within the session.
-
-        Example::
-
-            agent = AgentConfig(agent_id="tmp", name="Temp Agent")
-            with kernel.session(agent) as k:
-                k.execute_tool("tmp", "calculator", "add", {"a": 1, "b": 2})
-            # Agent is automatically unregistered here
-        """
+        """Context manager for agent sessions (auto register/unregister)."""
         self.register_agent(agent)
         try:
             yield self
@@ -629,19 +687,17 @@ class VakKernel:
             try:
                 self.unregister_agent(agent.agent_id)
             except VakError:
-                pass  # Best-effort cleanup
+                pass
 
     # =========================================================================
     # Private Methods
     # =========================================================================
 
     def _ensure_initialized(self) -> None:
-        """Ensure the kernel is initialized."""
         if not self._is_initialized:
             raise VakError("Kernel not initialized. Call initialize() first.")
 
     def _parse_audit_entry(self, data: dict[str, Any]) -> AuditEntry:
-        """Parse a dictionary into an AuditEntry."""
         policy_data = data.get("policy_decision")
         policy_decision = None
         if policy_data:
@@ -652,7 +708,6 @@ class VakKernel:
                 matched_rules=policy_data.get("matched_rules", []),
                 metadata=policy_data.get("metadata", {}),
             )
-
         return AuditEntry(
             entry_id=data.get("entry_id", ""),
             timestamp=datetime.fromisoformat(data.get("timestamp", datetime.now().isoformat())),

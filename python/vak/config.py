@@ -8,6 +8,7 @@ the kernel on initialization.
 Example::
 
     from vak.config import KernelConfig, SecurityConfig, AuditConfig
+    from vak.memory import MemoryConfig, WorkingMemoryConfig
 
     config = KernelConfig(
         name="my-app-kernel",
@@ -19,6 +20,9 @@ Example::
             enabled=True,
             level="info",
         ),
+        memory=MemoryConfig(
+            working=WorkingMemoryConfig(max_items=200),
+        ),
     )
 
     kernel = VakKernel(config=config)
@@ -28,7 +32,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from vak.memory import MemoryConfig
 
 
 @dataclass
@@ -124,6 +131,7 @@ class KernelConfig:
         audit: Audit logging settings.
         policy: Policy engine settings.
         resources: Resource limit settings.
+        memory: Memory tier configuration (working, episodic, semantic).
         config_path: Optional path to a YAML/JSON config file to merge with.
         extra: Additional configuration key-value pairs.
 
@@ -144,6 +152,7 @@ class KernelConfig:
     audit: AuditConfig = field(default_factory=AuditConfig)
     policy: PolicyConfig = field(default_factory=PolicyConfig)
     resources: ResourceConfig = field(default_factory=ResourceConfig)
+    memory: MemoryConfig | None = None
     config_path: str | Path | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 

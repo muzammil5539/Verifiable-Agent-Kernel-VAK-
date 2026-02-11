@@ -16,16 +16,21 @@ Modular Imports::
 
     from vak.kernel import VakKernel
     from vak.config import KernelConfig, SecurityConfig
-    from vak.policy import PolicyDecision, PolicyEffect, permit, deny
+    from vak.policy import PolicyRule, PolicyCondition, PolicyEngine, permit, deny
     from vak.agent import AgentConfig
     from vak.audit import AuditEntry, AuditLevel
     from vak.tools import ToolRequest, ToolResponse, RiskLevel
+    from vak.reasoner import Constraint, SafetyRule, ReasonerConfig
+    from vak.memory import MemoryConfig, WorkingMemoryConfig, EpisodicMemoryConfig
+    from vak.skills import SkillManifest, SkillPermissions
+    from vak.swarm import SwarmConfig, ConsensusProtocol, VotingConfig
     from vak.exceptions import VakError, PolicyViolationError
 """
 
 from vak._version import __version__
 from vak.agent import AgentConfig
 from vak.audit import AuditEntry, AuditLevel
+from vak.config import KernelConfig
 from vak.exceptions import (
     AgentNotFoundError,
     AuditError,
@@ -34,7 +39,19 @@ from vak.exceptions import (
     VakError,
 )
 from vak.kernel import VakKernel
-from vak.policy import PolicyDecision, PolicyEffect, deny, permit
+from vak.memory import MemoryConfig
+from vak.policy import (
+    PolicyCondition,
+    PolicyDecision,
+    PolicyEffect,
+    PolicyEngine,
+    PolicyRule,
+    deny,
+    permit,
+)
+from vak.reasoner import Constraint, ReasonerConfig, SafetyRule
+from vak.skills import SkillManifest, SkillPermissions
+from vak.swarm import ConsensusProtocol, SwarmConfig, VotingConfig
 from vak.tools import RiskLevel, ToolRequest, ToolResponse
 
 __all__ = [
@@ -42,22 +59,41 @@ __all__ = [
     "__version__",
     # Core
     "VakKernel",
-    # Types
+    "KernelConfig",
+    # Agent
     "AgentConfig",
+    # Audit
     "AuditEntry",
     "AuditLevel",
+    # Policy
     "PolicyDecision",
     "PolicyEffect",
+    "PolicyRule",
+    "PolicyCondition",
+    "PolicyEngine",
+    "permit",
+    "deny",
+    # Tools
     "ToolRequest",
     "ToolResponse",
     "RiskLevel",
+    # Reasoner / Constraints
+    "Constraint",
+    "SafetyRule",
+    "ReasonerConfig",
+    # Memory
+    "MemoryConfig",
+    # Skills
+    "SkillManifest",
+    "SkillPermissions",
+    # Swarm
+    "SwarmConfig",
+    "ConsensusProtocol",
+    "VotingConfig",
     # Exceptions
     "VakError",
     "PolicyViolationError",
     "AgentNotFoundError",
     "ToolExecutionError",
     "AuditError",
-    # Policy helpers
-    "permit",
-    "deny",
 ]
