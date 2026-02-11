@@ -50,6 +50,48 @@ use crate::policy::{PolicyContext, PolicyEffect, PolicyEngine, PolicyRule};
 #[cfg(feature = "python")]
 use crate::audit::{AuditDecision, AuditLogger};
 
+/// Python-visible risk level classification for tools and operations.
+///
+/// Mirrors the Rust `RiskLevel` enum as a Python class with string constants.
+/// Python users compare risk levels with `RiskLevel.LOW`, `RiskLevel.HIGH`, etc.
+///
+/// # Python Example
+///
+/// ```python
+/// from vak._vak_native import RiskLevel
+///
+/// if tool_risk == RiskLevel.HIGH:
+///     require_human_approval()
+/// ```
+#[cfg(feature = "python")]
+#[pyclass(name = "RiskLevel")]
+#[derive(Clone, Debug)]
+pub struct PyRiskLevel;
+
+#[cfg(feature = "python")]
+#[pymethods]
+impl PyRiskLevel {
+    /// Read-only, safe operations.
+    #[classattr]
+    const LOW: &'static str = "low";
+
+    /// May modify state.
+    #[classattr]
+    const MEDIUM: &'static str = "medium";
+
+    /// Sensitive operations.
+    #[classattr]
+    const HIGH: &'static str = "high";
+
+    /// Irreversible or security-critical operations.
+    #[classattr]
+    const CRITICAL: &'static str = "critical";
+
+    fn __repr__(&self) -> String {
+        "RiskLevel(LOW | MEDIUM | HIGH | CRITICAL)".to_string()
+    }
+}
+
 /// Python wrapper for PolicyDecision
 #[cfg(feature = "python")]
 #[pyclass(name = "PolicyDecision")]
@@ -926,6 +968,7 @@ fn _vak_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPolicyDecision>()?;
     m.add_class::<PyToolResponse>()?;
     m.add_class::<PyAuditEntry>()?;
+    m.add_class::<PyRiskLevel>()?;
 
     // Add version info
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;

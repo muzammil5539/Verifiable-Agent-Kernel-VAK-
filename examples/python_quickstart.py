@@ -21,32 +21,34 @@ from datetime import datetime, timedelta
 from typing import Any
 
 # =============================================================================
-# Import VAK SDK Components
+# Import VAK SDK Components (modular imports)
 # =============================================================================
 
-from vak import (
-    # Core kernel class
-    VakKernel,
-    
-    # Configuration types
-    AgentConfig,
-    ToolRequest,
-    ToolResponse,
-    
-    # Audit types
-    AuditEntry,
-    AuditLevel,
-    
-    # Policy types
-    PolicyDecision,
-    PolicyEffect,
-    
-    # Exception types
+# Core kernel
+from vak.kernel import VakKernel
+
+# Agent configuration
+from vak.agent import AgentConfig
+
+# Tool types
+from vak.tools import ToolRequest, ToolResponse
+
+# Audit types
+from vak.audit import AuditEntry, AuditLevel
+
+# Policy types and helpers
+from vak.policy import PolicyDecision, PolicyEffect, permit, deny
+
+# Exception types
+from vak.exceptions import (
     VakError,
     PolicyViolationError,
     AgentNotFoundError,
     ToolExecutionError,
 )
+
+# Configuration (for custom kernel settings)
+from vak.config import KernelConfig, SecurityConfig
 
 
 def main():
@@ -309,33 +311,31 @@ def main():
     
     # Define a custom policy hook
     def my_policy_hook(
-        agent_id: str, 
-        action: str, 
+        agent_id: str,
+        action: str,
         context: dict[str, Any]
     ) -> PolicyDecision | None:
         """
         Custom policy hook that denies all actions containing 'dangerous'.
-        
+
         Returns None to continue to next hook/native engine,
         or a PolicyDecision to use that decision.
         """
         # Check if the action contains 'dangerous'
         if "dangerous" in action.lower():
-            return PolicyDecision(
-                effect=PolicyEffect.DENY,
+            return deny(
                 policy_id="custom-dangerous-block",
                 reason="Actions containing 'dangerous' are blocked by custom hook",
             )
-        
+
         # Check tool_id in context if present
         tool_id = context.get("tool_id", "")
         if tool_id == "nuclear_launcher":
-            return PolicyDecision(
-                effect=PolicyEffect.DENY,
+            return deny(
                 policy_id="custom-nuclear-block",
                 reason="Nuclear launcher tool is forbidden",
             )
-        
+
         # Return None to continue evaluation
         return None
     

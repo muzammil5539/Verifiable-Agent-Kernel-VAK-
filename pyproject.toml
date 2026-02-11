@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "vak"
 version = "0.1.0"
-description = "Verifiable Agent Kernel - Python SDK with Rust bindings"
+description = "Verifiable Agent Kernel - Secure, policy-enforced AI agent execution with audit logging"
 readme = "README.md"
 license = {file = "LICENSE"}
 requires-python = ">=3.9"
