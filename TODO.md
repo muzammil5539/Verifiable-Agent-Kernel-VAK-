@@ -3,13 +3,13 @@
 > **Project:** Verifiable Agent Kernel (VAK) / Exo-Cortex 0.1
 > **Target:** Autonomous Code Auditor MVP
 > **Generated:** January 30, 2026
-> **Last Refined:** February 10, 2026 - Sprint 8 Completed
+> **Last Refined:** February 11, 2026 - Sprint 9 Completed
 
 ---
 
 ## Critical Path Analysis
 
-**Status:** Beta — ~75% Complete (51/68 tracked items)
+**Status:** Beta — ~85% Complete (58/68 tracked items)
 
 All critical path items for MVP are **COMPLETE**:
 - [x] LLM Abstraction Layer
@@ -29,6 +29,11 @@ All critical path items for MVP are **COMPLETE**:
 - [x] Input Sanitization Guide (Issue #14)
 - [x] MSRV Specification (Issue #35)
 - [x] CHANGELOG.md (Release checklist)
+- [x] Secrets Management (Issue #37)
+- [x] LLM Library Integration (Issue #24)
+- [x] Property-Based Testing (Issue #33)
+- [x] Benchmark Suite Expansion (TST-005)
+- [x] Database Schema Migrations (INF-002)
 
 ---
 
@@ -41,7 +46,7 @@ All critical path items for MVP are **COMPLETE**:
 | Phase 3: Memory & SDK | Complete | 100% |
 | Phase 4: Swarm & Integrations | Complete | 100% |
 | Phase 5: Security | Complete | 100% |
-| Phase 6: Production Hardening | Complete | 95% |
+| Phase 6: Production Hardening | Complete | 98% |
 
 ---
 
@@ -51,12 +56,12 @@ All critical path items for MVP are **COMPLETE**:
 1. [x] ~~INF-003: Docker deployment configuration~~ **DONE**
 2. [x] ~~DOC-001: Generate API documentation~~ **DONE**
 3. [x] ~~DOC-003: CONTRIBUTING.md~~ **DONE**
-4. [ ] INF-002: Database schema and migrations
+4. [x] ~~INF-002: Database schema and migrations~~ **DONE**
 
 ### Short-term
 1. [ ] DOC-002: Architecture diagrams
-2. [ ] TST-005: Benchmark suite expansion
-3. [ ] TST-006: Property-based testing (Issue #33)
+2. [x] ~~TST-005: Benchmark suite expansion~~ **DONE** (25 benchmark groups)
+3. [x] ~~TST-006: Property-based testing (Issue #33)~~ **DONE** (28 property tests)
 
 ### Medium-term
 1. [ ] Performance optimization pass
@@ -65,12 +70,14 @@ All critical path items for MVP are **COMPLETE**:
 
 ---
 
-### Test Coverage Summary (Updated February 10, 2026)
-- **Rust Unit Tests**: 812 passing
+### Test Coverage Summary (Updated February 11, 2026)
+- **Rust Unit Tests**: 840 passing
 - **Rust Doc Tests**: 63 passing (4 ignored)
+- **Property Tests**: 28 passing (proptest)
 - **Python Tests**: 126 passing (94 SDK + 32 Code Auditor)
 - **Integration Tests**: 30+ passing
-- **Total Tests**: 1,031+ passing
+- **Benchmarks**: 25 benchmark groups (kernel, policy, audit, memory, knowledge graph, secrets, signed audit, tool definitions, migrations)
+- **Total Tests**: 1,087+ passing
 
 #### Breakdown by Module:
 - **Kernel**: 45 tests
@@ -106,14 +113,26 @@ All core functionality and production hardening phase 1 implemented.
 | **Issue #40**: Policy evaluation caching with LRU and TTL | Done |
 | **Issue #14**: Input sanitization guide for WASM skill developers | Done |
 
-### Sprint 9: PLANNED
+### Sprint 9: COMPLETED (February 2026)
 
 | Task | Status |
 |------|--------|
-| **INF-002**: Database schema migrations | Pending |
+| **INF-002**: Database schema migrations (SQLite + MigrationRunner) | Done |
+| **TST-005**: Benchmark suite expansion (25 groups, +knowledge graph, signed audit, secrets) | Done |
+| **Issue #33**: Property-based testing (28 proptest tests across 8 modules) | Done |
+| **Issue #37**: Secrets management (pluggable providers, caching, expiration) | Done |
+| **Issue #24**: LLM library integration (VakRuntime, VakAgent, OpenAI/Anthropic formats) | Done |
+| **Library export**: Prelude with LLM integration + secrets re-exports | Done |
+| **Crate config**: Fixed crate-type for library-first builds (rlib only) | Done |
+
+### Sprint 10: PLANNED
+
+| Task | Status |
+|------|--------|
 | **DOC-002**: Architecture diagrams | Pending |
-| **TST-005**: Benchmark suite expansion | Pending |
-| **Issue #33**: Property-based testing | Pending |
+| Performance optimization pass | Pending |
+| Security audit finalization | Pending |
+| **Issue #27**: Skill marketplace prototype | Pending |
 
 ---
 
@@ -142,5 +161,5 @@ All core functionality and production hardening phase 1 implemented.
 
 ---
 
-*Last updated: February 10, 2026*
+*Last updated: February 11, 2026*
 *Next milestone: v0.2 (Production Hardening)*

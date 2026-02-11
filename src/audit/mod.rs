@@ -983,6 +983,11 @@ impl RotationConfig {
     }
 }
 
+/// The core audit logger providing hash-chained, tamper-evident logging.
+///
+/// `AuditLogger` maintains an append-only log where each entry's hash includes
+/// the previous entry's hash, forming a verifiable chain. Supports pluggable
+/// storage backends, optional ed25519 signing, and configurable log rotation.
 pub struct AuditLogger {
     /// Storage backend for audit entries
     backend: Box<dyn AuditBackend>,

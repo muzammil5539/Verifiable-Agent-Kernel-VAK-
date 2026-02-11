@@ -105,7 +105,7 @@ license.workspace = true
 description.workspace = true
 
 [lib]
-crate-type = ["rlib", "cdylib"]
+crate-type = ["rlib"]
 
 [dependencies]
 tokio.workspace = true

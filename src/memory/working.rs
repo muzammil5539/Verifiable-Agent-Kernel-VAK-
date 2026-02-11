@@ -346,7 +346,7 @@ fn estimate_tokens(content: &str) -> usize {
         return 0;
     }
 
-    let total_chars = content.len();
+    let _total_chars = content.len();
     let mut code_chars = 0usize;
     let mut non_ascii_chars = 0usize;
     let mut whitespace_chars = 0usize;

@@ -165,6 +165,20 @@ pub mod tools;
 /// dashboard for monitoring VAK operations.
 pub mod dashboard;
 
+/// LLM Integration Library (Issue #24).
+///
+/// High-level API for using VAK as a library in LLM-powered applications.
+/// Provides builder patterns, tool definitions compatible with OpenAI/Anthropic
+/// formats, and managed agent abstractions.
+pub mod lib_integration;
+
+/// Secrets management module (Issue #37).
+///
+/// Provides pluggable secrets providers for secure credential storage.
+/// Supports environment variables, in-memory, file-based, and chained
+/// providers with caching and expiration support.
+pub mod secrets;
+
 /// PyO3 Python bindings module (PY-001).
 ///
 /// Provides Python bindings for the VAK Kernel via PyO3.
@@ -182,20 +196,33 @@ pub mod python;
 pub mod prelude {
     //! Convenient re-exports for common VAK usage patterns.
     //!
-    //! This module provides quick access to the most commonly used types.
+    //! This module provides quick access to the most commonly used types
+    //! for both kernel operations and LLM integration.
     //!
     //! # Example
     //!
     //! ```rust,ignore
     //! use vak::prelude::*;
+    //!
+    //! let runtime = VakRuntime::builder().build()?;
+    //! let agent = runtime.create_agent("my-agent")?;
     //! ```
 
+    // Core kernel types
     pub use crate::kernel::config::KernelConfig;
     pub use crate::kernel::types::{
         AgentId, AuditEntry, AuditId, KernelError, PolicyDecision, SessionId, ToolRequest,
         ToolResponse,
     };
     pub use crate::kernel::Kernel;
+
+    // LLM integration types for library consumers
+    pub use crate::lib_integration::{
+        ToolCall, ToolDefinition, ToolResult, VakAgent, VakRuntime,
+    };
+
+    // Secrets management
+    pub use crate::secrets::{SecretsManager, SecretsProvider};
 }
 
 /// Library version information.
