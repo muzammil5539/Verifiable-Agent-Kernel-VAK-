@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **INT-003**: LangChain Adapter Completion - LLM call interception, callback handler trait, audit integration, tool execution lifecycle management
+- **INT-004**: AutoGPT Adapter Completion - PRM-scored command interception, execution result verification, plan progress tracking, callback handler system, sensitive data detection
+- **SWM-002**: AgentCard Discovery - well-known endpoint support (`/.well-known/agent.json`), HTTP-based remote agent card fetching, agent card validation, TTL-based caching with eviction, search by capability/name, endpoint management
 - Dockerfile and docker-compose.yml for containerized deployment (INF-003)
 - CONTRIBUTING.md with development workflow and coding standards (DOC-003)
 - CHANGELOG.md for tracking project changes

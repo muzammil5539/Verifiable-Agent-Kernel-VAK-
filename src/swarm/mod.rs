@@ -33,7 +33,7 @@ pub mod voting;
 // A2A exports
 pub use a2a::{
     A2ACapability, A2AError, A2AMessage, A2AMessageType, A2AProtocol, A2AResult, AgentCard,
-    DiscoveryService,
+    AgentCardDiscovery, AgentCardValidation, DiscoveryConfig, DiscoveryService,
 };
 
 // Voting exports - only export types that exist

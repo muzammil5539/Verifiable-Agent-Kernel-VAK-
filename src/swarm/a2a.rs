@@ -457,6 +457,432 @@ impl Default for A2AProtocol {
 }
 
 // ============================================================================
+// AgentCard Discovery Service (SWM-002)
+// ============================================================================
+
+/// Configuration for agent card discovery (SWM-002)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveryConfig {
+    /// Cache TTL for discovered agent cards (seconds)
+    pub cache_ttl_secs: u64,
+    /// HTTP timeout for fetching remote agent cards (seconds)
+    pub http_timeout_secs: u64,
+    /// Well-known path for agent card discovery
+    pub well_known_path: String,
+    /// Maximum number of cached entries
+    pub max_cache_size: usize,
+    /// Enable mDNS/broadcast discovery
+    pub enable_broadcast: bool,
+    /// Broadcast discovery port
+    pub broadcast_port: u16,
+}
+
+impl Default for DiscoveryConfig {
+    fn default() -> Self {
+        Self {
+            cache_ttl_secs: 300,
+            http_timeout_secs: 10,
+            well_known_path: "/.well-known/agent.json".to_string(),
+            max_cache_size: 1000,
+            enable_broadcast: false,
+            broadcast_port: 9420,
+        }
+    }
+}
+
+/// Validation result for an agent card (SWM-002)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentCardValidation {
+    /// Whether the card is valid
+    pub valid: bool,
+    /// Validation errors
+    pub errors: Vec<String>,
+    /// Validation warnings
+    pub warnings: Vec<String>,
+}
+
+/// Cached agent card entry with TTL (SWM-002)
+#[derive(Debug, Clone)]
+struct CachedAgentCard {
+    /// The agent card
+    card: AgentCard,
+    /// When the entry was cached
+    cached_at: SystemTime,
+    /// Source URL (if fetched remotely)
+    #[allow(dead_code)]
+    source_url: Option<String>,
+}
+
+/// Enhanced discovery service with HTTP fetch, caching, and validation (SWM-002)
+pub struct AgentCardDiscovery {
+    /// Configuration
+    config: DiscoveryConfig,
+    /// Local discovery service (base registry)
+    local: DiscoveryService,
+    /// Remote agent card cache
+    cache: RwLock<HashMap<String, CachedAgentCard>>,
+    /// Known endpoint URLs for discovery
+    known_endpoints: RwLock<Vec<String>>,
+}
+
+impl AgentCardDiscovery {
+    /// Create a new agent card discovery service
+    pub fn new(config: DiscoveryConfig) -> Self {
+        Self {
+            config,
+            local: DiscoveryService::new(),
+            cache: RwLock::new(HashMap::new()),
+            known_endpoints: RwLock::new(Vec::new()),
+        }
+    }
+
+    /// Create with default configuration
+    pub fn with_defaults() -> Self {
+        Self::new(DiscoveryConfig::default())
+    }
+
+    /// Get the underlying local discovery service
+    pub fn local(&self) -> &DiscoveryService {
+        &self.local
+    }
+
+    /// Register a local agent card
+    pub async fn register_local(&self, card: AgentCard) -> A2AResult<()> {
+        self.local.register(card).await
+    }
+
+    /// Add a known endpoint URL for discovery
+    pub async fn add_endpoint(&self, url: impl Into<String>) {
+        let mut endpoints = self.known_endpoints.write().await;
+        let url = url.into();
+        if !endpoints.contains(&url) {
+            endpoints.push(url);
+        }
+    }
+
+    /// Validate an agent card against the schema (SWM-002)
+    pub fn validate_card(card: &AgentCard) -> AgentCardValidation {
+        let mut errors = Vec::new();
+        let mut warnings = Vec::new();
+
+        // Required fields
+        if card.id.is_empty() {
+            errors.push("Agent ID is required".to_string());
+        }
+        if card.name.is_empty() {
+            errors.push("Agent name is required".to_string());
+        }
+        if card.version.is_empty() {
+            errors.push("Version is required".to_string());
+        }
+
+        // Version format validation (semver-like)
+        if !card.version.is_empty() {
+            let parts: Vec<&str> = card.version.split('.').collect();
+            if parts.len() < 2 || parts.len() > 3 {
+                warnings.push(format!(
+                    "Version '{}' does not follow semver format",
+                    card.version
+                ));
+            }
+        }
+
+        // Capabilities validation
+        if card.capabilities.is_empty() {
+            warnings.push("Agent has no capabilities declared".to_string());
+        }
+
+        for cap in &card.capabilities {
+            if cap.capability_type.is_empty() {
+                errors.push("Capability type cannot be empty".to_string());
+            }
+        }
+
+        // Endpoint validation
+        if let Some(ref endpoint) = card.endpoint {
+            if endpoint.is_empty() {
+                warnings.push("Endpoint is set but empty".to_string());
+            } else if !endpoint.starts_with("http://") && !endpoint.starts_with("https://") {
+                warnings.push(format!(
+                    "Endpoint '{}' does not use HTTP/HTTPS scheme",
+                    endpoint
+                ));
+            }
+        }
+
+        // Description warning
+        if card.description.is_empty() {
+            warnings.push("Agent description is empty".to_string());
+        }
+
+        AgentCardValidation {
+            valid: errors.is_empty(),
+            errors,
+            warnings,
+        }
+    }
+
+    /// Fetch an agent card from a well-known URL (SWM-002)
+    pub async fn fetch_from_url(&self, base_url: &str) -> A2AResult<AgentCard> {
+        // Check cache first
+        {
+            let cache = self.cache.read().await;
+            if let Some(cached) = cache.get(base_url) {
+                let elapsed = cached
+                    .cached_at
+                    .elapsed()
+                    .unwrap_or(Duration::from_secs(u64::MAX));
+                if elapsed < Duration::from_secs(self.config.cache_ttl_secs) {
+                    debug!(url = %base_url, "Returning cached agent card");
+                    return Ok(cached.card.clone());
+                }
+            }
+        }
+
+        // Build the well-known URL
+        let url = format!(
+            "{}{}",
+            base_url.trim_end_matches('/'),
+            self.config.well_known_path
+        );
+
+        info!(url = %url, "Fetching agent card from well-known endpoint");
+
+        // Fetch via HTTP
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(self.config.http_timeout_secs))
+            .build()
+            .map_err(|e| A2AError::ProtocolError(format!("HTTP client error: {}", e)))?;
+
+        let response = client
+            .get(&url)
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .map_err(|e| A2AError::DeliveryFailed(format!("HTTP fetch failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(A2AError::DeliveryFailed(format!(
+                "HTTP {} from {}",
+                response.status(),
+                url
+            )));
+        }
+
+        let card: AgentCard = response
+            .json()
+            .await
+            .map_err(|e| A2AError::ProtocolError(format!("JSON parse error: {}", e)))?;
+
+        // Validate received card
+        let validation = Self::validate_card(&card);
+        if !validation.valid {
+            return Err(A2AError::ProtocolError(format!(
+                "Invalid agent card: {}",
+                validation.errors.join(", ")
+            )));
+        }
+
+        // Cache the result
+        {
+            let mut cache = self.cache.write().await;
+
+            // Evict old entries if cache is full
+            if cache.len() >= self.config.max_cache_size {
+                let oldest_key = cache
+                    .iter()
+                    .min_by_key(|(_, v)| v.cached_at)
+                    .map(|(k, _)| k.clone());
+                if let Some(key) = oldest_key {
+                    cache.remove(&key);
+                }
+            }
+
+            cache.insert(
+                base_url.to_string(),
+                CachedAgentCard {
+                    card: card.clone(),
+                    cached_at: SystemTime::now(),
+                    source_url: Some(url),
+                },
+            );
+        }
+
+        Ok(card)
+    }
+
+    /// Discover agents from all known endpoints (SWM-002)
+    pub async fn discover_all(&self) -> Vec<(String, Result<AgentCard, A2AError>)> {
+        let endpoints = self.known_endpoints.read().await.clone();
+        let mut results = Vec::new();
+
+        for endpoint in endpoints {
+            let result = self.fetch_from_url(&endpoint).await;
+            results.push((endpoint, result));
+        }
+
+        results
+    }
+
+    /// Look up an agent by ID from local registry and cache (SWM-002)
+    pub async fn lookup(&self, agent_id: &str) -> Option<AgentCard> {
+        // Check local first
+        if let Some(card) = self.local.get_agent(agent_id).await {
+            return Some(card);
+        }
+
+        // Check cache
+        let cache = self.cache.read().await;
+        for entry in cache.values() {
+            if entry.card.id == agent_id {
+                let elapsed = entry
+                    .cached_at
+                    .elapsed()
+                    .unwrap_or(Duration::from_secs(u64::MAX));
+                if elapsed < Duration::from_secs(self.config.cache_ttl_secs) {
+                    return Some(entry.card.clone());
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Search for agents by capability across local and cached (SWM-002)
+    pub async fn search_by_capability(&self, capability_type: &str) -> Vec<AgentCard> {
+        let mut results = self.local.find_by_capability(capability_type).await;
+
+        // Also search cache
+        let cache = self.cache.read().await;
+        let ttl = Duration::from_secs(self.config.cache_ttl_secs);
+        for entry in cache.values() {
+            let elapsed = entry.cached_at.elapsed().unwrap_or(Duration::from_secs(u64::MAX));
+            if elapsed < ttl && entry.card.has_capability(capability_type) {
+                // Avoid duplicates
+                if !results.iter().any(|r| r.id == entry.card.id) {
+                    results.push(entry.card.clone());
+                }
+            }
+        }
+
+        results
+    }
+
+    /// Search for agents by name (partial match) (SWM-002)
+    pub async fn search_by_name(&self, query: &str) -> Vec<AgentCard> {
+        let query_lower = query.to_lowercase();
+        let mut results = Vec::new();
+
+        // Search local
+        let local_agents = self.local.list_agents().await;
+        for agent in local_agents {
+            if agent.name.to_lowercase().contains(&query_lower) {
+                results.push(agent);
+            }
+        }
+
+        // Search cache
+        let cache = self.cache.read().await;
+        let ttl = Duration::from_secs(self.config.cache_ttl_secs);
+        for entry in cache.values() {
+            let elapsed = entry.cached_at.elapsed().unwrap_or(Duration::from_secs(u64::MAX));
+            if elapsed < ttl && entry.card.name.to_lowercase().contains(&query_lower) {
+                if !results.iter().any(|r| r.id == entry.card.id) {
+                    results.push(entry.card.clone());
+                }
+            }
+        }
+
+        results
+    }
+
+    /// Get all agents (local + valid cache entries) (SWM-002)
+    pub async fn list_all_agents(&self) -> Vec<AgentCard> {
+        let mut results = self.local.list_agents().await;
+
+        let cache = self.cache.read().await;
+        let ttl = Duration::from_secs(self.config.cache_ttl_secs);
+        for entry in cache.values() {
+            let elapsed = entry.cached_at.elapsed().unwrap_or(Duration::from_secs(u64::MAX));
+            if elapsed < ttl {
+                if !results.iter().any(|r| r.id == entry.card.id) {
+                    results.push(entry.card.clone());
+                }
+            }
+        }
+
+        results
+    }
+
+    /// Clear expired cache entries (SWM-002)
+    pub async fn clear_expired_cache(&self) -> usize {
+        let mut cache = self.cache.write().await;
+        let ttl = Duration::from_secs(self.config.cache_ttl_secs);
+        let before = cache.len();
+
+        cache.retain(|_, entry| {
+            entry
+                .cached_at
+                .elapsed()
+                .map(|d| d < ttl)
+                .unwrap_or(false)
+        });
+
+        let removed = before - cache.len();
+        if removed > 0 {
+            info!(count = removed, "Cleared expired agent card cache entries");
+        }
+        removed
+    }
+
+    /// Get the well-known agent card JSON for serving (SWM-002)
+    ///
+    /// This generates the JSON that should be served at `/.well-known/agent.json`
+    pub fn generate_well_known_json(card: &AgentCard) -> serde_json::Value {
+        serde_json::json!({
+            "id": card.id,
+            "name": card.name,
+            "description": card.description,
+            "version": card.version,
+            "capabilities": card.capabilities.iter().map(|c| {
+                serde_json::json!({
+                    "type": c.capability_type,
+                    "version": c.version,
+                    "description": c.description,
+                    "enabled": c.enabled,
+                })
+            }).collect::<Vec<_>>(),
+            "endpoint": card.endpoint,
+            "publicKey": card.public_key,
+            "metadata": card.metadata,
+        })
+    }
+
+    /// Get cache statistics (SWM-002)
+    pub async fn cache_stats(&self) -> (usize, usize) {
+        let cache = self.cache.read().await;
+        let ttl = Duration::from_secs(self.config.cache_ttl_secs);
+        let total = cache.len();
+        let valid = cache
+            .values()
+            .filter(|e| {
+                e.cached_at
+                    .elapsed()
+                    .map(|d| d < ttl)
+                    .unwrap_or(false)
+            })
+            .count();
+        (total, valid)
+    }
+}
+
+impl Default for AgentCardDiscovery {
+    fn default() -> Self {
+        Self::with_defaults()
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -536,5 +962,161 @@ mod tests {
         let msg = A2AMessage::heartbeat("agent-2", "agent-1");
         let result = protocol.send(msg).await;
         assert!(result.is_ok());
+    }
+
+    // SWM-002 Tests
+
+    #[test]
+    fn test_discovery_config_default() {
+        let config = DiscoveryConfig::default();
+        assert_eq!(config.cache_ttl_secs, 300);
+        assert_eq!(config.well_known_path, "/.well-known/agent.json");
+        assert_eq!(config.max_cache_size, 1000);
+    }
+
+    #[test]
+    fn test_validate_valid_card() {
+        let card = AgentCard::new("agent-1", "Test Agent")
+            .with_description("A test agent")
+            .with_capability(A2ACapability::new("reasoning"));
+
+        let result = AgentCardDiscovery::validate_card(&card);
+        assert!(result.valid);
+        assert!(result.errors.is_empty());
+    }
+
+    #[test]
+    fn test_validate_invalid_card_empty_id() {
+        let card = AgentCard::new("", "Test Agent");
+
+        let result = AgentCardDiscovery::validate_card(&card);
+        assert!(!result.valid);
+        assert!(result.errors.iter().any(|e| e.contains("Agent ID")));
+    }
+
+    #[test]
+    fn test_validate_invalid_card_empty_name() {
+        let card = AgentCard::new("agent-1", "");
+
+        let result = AgentCardDiscovery::validate_card(&card);
+        assert!(!result.valid);
+        assert!(result.errors.iter().any(|e| e.contains("name")));
+    }
+
+    #[test]
+    fn test_validate_card_warnings() {
+        let card = AgentCard::new("agent-1", "Test Agent");
+
+        let result = AgentCardDiscovery::validate_card(&card);
+        assert!(result.valid);
+        assert!(!result.warnings.is_empty());
+        // Should warn about empty description and no capabilities
+        assert!(result.warnings.iter().any(|w| w.contains("description")));
+        assert!(result.warnings.iter().any(|w| w.contains("capabilities")));
+    }
+
+    #[test]
+    fn test_validate_card_endpoint_warning() {
+        let card = AgentCard::new("agent-1", "Test Agent")
+            .with_endpoint("tcp://localhost:8080");
+
+        let result = AgentCardDiscovery::validate_card(&card);
+        assert!(result.valid);
+        assert!(result.warnings.iter().any(|w| w.contains("HTTP/HTTPS")));
+    }
+
+    #[tokio::test]
+    async fn test_agent_card_discovery_local() {
+        let discovery = AgentCardDiscovery::with_defaults();
+
+        let card = AgentCard::new("agent-1", "Test Agent")
+            .with_capability(A2ACapability::new("reasoning"));
+        discovery.register_local(card).await.unwrap();
+
+        let found = discovery.lookup("agent-1").await;
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().name, "Test Agent");
+    }
+
+    #[tokio::test]
+    async fn test_agent_card_discovery_search_by_capability() {
+        let discovery = AgentCardDiscovery::with_defaults();
+
+        let card1 = AgentCard::new("agent-1", "Reasoner")
+            .with_capability(A2ACapability::new("reasoning"));
+        let card2 = AgentCard::new("agent-2", "Coder")
+            .with_capability(A2ACapability::new("coding"));
+
+        discovery.register_local(card1).await.unwrap();
+        discovery.register_local(card2).await.unwrap();
+
+        let reasoners = discovery.search_by_capability("reasoning").await;
+        assert_eq!(reasoners.len(), 1);
+        assert_eq!(reasoners[0].id, "agent-1");
+
+        let all = discovery.list_all_agents().await;
+        assert_eq!(all.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_agent_card_discovery_search_by_name() {
+        let discovery = AgentCardDiscovery::with_defaults();
+
+        let card = AgentCard::new("agent-1", "Smart Reasoner");
+        discovery.register_local(card).await.unwrap();
+
+        let results = discovery.search_by_name("smart").await;
+        assert_eq!(results.len(), 1);
+
+        let results = discovery.search_by_name("nonexistent").await;
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_add_endpoint() {
+        let discovery = AgentCardDiscovery::with_defaults();
+
+        discovery.add_endpoint("https://agent1.example.com").await;
+        discovery.add_endpoint("https://agent2.example.com").await;
+        discovery.add_endpoint("https://agent1.example.com").await; // duplicate
+
+        let endpoints = discovery.known_endpoints.read().await;
+        assert_eq!(endpoints.len(), 2);
+    }
+
+    #[test]
+    fn test_generate_well_known_json() {
+        let card = AgentCard::new("agent-1", "Test Agent")
+            .with_description("A test agent")
+            .with_capability(A2ACapability::new("reasoning").with_description("Can reason"))
+            .with_endpoint("https://example.com");
+
+        let json = AgentCardDiscovery::generate_well_known_json(&card);
+
+        assert_eq!(json["id"], "agent-1");
+        assert_eq!(json["name"], "Test Agent");
+        assert_eq!(json["description"], "A test agent");
+        assert_eq!(json["endpoint"], "https://example.com");
+
+        let caps = json["capabilities"].as_array().unwrap();
+        assert_eq!(caps.len(), 1);
+        assert_eq!(caps[0]["type"], "reasoning");
+    }
+
+    #[tokio::test]
+    async fn test_cache_stats() {
+        let discovery = AgentCardDiscovery::with_defaults();
+
+        let (total, valid) = discovery.cache_stats().await;
+        assert_eq!(total, 0);
+        assert_eq!(valid, 0);
+    }
+
+    #[tokio::test]
+    async fn test_clear_expired_cache() {
+        let discovery = AgentCardDiscovery::with_defaults();
+
+        let removed = discovery.clear_expired_cache().await;
+        assert_eq!(removed, 0);
     }
 }

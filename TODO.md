@@ -3,13 +3,13 @@
 > **Project:** Verifiable Agent Kernel (VAK) / Exo-Cortex 0.1
 > **Target:** Autonomous Code Auditor MVP
 > **Generated:** January 30, 2026
-> **Last Refined:** February 11, 2026 - Sprint 9 Completed
+> **Last Refined:** February 13, 2026 - Sprint 10 Completed
 
 ---
 
 ## Critical Path Analysis
 
-**Status:** Beta — ~85% Complete (58/68 tracked items)
+**Status:** Beta — ~90% Complete (61/68 tracked items)
 
 All critical path items for MVP are **COMPLETE**:
 - [x] LLM Abstraction Layer
@@ -34,6 +34,9 @@ All critical path items for MVP are **COMPLETE**:
 - [x] Property-Based Testing (Issue #33)
 - [x] Benchmark Suite Expansion (TST-005)
 - [x] Database Schema Migrations (INF-002)
+- [x] LangChain Adapter Completion (INT-003)
+- [x] AutoGPT Adapter Completion (INT-004)
+- [x] AgentCard Discovery (SWM-002)
 
 ---
 
@@ -71,13 +74,13 @@ All critical path items for MVP are **COMPLETE**:
 ---
 
 ### Test Coverage Summary (Updated February 11, 2026)
-- **Rust Unit Tests**: 840 passing
+- **Rust Unit Tests**: 867 passing
 - **Rust Doc Tests**: 63 passing (4 ignored)
 - **Property Tests**: 28 passing (proptest)
 - **Python Tests**: 126 passing (94 SDK + 32 Code Auditor)
 - **Integration Tests**: 30+ passing
 - **Benchmarks**: 25 benchmark groups (kernel, policy, audit, memory, knowledge graph, secrets, signed audit, tool definitions, migrations)
-- **Total Tests**: 1,087+ passing
+- **Total Tests**: 1,114+ passing
 
 #### Breakdown by Module:
 - **Kernel**: 45 tests
@@ -87,7 +90,7 @@ All critical path items for MVP are **COMPLETE**:
 - **WASM Sandbox**: 28 tests
 - **Reasoner**: 67 tests
 - **Swarm**: 48 tests (A2A, Voting, Router, Sycophancy)
-- **Integrations**: 35 tests (LangChain, AutoGPT)
+- **Integrations**: 62 tests (LangChain, AutoGPT)
 - **Dashboard**: 25 tests (Metrics, Health, Server)
 - **Tools**: 15 tests (vak-skill-sign CLI)
 - **Python SDK**: 126 tests
@@ -125,7 +128,16 @@ All core functionality and production hardening phase 1 implemented.
 | **Library export**: Prelude with LLM integration + secrets re-exports | Done |
 | **Crate config**: Fixed crate-type for library-first builds (rlib only) | Done |
 
-### Sprint 10: PLANNED
+### Sprint 10: COMPLETED (February 2026)
+
+| Task | Status |
+|------|--------|
+| **INT-003**: LangChain Adapter Completion (LLM interception, callbacks, audit) | Done |
+| **INT-004**: AutoGPT Adapter Completion (PRM scoring, verification, progress) | Done |
+| **SWM-002**: AgentCard Discovery (well-known endpoint, HTTP fetch, validation, caching) | Done |
+| Phase 5: Ecosystem & Interoperability marked as COMPLETE | Done |
+
+### Sprint 11: PLANNED
 
 | Task | Status |
 |------|--------|
@@ -161,5 +173,5 @@ All core functionality and production hardening phase 1 implemented.
 
 ---
 
-*Last updated: February 11, 2026*
+*Last updated: February 13, 2026*
 *Next milestone: v0.2 (Production Hardening)*

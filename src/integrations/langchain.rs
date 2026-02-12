@@ -259,6 +259,8 @@ pub struct LangChainAdapter {
     rate_limiter: Option<Arc<RateLimiter>>,
     /// PRM model (optional)
     prm: Option<Arc<dyn ProcessRewardModel>>,
+    /// Callback handlers for lifecycle events (INT-003)
+    callbacks: Vec<Arc<dyn LangChainCallbackHandler>>,
 }
 
 /// Adapter statistics
@@ -288,6 +290,7 @@ impl LangChainAdapter {
             stats: AdapterStats::default(),
             rate_limiter: None,
             prm: None,
+            callbacks: Vec::new(),
         }
     }
 
@@ -766,6 +769,492 @@ impl ReasoningContext {
 }
 
 // ============================================================================
+// LLM Call Representation (INT-003)
+// ============================================================================
+
+/// Represents an LLM call being intercepted
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmCall {
+    /// Model identifier (e.g., "gpt-4", "claude-3")
+    pub model: String,
+    /// Prompt or messages being sent
+    pub messages: Vec<LlmMessage>,
+    /// Temperature setting
+    pub temperature: Option<f64>,
+    /// Maximum tokens
+    pub max_tokens: Option<u32>,
+    /// Request ID
+    pub request_id: String,
+    /// Timestamp
+    pub timestamp: u64,
+}
+
+/// A single message in an LLM conversation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmMessage {
+    /// Role of the message sender
+    pub role: String,
+    /// Content of the message
+    pub content: String,
+}
+
+impl LlmCall {
+    /// Create a new LLM call
+    pub fn new(model: impl Into<String>) -> Self {
+        Self {
+            model: model.into(),
+            messages: Vec::new(),
+            temperature: None,
+            max_tokens: None,
+            request_id: uuid::Uuid::new_v4().to_string(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+        }
+    }
+
+    /// Add a message to the call
+    pub fn with_message(mut self, role: impl Into<String>, content: impl Into<String>) -> Self {
+        self.messages.push(LlmMessage {
+            role: role.into(),
+            content: content.into(),
+        });
+        self
+    }
+
+    /// Set temperature
+    pub fn with_temperature(mut self, temp: f64) -> Self {
+        self.temperature = Some(temp);
+        self
+    }
+
+    /// Set max tokens
+    pub fn with_max_tokens(mut self, max: u32) -> Self {
+        self.max_tokens = Some(max);
+        self
+    }
+
+    /// Get total token estimate (rough: 4 chars per token)
+    pub fn estimated_tokens(&self) -> usize {
+        self.messages
+            .iter()
+            .map(|m| m.content.len() / 4 + m.role.len() / 4)
+            .sum()
+    }
+
+    /// Convert to action context
+    pub fn to_context(&self, agent_id: &str) -> ActionContext {
+        ActionContext::new(ActionType::LlmCall, &self.model, agent_id)
+            .with_metadata("request_id", &self.request_id)
+            .with_metadata("model", &self.model)
+            .with_metadata("message_count", &self.messages.len().to_string())
+    }
+}
+
+// ============================================================================
+// Tool Execution Result (INT-003)
+// ============================================================================
+
+/// Records the result of a tool execution for audit tracking
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolExecutionRecord {
+    /// The original tool call
+    pub tool_call: ToolCall,
+    /// Agent that made the call
+    pub agent_id: String,
+    /// Whether execution succeeded
+    pub success: bool,
+    /// Output from the tool
+    pub output: Option<serde_json::Value>,
+    /// Error message if failed
+    pub error: Option<String>,
+    /// Execution duration in milliseconds
+    pub duration_ms: u64,
+    /// Timestamp of completion
+    pub completed_at: u64,
+    /// Associated audit entry ID
+    pub audit_entry_id: Option<String>,
+}
+
+// ============================================================================
+// Callback Handler Trait (INT-003)
+// ============================================================================
+
+/// LangChain-style callback handler for lifecycle events.
+///
+/// Implement this trait to receive notifications about tool calls,
+/// chain executions, and LLM calls as they happen.
+#[async_trait::async_trait]
+pub trait LangChainCallbackHandler: Send + Sync {
+    /// Called when a tool execution starts
+    async fn on_tool_start(&self, tool_call: &ToolCall, agent_id: &str) {
+        let _ = (tool_call, agent_id);
+    }
+
+    /// Called when a tool execution completes
+    async fn on_tool_end(&self, record: &ToolExecutionRecord) {
+        let _ = record;
+    }
+
+    /// Called when a tool execution fails
+    async fn on_tool_error(&self, tool_call: &ToolCall, error: &str) {
+        let _ = (tool_call, error);
+    }
+
+    /// Called when a chain execution starts
+    async fn on_chain_start(&self, chain: &ChainExecution, agent_id: &str) {
+        let _ = (chain, agent_id);
+    }
+
+    /// Called when a chain execution completes
+    async fn on_chain_end(&self, chain: &ChainExecution, output: &serde_json::Value) {
+        let _ = (chain, output);
+    }
+
+    /// Called when an LLM call starts
+    async fn on_llm_start(&self, llm_call: &LlmCall, agent_id: &str) {
+        let _ = (llm_call, agent_id);
+    }
+
+    /// Called when an LLM call completes
+    async fn on_llm_end(&self, llm_call: &LlmCall, response: &str) {
+        let _ = (llm_call, response);
+    }
+
+    /// Called when an action is blocked by policy
+    async fn on_action_blocked(&self, context: &ActionContext, reason: &str) {
+        let _ = (context, reason);
+    }
+}
+
+/// Audit-logging callback handler that records all events (INT-003)
+pub struct AuditCallbackHandler {
+    /// Records of all tool executions
+    records: Arc<tokio::sync::RwLock<Vec<ToolExecutionRecord>>>,
+}
+
+impl AuditCallbackHandler {
+    /// Create a new audit callback handler
+    pub fn new() -> Self {
+        Self {
+            records: Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        }
+    }
+
+    /// Get all recorded tool execution records
+    pub async fn get_records(&self) -> Vec<ToolExecutionRecord> {
+        self.records.read().await.clone()
+    }
+
+    /// Get the number of recorded executions
+    pub async fn record_count(&self) -> usize {
+        self.records.read().await.len()
+    }
+}
+
+impl Default for AuditCallbackHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait::async_trait]
+impl LangChainCallbackHandler for AuditCallbackHandler {
+    async fn on_tool_start(&self, tool_call: &ToolCall, agent_id: &str) {
+        tracing::info!(
+            tool = %tool_call.tool_name,
+            action = %tool_call.action,
+            agent = %agent_id,
+            "Tool execution started"
+        );
+    }
+
+    async fn on_tool_end(&self, record: &ToolExecutionRecord) {
+        tracing::info!(
+            tool = %record.tool_call.tool_name,
+            success = %record.success,
+            duration_ms = %record.duration_ms,
+            "Tool execution completed"
+        );
+        let mut records = self.records.write().await;
+        records.push(record.clone());
+    }
+
+    async fn on_tool_error(&self, tool_call: &ToolCall, error: &str) {
+        tracing::error!(
+            tool = %tool_call.tool_name,
+            error = %error,
+            "Tool execution failed"
+        );
+    }
+
+    async fn on_action_blocked(&self, context: &ActionContext, reason: &str) {
+        tracing::warn!(
+            action = %context.name,
+            agent = %context.agent_id,
+            reason = %reason,
+            "Action blocked by policy"
+        );
+    }
+}
+
+// ============================================================================
+// Extended LangChain Adapter Methods (INT-003)
+// ============================================================================
+
+impl LangChainAdapter {
+    /// Add a callback handler
+    pub fn with_callback(mut self, callback: Arc<dyn LangChainCallbackHandler>) -> Self {
+        self.callbacks.push(callback);
+        self
+    }
+
+    /// Intercept an LLM call with policy checking and audit logging (INT-003)
+    ///
+    /// Evaluates the LLM call against rate limits, blocked actions,
+    /// and custom hooks before allowing it to proceed.
+    pub async fn intercept_llm(
+        &self,
+        llm_call: &LlmCall,
+        agent_id: &str,
+    ) -> AdapterResult<InterceptionResult> {
+        let start = Instant::now();
+
+        if !self.config.intercept_llm {
+            return Ok(InterceptionResult {
+                context: llm_call.to_context(agent_id),
+                decision: HookDecision::Allow,
+                hook_name: "disabled".to_string(),
+                prm_score: None,
+                evaluation_time_us: start.elapsed().as_micros() as u64,
+                audit_entry_id: None,
+            });
+        }
+
+        // Notify callbacks
+        for cb in &self.callbacks {
+            cb.on_llm_start(llm_call, agent_id).await;
+        }
+
+        // Check rate limit
+        self.check_rate_limit(agent_id).await?;
+
+        // Check if LLM model is blocked
+        let model_action = format!("llm:{}", llm_call.model);
+        if self.config.base.blocked_actions.contains(&model_action) {
+            let context = llm_call.to_context(agent_id);
+            let reason = format!("LLM model '{}' is blocked by policy", llm_call.model);
+
+            for cb in &self.callbacks {
+                cb.on_action_blocked(&context, &reason).await;
+            }
+
+            return Ok(InterceptionResult {
+                context,
+                decision: HookDecision::Block { reason },
+                hook_name: "blocked_models".to_string(),
+                prm_score: None,
+                evaluation_time_us: start.elapsed().as_micros() as u64,
+                audit_entry_id: None,
+            });
+        }
+
+        // Check token limits
+        let estimated_tokens = llm_call.estimated_tokens();
+        if estimated_tokens > 100_000 {
+            return Ok(InterceptionResult {
+                context: llm_call.to_context(agent_id),
+                decision: HookDecision::Block {
+                    reason: format!(
+                        "Estimated token count {} exceeds safety limit",
+                        estimated_tokens
+                    ),
+                },
+                hook_name: "token_limit".to_string(),
+                prm_score: None,
+                evaluation_time_us: start.elapsed().as_micros() as u64,
+                audit_entry_id: None,
+            });
+        }
+
+        // Run custom hooks
+        let context = llm_call.to_context(agent_id);
+        for hook in &self.hooks {
+            if hook.applies_to(&context) {
+                let decision = hook.evaluate(&context);
+                if !matches!(decision, HookDecision::Allow) {
+                    return Ok(InterceptionResult {
+                        context,
+                        decision,
+                        hook_name: hook.name().to_string(),
+                        prm_score: None,
+                        evaluation_time_us: start.elapsed().as_micros() as u64,
+                        audit_entry_id: None,
+                    });
+                }
+            }
+        }
+
+        Ok(InterceptionResult {
+            context,
+            decision: HookDecision::Allow,
+            hook_name: "default".to_string(),
+            prm_score: None,
+            evaluation_time_us: start.elapsed().as_micros() as u64,
+            audit_entry_id: None,
+        })
+    }
+
+    /// Record the result of a tool execution for audit tracking (INT-003)
+    pub async fn record_tool_result(
+        &self,
+        tool_call: &ToolCall,
+        agent_id: &str,
+        success: bool,
+        output: Option<serde_json::Value>,
+        error: Option<String>,
+        duration_ms: u64,
+    ) -> ToolExecutionRecord {
+        let record = ToolExecutionRecord {
+            tool_call: tool_call.clone(),
+            agent_id: agent_id.to_string(),
+            success,
+            output,
+            error: error.clone(),
+            duration_ms,
+            completed_at: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+            audit_entry_id: None,
+        };
+
+        // Notify callbacks
+        if success {
+            for cb in &self.callbacks {
+                cb.on_tool_end(&record).await;
+            }
+        } else if let Some(ref err) = error {
+            for cb in &self.callbacks {
+                cb.on_tool_error(tool_call, err).await;
+            }
+        }
+
+        record
+    }
+
+    /// Execute a full tool call lifecycle: intercept, execute callback, record (INT-003)
+    ///
+    /// This method provides a complete tool call flow:
+    /// 1. Intercept and check policies
+    /// 2. Notify callbacks of tool start
+    /// 3. Execute the provided function
+    /// 4. Record the result
+    /// 5. Notify callbacks of tool end
+    pub async fn execute_tool<F, Fut>(
+        &self,
+        tool_call: &ToolCall,
+        agent_id: &str,
+        executor: F,
+    ) -> AdapterResult<ToolExecutionRecord>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<serde_json::Value, String>>,
+    {
+        // Step 1: Intercept
+        let interception = self.intercept_tool(tool_call, agent_id).await?;
+
+        if !matches!(interception.decision, HookDecision::Allow) {
+            let reason = match &interception.decision {
+                HookDecision::Block { reason } => reason.clone(),
+                _ => "Action not allowed".to_string(),
+            };
+            return Ok(ToolExecutionRecord {
+                tool_call: tool_call.clone(),
+                agent_id: agent_id.to_string(),
+                success: false,
+                output: None,
+                error: Some(reason),
+                duration_ms: 0,
+                completed_at: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64,
+                audit_entry_id: None,
+            });
+        }
+
+        // Step 2: Notify start
+        for cb in &self.callbacks {
+            cb.on_tool_start(tool_call, agent_id).await;
+        }
+
+        // Step 3: Execute
+        let start = Instant::now();
+        let result = executor().await;
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        // Step 4: Record & notify
+        match result {
+            Ok(output) => {
+                self.record_tool_result(
+                    tool_call,
+                    agent_id,
+                    true,
+                    Some(output),
+                    None,
+                    duration_ms,
+                )
+                .await;
+                Ok(ToolExecutionRecord {
+                    tool_call: tool_call.clone(),
+                    agent_id: agent_id.to_string(),
+                    success: true,
+                    output: None,
+                    error: None,
+                    duration_ms,
+                    completed_at: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64,
+                    audit_entry_id: None,
+                })
+            }
+            Err(err) => {
+                self.record_tool_result(
+                    tool_call,
+                    agent_id,
+                    false,
+                    None,
+                    Some(err.clone()),
+                    duration_ms,
+                )
+                .await;
+                Ok(ToolExecutionRecord {
+                    tool_call: tool_call.clone(),
+                    agent_id: agent_id.to_string(),
+                    success: false,
+                    output: None,
+                    error: Some(err),
+                    duration_ms,
+                    completed_at: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64,
+                    audit_entry_id: None,
+                })
+            }
+        }
+    }
+
+    /// Get callback handlers count
+    pub fn callback_count(&self) -> usize {
+        self.callbacks.len()
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -827,5 +1316,104 @@ mod tests {
         let _ = adapter.intercept_tool(&call, "agent-1").await;
 
         assert!(adapter.stats.tool_calls_total.load(Ordering::Relaxed) >= 1);
+    }
+
+    #[tokio::test]
+    async fn test_llm_call_creation() {
+        let call = LlmCall::new("gpt-4")
+            .with_message("system", "You are helpful")
+            .with_message("user", "Hello")
+            .with_temperature(0.7)
+            .with_max_tokens(1000);
+
+        assert_eq!(call.model, "gpt-4");
+        assert_eq!(call.messages.len(), 2);
+        assert_eq!(call.temperature, Some(0.7));
+        assert_eq!(call.max_tokens, Some(1000));
+    }
+
+    #[tokio::test]
+    async fn test_llm_interception_disabled() {
+        let config = LangChainConfig::default(); // intercept_llm is false by default
+        let adapter = LangChainAdapter::new(config);
+
+        let call = LlmCall::new("gpt-4").with_message("user", "test");
+        let result = adapter.intercept_llm(&call, "agent-1").await.unwrap();
+
+        assert!(matches!(result.decision, HookDecision::Allow));
+        assert_eq!(result.hook_name, "disabled");
+    }
+
+    #[tokio::test]
+    async fn test_llm_interception_blocked_model() {
+        let mut config = LangChainConfig::default();
+        config.intercept_llm = true;
+        config.base.blocked_actions.push("llm:dangerous-model".to_string());
+        let adapter = LangChainAdapter::new(config);
+
+        let call = LlmCall::new("dangerous-model").with_message("user", "test");
+        let result = adapter.intercept_llm(&call, "agent-1").await.unwrap();
+
+        assert!(matches!(result.decision, HookDecision::Block { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_callback_handler() {
+        let handler = Arc::new(AuditCallbackHandler::new());
+
+        let config = LangChainConfig::default();
+        let adapter = LangChainAdapter::new(config).with_callback(handler.clone());
+
+        assert_eq!(adapter.callback_count(), 1);
+
+        let call = ToolCall::new("test", "action");
+        let _ = adapter
+            .record_tool_result(&call, "agent-1", true, Some(serde_json::json!(42)), None, 100)
+            .await;
+
+        assert_eq!(handler.record_count().await, 1);
+    }
+
+    #[tokio::test]
+    async fn test_execute_tool_lifecycle() {
+        let config = LangChainConfig::default();
+        let adapter = LangChainAdapter::new(config);
+
+        let call = ToolCall::new("calculator", "add")
+            .with_param("a", 1)
+            .with_param("b", 2);
+
+        let record = adapter
+            .execute_tool(&call, "agent-1", || async { Ok(serde_json::json!(3)) })
+            .await
+            .unwrap();
+
+        assert!(record.success);
+    }
+
+    #[tokio::test]
+    async fn test_execute_tool_failure() {
+        let config = LangChainConfig::default();
+        let adapter = LangChainAdapter::new(config);
+
+        let call = ToolCall::new("calculator", "divide");
+
+        let record = adapter
+            .execute_tool(&call, "agent-1", || async {
+                Err("Division by zero".to_string())
+            })
+            .await
+            .unwrap();
+
+        assert!(!record.success);
+        assert_eq!(record.error, Some("Division by zero".to_string()));
+    }
+
+    #[test]
+    fn test_llm_token_estimation() {
+        let call = LlmCall::new("gpt-4")
+            .with_message("user", "Hello world, this is a test message");
+
+        assert!(call.estimated_tokens() > 0);
     }
 }

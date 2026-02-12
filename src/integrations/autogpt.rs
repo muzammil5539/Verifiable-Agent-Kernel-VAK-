@@ -361,6 +361,8 @@ pub struct AutoGPTAdapter {
     prm: Option<Arc<dyn ProcessRewardModel>>,
     /// Blocked commands regex set
     blocked_commands_set: regex::RegexSet,
+    /// Callback handlers for lifecycle events (INT-004)
+    callbacks: Vec<Arc<dyn AutoGPTCallbackHandler>>,
 }
 
 /// Statistics for AutoGPT adapter
@@ -436,6 +438,7 @@ impl AutoGPTAdapter {
             rate_limiter: None,
             prm: None,
             blocked_commands_set,
+            callbacks: Vec::new(),
         }
     }
 
@@ -1341,6 +1344,458 @@ pub struct PlanEvaluation {
 }
 
 // ============================================================================
+// Extended AutoGPT Adapter Methods (INT-004)
+// ============================================================================
+
+/// Callback handler trait for AutoGPT lifecycle events (INT-004)
+#[async_trait::async_trait]
+pub trait AutoGPTCallbackHandler: Send + Sync {
+    /// Called when a plan is created and evaluated
+    async fn on_plan_evaluated(&self, plan: &TaskPlan, evaluation: &PlanEvaluation) {
+        let _ = (plan, evaluation);
+    }
+
+    /// Called when a command is about to execute
+    async fn on_command_start(&self, command: &str, plan_id: Option<&str>, agent_id: &str) {
+        let _ = (command, plan_id, agent_id);
+    }
+
+    /// Called when a command execution completes
+    async fn on_command_end(&self, result: &ExecutionResult, agent_id: &str) {
+        let _ = (result, agent_id);
+    }
+
+    /// Called when a step completes
+    async fn on_step_complete(&self, plan_id: &str, step_number: usize, result: &ExecutionResult) {
+        let _ = (plan_id, step_number, result);
+    }
+
+    /// Called when a plan execution completes
+    async fn on_plan_complete(&self, plan_id: &str, success: bool) {
+        let _ = (plan_id, success);
+    }
+
+    /// Called when a command is blocked
+    async fn on_command_blocked(&self, command: &str, reason: &str) {
+        let _ = (command, reason);
+    }
+}
+
+/// Audit callback handler that logs all AutoGPT events (INT-004)
+pub struct AutoGPTAuditHandler {
+    /// Recorded command executions
+    execution_log: Arc<RwLock<Vec<CommandExecutionLog>>>,
+}
+
+/// Log entry for a command execution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandExecutionLog {
+    /// Command that was executed
+    pub command: String,
+    /// Agent that executed the command
+    pub agent_id: String,
+    /// Associated plan ID
+    pub plan_id: Option<String>,
+    /// Exit code
+    pub exit_code: i32,
+    /// Whether the command succeeded
+    pub success: bool,
+    /// Execution duration in milliseconds
+    pub duration_ms: u64,
+    /// Timestamp
+    pub timestamp: u64,
+}
+
+impl AutoGPTAuditHandler {
+    /// Create a new AutoGPT audit handler
+    pub fn new() -> Self {
+        Self {
+            execution_log: Arc::new(RwLock::new(Vec::new())),
+        }
+    }
+
+    /// Get all execution logs
+    pub async fn get_logs(&self) -> Vec<CommandExecutionLog> {
+        self.execution_log.read().await.clone()
+    }
+
+    /// Get the number of logged executions
+    pub async fn log_count(&self) -> usize {
+        self.execution_log.read().await.len()
+    }
+}
+
+impl Default for AutoGPTAuditHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait::async_trait]
+impl AutoGPTCallbackHandler for AutoGPTAuditHandler {
+    async fn on_command_end(&self, result: &ExecutionResult, agent_id: &str) {
+        tracing::info!(
+            command = %result.command,
+            exit_code = %result.exit_code,
+            agent = %agent_id,
+            "Command execution completed"
+        );
+        let mut log = self.execution_log.write().await;
+        log.push(CommandExecutionLog {
+            command: result.command.clone(),
+            agent_id: agent_id.to_string(),
+            plan_id: None,
+            exit_code: result.exit_code,
+            success: result.is_success(),
+            duration_ms: result.duration_ms,
+            timestamp: result.timestamp,
+        });
+    }
+
+    async fn on_command_blocked(&self, command: &str, reason: &str) {
+        tracing::warn!(
+            command = %command,
+            reason = %reason,
+            "Command blocked by policy"
+        );
+    }
+
+    async fn on_plan_evaluated(&self, plan: &TaskPlan, evaluation: &PlanEvaluation) {
+        tracing::info!(
+            plan_id = %plan.plan_id,
+            approved = %evaluation.approved,
+            issues = %evaluation.issues.len(),
+            "Plan evaluated"
+        );
+    }
+}
+
+/// Result of verifying an execution against expectations (INT-004)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionVerification {
+    /// Execution ID
+    pub execution_id: String,
+    /// Whether the output matches expectations
+    pub output_verified: bool,
+    /// PRM score for the execution step
+    pub prm_score: Option<f64>,
+    /// Whether the execution was within time limits
+    pub within_time_limit: bool,
+    /// Warnings generated
+    pub warnings: Vec<String>,
+    /// Whether the verification passed overall
+    pub passed: bool,
+}
+
+/// Progress snapshot for a plan execution (INT-004)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanProgress {
+    /// Plan ID
+    pub plan_id: String,
+    /// Total number of steps
+    pub total_steps: usize,
+    /// Number of completed steps
+    pub completed_steps: usize,
+    /// Number of failed steps
+    pub failed_steps: usize,
+    /// Number of blocked steps
+    pub blocked_steps: usize,
+    /// Current step being executed
+    pub current_step: Option<usize>,
+    /// Elapsed time in seconds
+    pub elapsed_secs: u64,
+    /// Whether the plan is still executing
+    pub in_progress: bool,
+    /// Completion percentage (0.0 to 1.0)
+    pub completion_percentage: f64,
+}
+
+impl AutoGPTAdapter {
+    /// Add a callback handler (INT-004)
+    pub fn with_callback(mut self, callback: Arc<dyn AutoGPTCallbackHandler>) -> Self {
+        self.callbacks.push(callback);
+        self
+    }
+
+    /// Intercept a command with PRM scoring (INT-004)
+    ///
+    /// This extends the basic command interception with:
+    /// - PRM scoring for reasoning quality validation
+    /// - Callback notifications
+    /// - History tracking for multi-step plans
+    pub async fn intercept_command_with_prm(
+        &self,
+        command: &str,
+        plan_id: Option<&str>,
+        agent_id: &str,
+        reasoning_context: Option<&str>,
+    ) -> AdapterResult<InterceptionResult> {
+        let start = Instant::now();
+        self.stats
+            .commands_intercepted
+            .fetch_add(1, Ordering::Relaxed);
+
+        // Notify callbacks
+        for cb in &self.callbacks {
+            cb.on_command_start(command, plan_id, agent_id).await;
+        }
+
+        // Check rate limit
+        if let Some(limiter) = &self.rate_limiter {
+            let key = ResourceKey::new(agent_id, "execute", "command");
+            let result = limiter.check(&key).await;
+            if !result.allowed {
+                use crate::integrations::common::AdapterError;
+                return Err(AdapterError::RateLimited(format!(
+                    "Agent {} exceeded rate limit. Retry after {}s",
+                    agent_id,
+                    result.retry_after_secs.unwrap_or(1)
+                )));
+            }
+        }
+
+        let context = ActionContext::new(ActionType::CommandExecution, command, agent_id);
+
+        // Check if command is blocked
+        if self.is_blocked_command(command) {
+            self.stats.commands_blocked.fetch_add(1, Ordering::Relaxed);
+
+            for cb in &self.callbacks {
+                cb.on_command_blocked(command, "Blocked by policy").await;
+            }
+
+            return Ok(InterceptionResult {
+                context,
+                decision: HookDecision::Block {
+                    reason: format!("Command '{}' is blocked by policy", command),
+                },
+                hook_name: "blocked_commands".to_string(),
+                prm_score: None,
+                evaluation_time_us: start.elapsed().as_micros() as u64,
+                audit_entry_id: None,
+            });
+        }
+
+        // PRM scoring if reasoning context and PRM model available
+        let prm_score = if let (Some(prm), Some(reasoning)) = (&self.prm, reasoning_context) {
+            let step = ReasoningStep::new(1, reasoning).with_action(command);
+            match prm
+                .score_step(&step, &format!("Execute: {}", command))
+                .await
+            {
+                Ok(score) => {
+                    if score.score < self.config.base.prm_threshold {
+                        self.stats.high_risk_alerts.fetch_add(1, Ordering::Relaxed);
+                        return Ok(InterceptionResult {
+                            context,
+                            decision: HookDecision::Block {
+                                reason: format!(
+                                    "PRM score {:.2} below threshold {:.2} for command",
+                                    score.score, self.config.base.prm_threshold
+                                ),
+                            },
+                            hook_name: "prm_gating".to_string(),
+                            prm_score: Some(score.score),
+                            evaluation_time_us: start.elapsed().as_micros() as u64,
+                            audit_entry_id: None,
+                        });
+                    }
+                    Some(score.score)
+                }
+                Err(e) => {
+                    tracing::warn!("PRM scoring failed: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // Check plan execution state
+        if let Some(pid) = plan_id {
+            let plans = self.active_plans.read().await;
+            if let Some(state) = plans.get(pid) {
+                if state.started_at.elapsed().as_secs() > self.config.max_execution_time_secs {
+                    return Ok(InterceptionResult {
+                        context,
+                        decision: HookDecision::Block {
+                            reason: "Plan execution time limit exceeded".to_string(),
+                        },
+                        hook_name: "timeout".to_string(),
+                        prm_score,
+                        evaluation_time_us: start.elapsed().as_micros() as u64,
+                        audit_entry_id: None,
+                    });
+                }
+            }
+        }
+
+        // Run custom hooks
+        for hook in &self.hooks {
+            if hook.applies_to(&context) {
+                let decision = hook.evaluate(&context);
+                if !matches!(decision, HookDecision::Allow) {
+                    return Ok(InterceptionResult {
+                        context,
+                        decision,
+                        hook_name: hook.name().to_string(),
+                        prm_score,
+                        evaluation_time_us: start.elapsed().as_micros() as u64,
+                        audit_entry_id: None,
+                    });
+                }
+            }
+        }
+
+        Ok(InterceptionResult {
+            context,
+            decision: HookDecision::Allow,
+            hook_name: "default".to_string(),
+            prm_score,
+            evaluation_time_us: start.elapsed().as_micros() as u64,
+            audit_entry_id: None,
+        })
+    }
+
+    /// Verify an execution result against expectations (INT-004)
+    pub async fn verify_execution(
+        &self,
+        result: &ExecutionResult,
+        expected_exit_code: Option<i32>,
+        max_duration_ms: Option<u64>,
+    ) -> ExecutionVerification {
+        let mut warnings = Vec::new();
+        let mut passed = true;
+
+        // Verify exit code
+        let output_verified = if let Some(expected) = expected_exit_code {
+            let matches = result.exit_code == expected;
+            if !matches {
+                warnings.push(format!(
+                    "Expected exit code {}, got {}",
+                    expected, result.exit_code
+                ));
+                passed = false;
+            }
+            matches
+        } else {
+            result.is_success()
+        };
+
+        if !output_verified {
+            passed = false;
+        }
+
+        // Verify duration
+        let within_time_limit = if let Some(max) = max_duration_ms {
+            let within = result.duration_ms <= max;
+            if !within {
+                warnings.push(format!(
+                    "Execution took {}ms, exceeding limit of {}ms",
+                    result.duration_ms, max
+                ));
+            }
+            within
+        } else {
+            true
+        };
+
+        // Check stderr for error patterns
+        if !result.stderr.is_empty() && result.is_success() {
+            warnings.push("Command succeeded but produced stderr output".to_string());
+        }
+
+        // Check for sensitive data in output
+        let sensitive_patterns = ["password", "secret", "token", "api_key", "private_key"];
+        for pattern in sensitive_patterns {
+            if result.stdout.to_lowercase().contains(pattern)
+                || result.stderr.to_lowercase().contains(pattern)
+            {
+                warnings.push(format!(
+                    "Sensitive data pattern '{}' detected in output",
+                    pattern
+                ));
+                passed = false;
+            }
+        }
+
+        // Notify callbacks
+        for cb in &self.callbacks {
+            cb.on_command_end(result, "").await;
+        }
+
+        ExecutionVerification {
+            execution_id: result.execution_id.clone(),
+            output_verified,
+            prm_score: None,
+            within_time_limit,
+            warnings,
+            passed,
+        }
+    }
+
+    /// Get progress snapshot for an active plan (INT-004)
+    pub async fn get_plan_progress(&self, plan_id: &str) -> Option<PlanProgress> {
+        let plans = self.active_plans.read().await;
+        plans.get(plan_id).map(|state| {
+            let elapsed = state.started_at.elapsed().as_secs();
+            let total = state.completed_steps + state.blocked_steps.len();
+            PlanProgress {
+                plan_id: state.plan_id.clone(),
+                total_steps: total.max(state.current_step),
+                completed_steps: state.completed_steps,
+                failed_steps: 0,
+                blocked_steps: state.blocked_steps.len(),
+                current_step: Some(state.current_step),
+                elapsed_secs: elapsed,
+                in_progress: true,
+                completion_percentage: if total > 0 {
+                    state.completed_steps as f64 / total as f64
+                } else {
+                    0.0
+                },
+            }
+        })
+    }
+
+    /// Record step completion with verification (INT-004)
+    pub async fn record_step_with_verification(
+        &self,
+        plan_id: &str,
+        step_number: usize,
+        result: &ExecutionResult,
+        expected_exit_code: Option<i32>,
+    ) -> ExecutionVerification {
+        // Record the step
+        self.record_step_completion(plan_id, step_number, result)
+            .await;
+
+        // Notify callbacks
+        for cb in &self.callbacks {
+            cb.on_step_complete(plan_id, step_number, result).await;
+        }
+
+        // Verify the result
+        self.verify_execution(result, expected_exit_code, None)
+            .await
+    }
+
+    /// Complete a plan with callback notification (INT-004)
+    pub async fn complete_plan_with_status(&self, plan_id: &str, success: bool) {
+        self.complete_plan(plan_id).await;
+
+        for cb in &self.callbacks {
+            cb.on_plan_complete(plan_id, success).await;
+        }
+    }
+
+    /// Get callback count
+    pub fn callback_count(&self) -> usize {
+        self.callbacks.len()
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -1424,5 +1879,102 @@ mod tests {
 
         let failure = ExecutionResult::failure("false", 1, "");
         assert!(!failure.is_success());
+    }
+
+    #[tokio::test]
+    async fn test_execution_verification() {
+        let adapter = AutoGPTAdapter::new(AutoGPTConfig::default());
+
+        let result = ExecutionResult::success("echo hello", "hello");
+        let verification = adapter.verify_execution(&result, Some(0), None).await;
+
+        assert!(verification.passed);
+        assert!(verification.output_verified);
+        assert!(verification.within_time_limit);
+    }
+
+    #[tokio::test]
+    async fn test_execution_verification_failure() {
+        let adapter = AutoGPTAdapter::new(AutoGPTConfig::default());
+
+        let result = ExecutionResult::failure("false", 1, "error occurred");
+        let verification = adapter.verify_execution(&result, Some(0), None).await;
+
+        assert!(!verification.passed);
+        assert!(!verification.output_verified);
+    }
+
+    #[tokio::test]
+    async fn test_sensitive_data_detection() {
+        let adapter = AutoGPTAdapter::new(AutoGPTConfig::default());
+
+        let result = ExecutionResult::success("cat config", "password=secret123");
+        let verification = adapter.verify_execution(&result, None, None).await;
+
+        assert!(!verification.passed);
+        assert!(!verification.warnings.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_plan_progress_tracking() {
+        let adapter = AutoGPTAdapter::new(AutoGPTConfig::default());
+
+        let plan = TaskPlan::new("Test plan")
+            .with_step("Step 1")
+            .with_step("Step 2");
+
+        let eval = adapter.evaluate_plan(&plan, "agent-1").await.unwrap();
+        assert!(eval.approved);
+
+        let progress = adapter.get_plan_progress(&plan.plan_id).await;
+        assert!(progress.is_some());
+
+        let progress = progress.unwrap();
+        assert_eq!(progress.completed_steps, 0);
+        assert!(progress.in_progress);
+    }
+
+    #[tokio::test]
+    async fn test_callback_handler() {
+        let handler = Arc::new(AutoGPTAuditHandler::new());
+        let adapter =
+            AutoGPTAdapter::new(AutoGPTConfig::default()).with_callback(handler.clone());
+
+        assert_eq!(adapter.callback_count(), 1);
+
+        let result = ExecutionResult::success("echo test", "test");
+        let _ = adapter.verify_execution(&result, None, None).await;
+
+        assert_eq!(handler.log_count().await, 1);
+    }
+
+    #[tokio::test]
+    async fn test_intercept_command_with_prm_no_prm() {
+        let adapter = AutoGPTAdapter::new(AutoGPTConfig::default());
+
+        let result = adapter
+            .intercept_command_with_prm("ls -la", None, "agent-1", Some("List files"))
+            .await
+            .unwrap();
+
+        assert!(matches!(result.decision, HookDecision::Allow));
+        assert!(result.prm_score.is_none()); // No PRM model, so no score
+    }
+
+    #[tokio::test]
+    async fn test_complete_plan_with_status() {
+        let adapter = AutoGPTAdapter::new(AutoGPTConfig::default());
+
+        let plan = TaskPlan::new("Test plan").with_step("Step 1");
+        let eval = adapter.evaluate_plan(&plan, "agent-1").await.unwrap();
+        assert!(eval.approved);
+
+        adapter
+            .complete_plan_with_status(&plan.plan_id, true)
+            .await;
+
+        // Plan should be removed after completion
+        let progress = adapter.get_plan_progress(&plan.plan_id).await;
+        assert!(progress.is_none());
     }
 }

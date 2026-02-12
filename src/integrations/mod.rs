@@ -32,13 +32,15 @@ pub mod langchain;
 pub mod mcp;
 
 pub use autogpt::{
-    AutoGPTAdapter, AutoGPTConfig, ExecutionResult, FullVerificationResult, GoalAnalysis,
-    MonitoringResult, RecommendationLevel, ResourceAnalysis, RiskLevel, StepAnalysis, TaskPlan,
-    TimingAnalysis, VerificationOptions, VerificationRecommendation,
+    AutoGPTAdapter, AutoGPTAuditHandler, AutoGPTCallbackHandler, AutoGPTConfig,
+    CommandExecutionLog, ExecutionResult, ExecutionVerification, FullVerificationResult,
+    GoalAnalysis, MonitoringResult, PlanProgress, RecommendationLevel, ResourceAnalysis, RiskLevel,
+    StepAnalysis, TaskPlan, TimingAnalysis, VerificationOptions, VerificationRecommendation,
 };
 pub use common::{AdapterError, AdapterResult, HookDecision, InterceptionHook};
 pub use langchain::{
-    ChainExecution, LangChainAdapter, LangChainConfig, ReasoningContext, ToolCall,
+    AuditCallbackHandler, ChainExecution, LangChainAdapter, LangChainCallbackHandler,
+    LangChainConfig, LlmCall, LlmMessage, ReasoningContext, ToolCall, ToolExecutionRecord,
 };
 pub use mcp::{
     create_vak_mcp_server, ContentItem, JsonRpcError, JsonRpcRequest, JsonRpcResponse, McpConfig,
