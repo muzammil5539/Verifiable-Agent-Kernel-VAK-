@@ -181,6 +181,120 @@ print(RiskLevel.CRITICAL)  # "critical"
 
 ---
 
+## Memory Management
+
+VAK provides a multi-tier memory system. The Python SDK exposes a working
+memory store, an episodic memory chain, and a semantic search interface.
+
+### Working Memory
+
+```python
+from vak import VakKernel
+from vak.memory import MemoryItem
+
+kernel = VakKernel.default()
+
+# Store an item
+item = kernel.store_memory("api-key-hash", "abc123", priority="high", metadata={"source": "env"})
+assert isinstance(item, MemoryItem)
+
+# Retrieve by key
+result = kernel.retrieve_memory("api-key-hash")
+print(result.content)  # "abc123"
+
+# Search by keyword (stub uses keyword matching, native uses vector search)
+results = kernel.search_semantic("api", top_k=5)
+```
+
+### Episodic Memory (Merkle-Chained)
+
+Each episode is hash-chained to the previous, creating an unforgeable event log.
+
+```python
+from vak.memory import Episode
+
+episode = Episode(
+    episode_id="ep-001",
+    episode_type="observation",
+    content="Agent observed a config change",
+    agent_id="agent-1",
+    timestamp="2026-01-15T10:30:00Z",
+)
+hash_str = kernel.store_episode(episode)  # Returns SHA-256 hash
+
+episodes = kernel.retrieve_episodes(limit=10)  # Most recent first
+for ep in episodes:
+    print(f"{ep.episode_id}: {ep.content} (hash={ep.hash[:8]}...)")
+```
+
+---
+
+## Swarm Coordination
+
+Multi-agent consensus using quadratic voting with sycophancy detection.
+
+### Quadratic Voting
+
+```python
+kernel = VakKernel.default()
+
+# Create a voting session
+session_id = kernel.create_voting_session(
+    "Should we deploy v2.0?",
+    config={"token_budget": 100, "quorum_threshold": 0.6, "quadratic_cost": True},
+)
+
+# Agents cast votes (cost = weight^2 tokens)
+kernel.cast_vote(session_id, "agent-1", "for", weight=3)   # cost: 9
+kernel.cast_vote(session_id, "agent-2", "against", weight=1)  # cost: 1
+kernel.cast_vote(session_id, "agent-3", "for", weight=2)   # cost: 4
+
+# Tally and close
+result = kernel.tally_votes(session_id)
+print(f"Winner: {result['winner']}")       # "for"
+print(f"Voters: {result['unique_voters']}") # 3
+```
+
+### Sycophancy Detection
+
+```python
+# Analyze voting history for groupthink patterns
+history = [
+    {"votes": [{"agent_id": "a1", "direction": "for"}, {"agent_id": "a2", "direction": "for"}]},
+    {"votes": [{"agent_id": "a1", "direction": "for"}, {"agent_id": "a2", "direction": "for"}]},
+]
+analysis = kernel.detect_sycophancy(history)
+print(f"Sycophancy: {analysis['sycophancy_detected']}")  # True if agreement > 90%
+print(f"Risk level: {analysis['risk_level']}")            # "critical", "high", "medium", "low"
+```
+
+---
+
+## Audit Chain Verification
+
+The audit system uses SHA-256 hash chaining to create tamper-evident logs.
+
+```python
+kernel = VakKernel.default()
+
+# Create audit entries (each entry is hash-chained)
+kernel.create_audit_entry("agent-1", "file.read", "/data/report.csv")
+kernel.create_audit_entry("agent-1", "compute.run", "model-training")
+
+# Verify chain integrity
+assert kernel.verify_audit_chain()  # True if no tampering
+
+# Get current root hash
+root = kernel.get_audit_root_hash()
+print(f"Root hash: {root}")  # SHA-256 hex string
+
+# Export a cryptographic receipt
+receipt = kernel.export_audit_receipt()
+print(f"Receipt: {receipt['receipt_id']}, entries: {receipt['entry_count']}")
+```
+
+---
+
 ## Using with Async Frameworks
 
 VAK kernel operations are CPU-bound. Use `run_in_executor` for
@@ -345,7 +459,10 @@ VAK/
     └── tests/
         ├── test_kernel.py
         ├── test_types.py
-        └── test_integration.py
+        ├── test_integration.py
+        ├── test_memory.py
+        ├── test_swarm.py
+        └── test_audit_chain.py
 ```
 
 ---

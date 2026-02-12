@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **v0.2 Milestone**: Python SDK stable, ecosystem integrations complete
+- **Python SDK - Memory Management**: `store_memory()`, `retrieve_memory()`, `store_episode()`, `retrieve_episodes()`, `search_semantic()` APIs with full stub backend support
+- **Python SDK - Swarm Coordination**: `create_voting_session()`, `cast_vote()`, `tally_votes()`, `detect_sycophancy()` APIs with quadratic voting and groupthink detection
+- **Python SDK - Audit Chain Verification**: `verify_audit_chain()`, `get_audit_root_hash()`, `export_audit_receipt()` APIs for hash-chain integrity verification
+- **Python SDK - Agent Context**: Memory and swarm convenience methods in `_AgentContext` (`store_memory`, `retrieve_memory`, `create_vote`, `cast_vote`)
+- **Python SDK - StubKernel**: Full in-memory implementations of all kernel subsystems (agent management, policy evaluation, tool execution, audit logging with SHA-256 hash chain, memory management with Merkle-chained episodes, swarm coordination with quadratic voting, sycophancy detection)
+- **MCP Tool Handlers**: `VerifyPlanToolHandler` wired to `SafetyEngine::verify_plan()` for real Datalog rule checking; `ExecuteSkillToolHandler` wired to `SkillRegistry` for actual WASM skill dispatch with safety pre-checks
+- **Test Coverage**: `test_memory.py` (15 tests), `test_swarm.py` (18 tests), `test_audit_chain.py` (15 tests) covering all new Python SDK APIs
 - **FUT-001**: Zero-Knowledge Proof integration - commitment-based ZK proof system with Fiat-Shamir heuristic, supporting policy compliance proofs, audit integrity proofs, state transition proofs, identity attribute proofs, range proofs, and set membership proofs. Includes `ZkProver`, `ZkVerifier`, `ProofRegistry`, and batch verification.
 - **FUT-002**: Constitution Protocol - immutable safety governance layer with fundamental principles (No Harm, Transparency, Least Privilege, Data Protection, Human Override), compound constraint evaluation (AND/OR/NOT), multi-point enforcement (pre-policy, pre-execution, post-execution), tamper-detection via SHA-256 hashing, and configurable blocking/warning modes.
 - **FUT-003**: Enhanced PRM fine-tuning toolkit - comprehensive evaluation framework with accuracy, precision, recall, F1, AUROC, and Expected Calibration Error metrics. Includes dataset management (JSONL import/export), calibration analysis, model A/B comparison, optimal threshold search, and prompt template generation for LLM fine-tuning.

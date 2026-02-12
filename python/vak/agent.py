@@ -157,3 +157,34 @@ class _AgentContext:
         return self._kernel.create_audit_entry(
             self._agent_id, action, resource, **kwargs
         )
+
+    # Memory convenience methods
+
+    def store_memory(
+        self,
+        key: str,
+        value: Any,
+        priority: str = "normal",
+        metadata: dict[str, Any] | None = None,
+    ) -> Any:
+        """Store an item in working memory via the kernel."""
+        return self._kernel.store_memory(key, value, priority, metadata)
+
+    def retrieve_memory(self, key: str) -> Any:
+        """Retrieve an item from working memory via the kernel."""
+        return self._kernel.retrieve_memory(key)
+
+    # Swarm convenience methods
+
+    def create_vote(self, proposal: str, config: dict[str, Any] | None = None) -> str:
+        """Create a voting session via the kernel."""
+        return self._kernel.create_voting_session(proposal, config)
+
+    def cast_vote(
+        self,
+        session_id: str,
+        direction: str,
+        weight: int = 1,
+    ) -> dict[str, Any]:
+        """Cast a vote as this agent via the kernel."""
+        return self._kernel.cast_vote(session_id, self._agent_id, direction, weight)

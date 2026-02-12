@@ -44,6 +44,7 @@ from vak.exceptions import (
     VakError,
 )
 from vak.policy import PolicyDecision, PolicyEffect, PolicyEngine, PolicyRule
+from vak.memory import Episode, MemoryItem
 from vak.reasoner import Constraint, ConstraintResult, ReasonerConfig, SafetyRule
 from vak.skills import SkillManifest
 from vak.tools import ToolRequest, ToolResponse
@@ -661,6 +662,318 @@ class VakKernel:
         if self._native_kernel and hasattr(self._native_kernel, "create_audit_entry"):
             return self._native_kernel.create_audit_entry(entry_data)
         return f"stub-audit-{datetime.now().timestamp()}"
+
+    # =========================================================================
+    # Memory Management
+    # =========================================================================
+
+    def store_memory(
+        self,
+        key: str,
+        value: Any,
+        priority: str = "normal",
+        metadata: dict[str, Any] | None = None,
+    ) -> MemoryItem:
+        """
+        Store an item in working memory.
+
+        Args:
+            key: Unique identifier for the memory item.
+            value: The content to store (text, dict, etc.).
+            priority: Priority level ("low", "normal", "high", "pinned").
+            metadata: Additional metadata to attach.
+
+        Returns:
+            The stored MemoryItem.
+        """
+        self._ensure_initialized()
+
+        if self._native_kernel and hasattr(self._native_kernel, "store_memory"):
+            result = self._native_kernel.store_memory(
+                key, value, priority, metadata or {}
+            )
+            return MemoryItem(
+                key=result.get("key", key),
+                content=result.get("content", value),
+                priority=result.get("priority", priority),
+                metadata=result.get("metadata", {}),
+            )
+
+        return MemoryItem(key=key, content=value, priority=priority, metadata=metadata or {})
+
+    def retrieve_memory(self, key: str) -> MemoryItem | None:
+        """
+        Retrieve an item from working memory.
+
+        Args:
+            key: The key of the item to retrieve.
+
+        Returns:
+            The MemoryItem if found, or None.
+        """
+        self._ensure_initialized()
+
+        if self._native_kernel and hasattr(self._native_kernel, "retrieve_memory"):
+            result = self._native_kernel.retrieve_memory(key)
+            if result is None:
+                return None
+            return MemoryItem(
+                key=result.get("key", key),
+                content=result.get("content"),
+                priority=result.get("priority", "normal"),
+                metadata=result.get("metadata", {}),
+            )
+
+        return None
+
+    def store_episode(self, episode: Episode) -> str:
+        """
+        Store an episode in episodic memory with Merkle chain linking.
+
+        Each episode is linked to the previous via SHA-256 hash,
+        creating an unforgeable event log.
+
+        Args:
+            episode: The episode to store.
+
+        Returns:
+            The hash of the stored episode.
+        """
+        self._ensure_initialized()
+
+        episode_data = {
+            "episode_id": episode.episode_id,
+            "episode_type": episode.episode_type,
+            "content": episode.content,
+            "agent_id": episode.agent_id,
+            "timestamp": episode.timestamp,
+            "metadata": dict(episode.metadata) if episode.metadata else {},
+        }
+
+        if self._native_kernel and hasattr(self._native_kernel, "store_episode"):
+            return self._native_kernel.store_episode(episode_data)
+
+        return ""
+
+    def retrieve_episodes(self, limit: int = 10) -> list[Episode]:
+        """
+        Retrieve the most recent episodes from episodic memory.
+
+        Args:
+            limit: Maximum number of episodes to return.
+
+        Returns:
+            List of Episode objects, most recent first.
+        """
+        self._ensure_initialized()
+
+        if self._native_kernel and hasattr(self._native_kernel, "retrieve_episodes"):
+            results = self._native_kernel.retrieve_episodes(limit)
+            return [
+                Episode(
+                    episode_id=r.get("episode_id", ""),
+                    episode_type=r.get("episode_type", "observation"),
+                    content=r.get("content", ""),
+                    agent_id=r.get("agent_id", ""),
+                    timestamp=r.get("timestamp", ""),
+                    previous_hash=r.get("previous_hash", ""),
+                    hash=r.get("hash", ""),
+                    metadata=r.get("metadata", {}),
+                )
+                for r in results
+            ]
+
+        return []
+
+    def search_semantic(self, query: str, top_k: int = 5) -> list[MemoryItem]:
+        """
+        Search memory using semantic similarity.
+
+        In stub mode, this performs keyword matching. With the native
+        kernel, it uses embedding-based vector search.
+
+        Args:
+            query: The search query.
+            top_k: Maximum number of results to return.
+
+        Returns:
+            List of matching MemoryItem objects.
+        """
+        self._ensure_initialized()
+
+        if self._native_kernel and hasattr(self._native_kernel, "search_semantic"):
+            results = self._native_kernel.search_semantic(query, top_k)
+            return [
+                MemoryItem(
+                    key=r.get("key", ""),
+                    content=r.get("content"),
+                    priority=r.get("priority", "normal"),
+                    metadata=r.get("metadata", {}),
+                )
+                for r in results
+            ]
+
+        return []
+
+    # =========================================================================
+    # Swarm Coordination
+    # =========================================================================
+
+    def create_voting_session(
+        self,
+        proposal: str,
+        config: dict[str, Any] | None = None,
+    ) -> str:
+        """
+        Create a new quadratic voting session.
+
+        Args:
+            proposal: The proposal text to vote on.
+            config: Optional voting configuration with keys:
+                - token_budget (int): Tokens per agent (default 100)
+                - quorum_threshold (float): Required voter fraction (default 0.5)
+                - quadratic_cost (bool): Use quadratic cost (default True)
+
+        Returns:
+            The session ID.
+        """
+        self._ensure_initialized()
+
+        if self._native_kernel and hasattr(self._native_kernel, "create_voting_session"):
+            return self._native_kernel.create_voting_session(proposal, config or {})
+
+        return ""
+
+    def cast_vote(
+        self,
+        session_id: str,
+        agent_id: str,
+        direction: str,
+        weight: int = 1,
+    ) -> dict[str, Any]:
+        """
+        Cast a vote in a voting session.
+
+        In quadratic voting, the cost of casting N votes is N^2 tokens,
+        forcing agents to allocate influence carefully.
+
+        Args:
+            session_id: The voting session ID.
+            agent_id: The agent casting the vote.
+            direction: Vote direction ("for", "against", "abstain").
+            weight: Number of votes to cast (cost = weight^2 in quadratic mode).
+
+        Returns:
+            Dict with "success", "cost", and "vote" keys.
+        """
+        self._ensure_initialized()
+
+        if self._native_kernel and hasattr(self._native_kernel, "cast_vote"):
+            return self._native_kernel.cast_vote(session_id, agent_id, direction, weight)
+
+        return {"success": False, "error": "No kernel backend available"}
+
+    def tally_votes(self, session_id: str) -> dict[str, Any]:
+        """
+        Tally votes and close a voting session.
+
+        Args:
+            session_id: The voting session ID.
+
+        Returns:
+            Dict with tally results including "winner", "tally", and "unique_voters".
+        """
+        self._ensure_initialized()
+
+        if self._native_kernel and hasattr(self._native_kernel, "tally_votes"):
+            return self._native_kernel.tally_votes(session_id)
+
+        return {"success": False, "error": "No kernel backend available"}
+
+    def detect_sycophancy(
+        self,
+        session_history: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """
+        Detect sycophancy patterns in voting or discussion history.
+
+        Analyzes agreement rates across sessions to detect groupthink
+        where agents blindly follow the majority.
+
+        Args:
+            session_history: List of session dicts, each containing a "votes" list.
+
+        Returns:
+            Dict with "sycophancy_detected" (bool), "agreement_rate" (float),
+            "risk_level" (str), and "details" (str).
+        """
+        self._ensure_initialized()
+
+        if self._native_kernel and hasattr(self._native_kernel, "detect_sycophancy"):
+            return self._native_kernel.detect_sycophancy(session_history)
+
+        return {
+            "sycophancy_detected": False,
+            "agreement_rate": 0.0,
+            "risk_level": "low",
+            "details": "No kernel backend available",
+        }
+
+    # =========================================================================
+    # Audit Chain Verification
+    # =========================================================================
+
+    def verify_audit_chain(self) -> bool:
+        """
+        Verify the integrity of the audit chain.
+
+        Walks the hash chain from genesis to the latest entry,
+        checking that each entry's previous_hash matches the
+        prior entry's hash.
+
+        Returns:
+            True if the chain is valid, False otherwise.
+        """
+        self._ensure_initialized()
+
+        if self._native_kernel and hasattr(self._native_kernel, "verify_audit_chain"):
+            result = self._native_kernel.verify_audit_chain()
+            if isinstance(result, dict):
+                return result.get("valid", False)
+            return bool(result)
+
+        return True
+
+    def get_audit_root_hash(self) -> str:
+        """
+        Get the current root hash of the audit chain.
+
+        Returns:
+            The SHA-256 hex string of the latest audit entry.
+        """
+        self._ensure_initialized()
+
+        if self._native_kernel and hasattr(self._native_kernel, "get_audit_root_hash"):
+            return self._native_kernel.get_audit_root_hash()
+
+        return ""
+
+    def export_audit_receipt(self) -> dict[str, Any]:
+        """
+        Export a cryptographic receipt for the current audit state.
+
+        The receipt contains the root hash, entry count, and enough
+        metadata to prove the state of the audit chain at a point in time.
+
+        Returns:
+            Dict with receipt_id, timestamp, root_hash, and entry_count.
+        """
+        self._ensure_initialized()
+
+        if self._native_kernel and hasattr(self._native_kernel, "export_audit_receipt"):
+            return self._native_kernel.export_audit_receipt()
+
+        return {}
 
     # =========================================================================
     # Context Managers

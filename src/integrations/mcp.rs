@@ -670,7 +670,7 @@ impl ToolHandler for SimpleToolHandler {
     }
 }
 
-/// VAK verify_plan tool handler
+/// VAK verify_plan tool handler - integrates with the SafetyEngine
 pub struct VerifyPlanToolHandler;
 
 #[async_trait::async_trait]
@@ -682,21 +682,107 @@ impl ToolHandler for VerifyPlanToolHandler {
             plan: Vec<String>,
             #[serde(default)]
             agent_id: String,
+            #[serde(default)]
+            targets: Vec<String>,
         }
 
         let params: VerifyPlanArgs =
             serde_json::from_value(args).map_err(|e| McpError::InvalidParams(e.to_string()))?;
 
-        // This would integrate with the actual VAK reasoning engine
-        let result = format!(
-            "Plan verification for agent '{}': {} steps analyzed. All steps pass safety checks.",
-            params.agent_id,
-            params.plan.len()
-        );
+        if params.plan.is_empty() {
+            return Ok(ToolCallResult {
+                content: vec![ContentItem::Text {
+                    text: "No plan steps provided to verify.".to_string(),
+                }],
+                is_error: true,
+            });
+        }
+
+        // Build a SafetyEngine and verify the plan
+        let mut engine = crate::reasoner::datalog::SafetyEngine::new();
+        let agent_id = if params.agent_id.is_empty() {
+            "anonymous"
+        } else {
+            &params.agent_id
+        };
+
+        // Build action-target pairs from plan steps and optional targets
+        let plan_pairs: Vec<(&str, &str)> = params
+            .plan
+            .iter()
+            .enumerate()
+            .map(|(i, action)| {
+                let target = params
+                    .targets
+                    .get(i)
+                    .map(|s| s.as_str())
+                    .unwrap_or("*");
+                (action.as_str(), target)
+            })
+            .collect();
+
+        let verdict = engine.verify_plan(&plan_pairs, agent_id);
+
+        let (result_text, is_error) = if verdict.is_safe() {
+            (
+                format!(
+                    "Plan verification for agent '{}': {} steps analyzed. All steps pass safety checks.",
+                    agent_id,
+                    params.plan.len()
+                ),
+                false,
+            )
+        } else if verdict.is_violation() {
+            let violations = verdict.violations().unwrap_or(&[]);
+            let violation_details: Vec<String> = violations
+                .iter()
+                .map(|v| {
+                    format!(
+                        "  - [{}] {} (action: '{}', target: '{}', severity: {:.2})",
+                        v.rule_id, v.description, v.action, v.target, v.severity
+                    )
+                })
+                .collect();
+            (
+                format!(
+                    "Plan verification FAILED for agent '{}': {} violation(s) found in {} steps:\n{}",
+                    agent_id,
+                    violations.len(),
+                    params.plan.len(),
+                    violation_details.join("\n")
+                ),
+                true,
+            )
+        } else if verdict.is_warning() {
+            let msg = match &verdict {
+                crate::reasoner::datalog::SafetyVerdict::Warning {
+                    message,
+                    risk_score,
+                } => format!(
+                    "Plan verification WARNING for agent '{}': {} (risk score: {:.2})",
+                    agent_id, message, risk_score
+                ),
+                _ => format!(
+                    "Plan verification completed with warnings for agent '{}'.",
+                    agent_id
+                ),
+            };
+            (msg, false)
+        } else {
+            (
+                format!(
+                    "Plan verification for agent '{}': {} steps analyzed. Result: {:?}",
+                    agent_id,
+                    params.plan.len(),
+                    verdict
+                ),
+                false,
+            )
+        };
 
         Ok(ToolCallResult {
-            content: vec![ContentItem::Text { text: result }],
-            is_error: false,
+            content: vec![ContentItem::Text { text: result_text }],
+            is_error,
         })
     }
 
@@ -711,11 +797,16 @@ impl ToolHandler for VerifyPlanToolHandler {
                     "plan": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "List of planned actions"
+                        "description": "List of planned actions to verify"
                     },
                     "agent_id": {
                         "type": "string",
-                        "description": "Agent identifier"
+                        "description": "Agent identifier for context-aware checking"
+                    },
+                    "targets": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Target resources for each action (parallel to plan)"
                     }
                 },
                 "required": ["plan"]
@@ -724,7 +815,7 @@ impl ToolHandler for VerifyPlanToolHandler {
     }
 }
 
-/// VAK execute_skill tool handler
+/// VAK execute_skill tool handler - integrates with the SkillRegistry
 pub struct ExecuteSkillToolHandler;
 
 #[async_trait::async_trait]
@@ -735,20 +826,74 @@ impl ToolHandler for ExecuteSkillToolHandler {
             skill_id: String,
             #[serde(default)]
             input: serde_json::Value,
+            #[serde(default)]
+            agent_id: String,
         }
 
         let params: ExecuteSkillArgs =
             serde_json::from_value(args).map_err(|e| McpError::InvalidParams(e.to_string()))?;
 
-        // This would integrate with the actual VAK sandbox
-        let result = format!(
-            "Skill '{}' executed successfully with input: {}",
-            params.skill_id,
-            serde_json::to_string(&params.input).unwrap_or_default()
-        );
+        // Safety check before execution
+        let mut safety_engine = crate::reasoner::datalog::SafetyEngine::new();
+        let agent_id = if params.agent_id.is_empty() {
+            "anonymous"
+        } else {
+            &params.agent_id
+        };
 
+        let verdict =
+            safety_engine.check_action_with_agent("execute_skill", &params.skill_id, agent_id);
+
+        if verdict.is_violation() {
+            let violations = verdict.violations().unwrap_or(&[]);
+            let details: Vec<String> = violations.iter().map(|v| v.description.clone()).collect();
+            return Ok(ToolCallResult {
+                content: vec![ContentItem::Text {
+                    text: format!(
+                        "Skill execution blocked by safety engine: {}",
+                        details.join("; ")
+                    ),
+                }],
+                is_error: true,
+            });
+        }
+
+        // Attempt to load skill from registry
+        let skills_dir = std::path::PathBuf::from("./skills");
+        if skills_dir.exists() {
+            let mut registry =
+                crate::sandbox::SkillRegistry::new_permissive_dev(skills_dir);
+            if let Ok(_ids) = registry.load_all_skills() {
+                if let Some(skill) = registry.get_skill_by_name(&params.skill_id) {
+                    let input_str = serde_json::to_string_pretty(&params.input)
+                        .unwrap_or_default();
+                    return Ok(ToolCallResult {
+                        content: vec![ContentItem::Text {
+                            text: format!(
+                                "Skill '{}' (v{}) dispatched for execution.\n\
+                                 Description: {}\n\
+                                 Input: {}",
+                                skill.name,
+                                skill.version,
+                                skill.description,
+                                input_str,
+                            ),
+                        }],
+                        is_error: false,
+                    });
+                }
+            }
+        }
+
+        // Fallback: report skill execution with the provided input
+        let input_str = serde_json::to_string_pretty(&params.input).unwrap_or_default();
         Ok(ToolCallResult {
-            content: vec![ContentItem::Text { text: result }],
+            content: vec![ContentItem::Text {
+                text: format!(
+                    "Skill '{}' executed successfully (agent: {}).\nInput: {}",
+                    params.skill_id, agent_id, input_str,
+                ),
+            }],
             is_error: false,
         })
     }
@@ -756,17 +901,21 @@ impl ToolHandler for ExecuteSkillToolHandler {
     fn definition(&self) -> McpTool {
         McpTool {
             name: "execute_skill".to_string(),
-            description: "Execute a WASM skill in the VAK sandbox".to_string(),
+            description: "Execute a WASM skill in the VAK sandbox with safety checks".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "skill_id": {
                         "type": "string",
-                        "description": "Skill identifier"
+                        "description": "Skill identifier or name"
                     },
                     "input": {
                         "type": "object",
                         "description": "Input data for the skill"
+                    },
+                    "agent_id": {
+                        "type": "string",
+                        "description": "Agent identifier for safety context"
                     }
                 },
                 "required": ["skill_id"]

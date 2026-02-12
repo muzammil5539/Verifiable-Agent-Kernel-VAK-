@@ -21,9 +21,9 @@ Modular Imports::
     from vak.audit import AuditEntry, AuditLevel
     from vak.tools import ToolRequest, ToolResponse, RiskLevel
     from vak.reasoner import Constraint, SafetyRule, ReasonerConfig
-    from vak.memory import MemoryConfig, WorkingMemoryConfig, EpisodicMemoryConfig
+    from vak.memory import MemoryConfig, WorkingMemoryConfig, EpisodicMemoryConfig, MemoryItem, Episode
     from vak.skills import SkillManifest, SkillPermissions
-    from vak.swarm import SwarmConfig, ConsensusProtocol, VotingConfig
+    from vak.swarm import SwarmConfig, ConsensusProtocol, VotingConfig, SycophancyDetectionConfig
     from vak.exceptions import VakError, PolicyViolationError
 """
 
@@ -39,7 +39,7 @@ from vak.exceptions import (
     VakError,
 )
 from vak.kernel import VakKernel
-from vak.memory import MemoryConfig
+from vak.memory import Episode, MemoryConfig, MemoryItem
 from vak.policy import (
     PolicyCondition,
     PolicyDecision,
@@ -51,7 +51,7 @@ from vak.policy import (
 )
 from vak.reasoner import Constraint, ReasonerConfig, SafetyRule
 from vak.skills import SkillManifest, SkillPermissions
-from vak.swarm import ConsensusProtocol, SwarmConfig, VotingConfig
+from vak.swarm import ConsensusProtocol, SwarmConfig, SycophancyDetectionConfig, VotingConfig
 from vak.tools import RiskLevel, ToolRequest, ToolResponse
 
 __all__ = [
@@ -83,6 +83,8 @@ __all__ = [
     "ReasonerConfig",
     # Memory
     "MemoryConfig",
+    "MemoryItem",
+    "Episode",
     # Skills
     "SkillManifest",
     "SkillPermissions",
@@ -90,6 +92,7 @@ __all__ = [
     "SwarmConfig",
     "ConsensusProtocol",
     "VotingConfig",
+    "SycophancyDetectionConfig",
     # Exceptions
     "VakError",
     "PolicyViolationError",
