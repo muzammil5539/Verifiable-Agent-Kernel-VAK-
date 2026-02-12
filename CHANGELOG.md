@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **FUT-001**: Zero-Knowledge Proof integration - commitment-based ZK proof system with Fiat-Shamir heuristic, supporting policy compliance proofs, audit integrity proofs, state transition proofs, identity attribute proofs, range proofs, and set membership proofs. Includes `ZkProver`, `ZkVerifier`, `ProofRegistry`, and batch verification.
+- **FUT-002**: Constitution Protocol - immutable safety governance layer with fundamental principles (No Harm, Transparency, Least Privilege, Data Protection, Human Override), compound constraint evaluation (AND/OR/NOT), multi-point enforcement (pre-policy, pre-execution, post-execution), tamper-detection via SHA-256 hashing, and configurable blocking/warning modes.
+- **FUT-003**: Enhanced PRM fine-tuning toolkit - comprehensive evaluation framework with accuracy, precision, recall, F1, AUROC, and Expected Calibration Error metrics. Includes dataset management (JSONL import/export), calibration analysis, model A/B comparison, optimal threshold search, and prompt template generation for LLM fine-tuning.
+- **FUT-004**: Skill marketplace with verified publishers - multi-method publisher verification (GitHub org, GPG key, domain ownership, email), progressive trust levels (Unverified, Basic, Verified, Trusted, Official), community reputation system, malicious skill reporting with auto-suspension, vulnerability scanning for WASM binaries, and skill publishing workflow.
 - **DOC-001**: Architecture documentation (ARCHITECTURE.md) - system design, module reference, data flow diagrams, security architecture, deployment guide
 - **DOC-002**: API reference documentation (API.md) - complete API reference for all modules including Rust and Python SDK, configuration reference, error codes
 - **INF-001**: Kubernetes operator manifests - Kustomize base with namespace, deployment, service, HPA, PDB, NetworkPolicy, ConfigMap, PVC, ServiceAccount

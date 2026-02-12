@@ -24,6 +24,7 @@ pub mod marketplace;
 pub mod pooling;
 pub mod reasoning_host;
 pub mod registry;
+pub mod verified_publisher;
 
 // Re-export registry types for convenient access
 pub use registry::{
@@ -71,6 +72,14 @@ pub use reasoning_host::{
 pub use async_host::{
     AsyncHostConfig, AsyncHostContext, AsyncHostError, AsyncHostResult, AsyncOperation,
     AsyncOperationExecutor, OperationResult,
+};
+
+// Re-export verified publisher types (FUT-004)
+pub use verified_publisher::{
+    IssueSeverity, PublishedSkill, PublisherConfig, PublisherError, PublisherProfile,
+    PublisherRegistry, PublisherReputation, PublisherResult, ReportReason, ReportStatus, ScanIssue,
+    ScanResult, SkillReport, TrustLevel, VerificationMethod, VerificationRecord,
+    VerificationRequest, VerificationStatus,
 };
 
 use std::time::{Duration, Instant};

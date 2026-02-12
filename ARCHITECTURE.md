@@ -22,6 +22,10 @@
   - [Dashboard & Observability](#dashboard--observability)
   - [Secrets Management](#secrets-management)
   - [High-Level Integration Library](#high-level-integration-library)
+  - [Zero-Knowledge Proofs](#zero-knowledge-proofs)
+  - [Constitution Protocol](#constitution-protocol)
+  - [PRM Fine-Tuning Toolkit](#prm-fine-tuning-toolkit)
+  - [Verified Publisher System](#verified-publisher-system)
 - [Data Flow](#data-flow)
 - [Security Architecture](#security-architecture)
 - [Deployment Architecture](#deployment-architecture)
@@ -103,9 +107,11 @@ The core services that process every request:
 | Audit Logger | `src/audit/` | Hash-chained logging, Ed25519 signing, replay |
 | Memory Fabric | `src/memory/` | Merkle DAG, episodic chain, vector store, time travel |
 | WASM Sandbox | `src/sandbox/` | Fuel-metered execution, epoch preemption, pooling |
-| Reasoner | `src/reasoner/` | PRM scoring, Datalog safety rules, Z3 verification |
+| Reasoner | `src/reasoner/` | PRM scoring, Datalog safety rules, Z3 verification, ZK proofs |
 | Swarm | `src/swarm/` | A2A protocol, quadratic voting, sycophancy detection |
 | LLM Interface | `src/llm/` | Provider abstraction, constrained decoding |
+| Constitution | `src/kernel/constitution.rs` | Immutable safety principles, multi-point enforcement |
+| Verified Publishers | `src/sandbox/verified_publisher.rs` | Publisher verification, trust levels, reputation |
 
 ### 3. Execution Layer
 
@@ -506,6 +512,90 @@ let trail = agent.audit_trail();
 **Types:** `VakRuntime`, `VakAgent`, `ToolDefinition`, `ToolCall`, `ToolResult`, `RiskLevel`
 
 Supports OpenAI function-calling format and Anthropic tool-use format.
+
+---
+
+### Zero-Knowledge Proofs
+
+**Location:** `src/reasoner/zk_proof.rs`
+
+Enables agents to prove properties about their actions without revealing sensitive details. Built on a commitment-based scheme with SHA-256 and Fiat-Shamir heuristic.
+
+**Supported proof types:**
+
+| Proof Type | Use Case |
+|-----------|----------|
+| Policy Compliance | Prove an action was policy-compliant without revealing full context |
+| Audit Integrity | Prove audit log integrity without exposing log contents |
+| State Transition | Prove valid state transitions in memory |
+| Identity Attribute | Prove agent identity attributes without full disclosure |
+| Range Proof | Prove a value is within bounds without revealing the value |
+| Set Membership | Prove membership in a set without revealing which element |
+
+**Key types:** `ZkProver`, `ZkVerifier`, `ZkStatement`, `ZkProof`, `ProofRegistry`, `ProofConfig`
+
+---
+
+### Constitution Protocol
+
+**Location:** `src/kernel/constitution.rs`
+
+Immutable safety governance layer that enforces fundamental principles on all agent actions. Operates alongside the policy engine as an additional enforcement layer.
+
+**Default safety principles:**
+
+| Principle | Description | Priority |
+|-----------|-------------|----------|
+| No Harm | Agent actions must not cause harm to humans or systems | 100 |
+| Transparency | All agent actions must be auditable and explainable | 90 |
+| Least Privilege | Agents must operate with minimum necessary permissions | 80 |
+| Data Protection | Sensitive data must be protected at all times | 70 |
+| Human Override | Humans must be able to override or halt agent actions | 100 |
+
+**Enforcement points:** Pre-Policy, Pre-Execution, Post-Execution
+
+**Key types:** `ConstitutionalEngine`, `Constitution`, `ConstitutionalRule`, `Principle`, `ConstraintOp`, `ConstitutionalDecision`
+
+---
+
+### PRM Fine-Tuning Toolkit
+
+**Location:** `src/reasoner/prm_toolkit.rs`
+
+Tools for evaluating, calibrating, and fine-tuning Process Reward Models (PRMs).
+
+**Capabilities:**
+
+- Dataset management (JSONL import/export, train/validation split)
+- Evaluation metrics (accuracy, precision, recall, F1, AUROC, ECE)
+- Calibration analysis with configurable bins
+- Model A/B comparison with disagreement rate
+- Optimal threshold search
+- Prompt template generation based on dataset characteristics
+- Fine-tuning data export for LLM training
+
+**Key types:** `PrmToolkit`, `EvaluationDataset`, `EvaluationMetrics`, `ComparisonReport`, `TrainingExample`, `PromptTemplate`
+
+---
+
+### Verified Publisher System
+
+**Location:** `src/sandbox/verified_publisher.rs`
+
+Extends the skill marketplace with comprehensive publisher verification, reputation tracking, and malicious skill reporting.
+
+**Verification methods:**
+
+| Method | Mechanism |
+|--------|-----------|
+| GitHub Org | Verify organization membership via GitHub API |
+| GPG Key | Verify key ownership via signed challenge |
+| Domain | Verify DNS TXT record ownership |
+| Email | Verify email address via code |
+
+**Trust levels:** Unverified -> Basic -> Verified -> Trusted -> Official
+
+**Key types:** `PublisherRegistry`, `PublisherProfile`, `VerificationMethod`, `TrustLevel`, `PublishedSkill`, `SkillReport`, `ScanResult`
 
 ---
 

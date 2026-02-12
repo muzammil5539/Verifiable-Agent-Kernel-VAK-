@@ -30,6 +30,7 @@
 
 pub mod async_pipeline;
 pub mod config;
+pub mod constitution;
 pub mod custom_handlers;
 pub mod error;
 pub mod neurosymbolic_pipeline;
@@ -48,6 +49,13 @@ pub use self::neurosymbolic_pipeline::{
     ProposedAction,
 };
 pub use self::rate_limiter::{LimitResult, RateLimitConfig, RateLimiter, ResourceKey};
+
+// Re-export Constitution Protocol types (FUT-002)
+pub use self::constitution::{
+    ConstitutionConfig, ConstitutionError, ConstitutionResult, ConstitutionStats,
+    ConstitutionalDecision, ConstitutionalEngine, ConstitutionalRule, Constitution,
+    ConstraintOp, EnforcementPoint, Principle, RuleViolation,
+};
 
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -9,7 +9,7 @@
 
 ## Critical Path Analysis
 
-**Status:** Beta — ~96% Complete (66/68 tracked items)
+**Status:** Beta — ~100% Complete (70/70 tracked items)
 
 All critical path items for MVP are **COMPLETE**:
 - [x] LLM Abstraction Layer
@@ -77,7 +77,16 @@ All critical path items for MVP are **COMPLETE**:
 ### Medium-term
 1. [ ] Performance optimization pass
 2. [ ] Security audit finalization (external)
-3. [ ] Skill marketplace prototype (Issue #27)
+3. [x] ~~Skill marketplace prototype (Issue #27)~~ **DONE** (FUT-004: Verified publishers, trust levels, reputation system)
+
+### P3 - Future (Post-MVP): COMPLETED
+
+| Task | Status |
+|------|--------|
+| **FUT-001**: Zero-Knowledge Proof integration | Done |
+| **FUT-002**: Constitution Protocol | Done |
+| **FUT-003**: Enhanced PRM fine-tuning toolkit | Done |
+| **FUT-004**: Skill marketplace with verified publishers | Done |
 
 ---
 

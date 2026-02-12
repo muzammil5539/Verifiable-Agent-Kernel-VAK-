@@ -113,12 +113,27 @@ VAK provides a transparent, enforceable layer between AI agents and the external
 - **Tree of Thoughts**: MCTS-based exploration with backtracking
 - **Z3 Formal Verification**: Mathematical proof of constraint satisfaction
 - **LLM Integration**: Pluggable LLM interface (LiteLLM compatible)
+- **Zero-Knowledge Proofs**: Prove properties without revealing sensitive data
+- **PRM Fine-Tuning Toolkit**: Dataset management, calibration analysis, and A/B testing
 
 ### 🌐 Multi-Agent Support
 - **Async Kernel**: Non-blocking, concurrent agent execution
 - **Quadratic Voting**: Prevent sycophancy in multi-agent systems
 - **Swarm Consensus**: Debate protocols and ensemble aggregation
 - **Protocol Router**: Standardized inter-agent communication
+
+### 📜 Constitution Protocol
+- **Safety Principles**: Immutable rules that cannot be overridden by policies
+- **Multi-Point Enforcement**: Pre-policy, pre-execution, and post-execution checks
+- **Compound Constraints**: Logical AND/OR/NOT combinations for complex rules
+- **Tamper Detection**: Cryptographic hashing of the constitution itself
+
+### 🏪 Skill Marketplace
+- **Verified Publishers**: Multi-method identity verification (GitHub, GPG, domain, email)
+- **Trust Levels**: Progressive trust from unverified to official
+- **Reputation System**: Community-driven publisher reputation scores
+- **Vulnerability Scanning**: Automated security checks on skill publish
+- **Malicious Skill Reporting**: Community reporting with auto-suspension
 
 ---
 
@@ -486,7 +501,7 @@ python examples/python_quickstart.py
 
 ## Development Roadmap
 
-### Current Status (v0.1 - Alpha) — ~98% Complete
+### Current Status (v0.1 - Alpha) — 100% Complete
 
 **Completed Phases:**
 - ✅ Phase 1: Core Kernel Stability ("Iron Kernel")
@@ -496,6 +511,7 @@ python examples/python_quickstart.py
 - ✅ Phase 5: Ecosystem & Interoperability
 - ✅ Security Layer
 - ✅ Testing Layer
+- ✅ P3 Future Features (ZK Proofs, Constitution, PRM Toolkit, Marketplace)
 
 **Documentation:**
 - ✅ Architecture Documentation (DOC-001)
@@ -522,6 +538,10 @@ python examples/python_quickstart.py
 | Testing Suite | ✅ Complete | 100% |
 | LLM Interface | ✅ Implemented | 100% |
 | Documentation | ✅ Complete | 100% |
+| Zero-Knowledge Proofs | ✅ Complete | 100% |
+| Constitution Protocol | ✅ Complete | 100% |
+| PRM Fine-Tuning Toolkit | ✅ Complete | 100% |
+| Skill Marketplace | ✅ Complete | 100% |
 
 ### Roadmap by Priority
 
@@ -595,10 +615,10 @@ python examples/python_quickstart.py
 - [x] OBS-002: Cryptographic replay capability
 
 #### 🟢 P3 - Future (Post-MVP)
-- [ ] FUT-001: Zero-Knowledge Proof integration
-- [ ] FUT-002: Constitution Protocol
-- [ ] FUT-003: Enhanced PRM fine-tuning toolkit
-- [ ] FUT-004: Skill marketplace with verified publishers
+- [x] FUT-001: Zero-Knowledge Proof integration
+- [x] FUT-002: Constitution Protocol
+- [x] FUT-003: Enhanced PRM fine-tuning toolkit
+- [x] FUT-004: Skill marketplace with verified publishers
 
 ### Target Milestones
 

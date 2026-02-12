@@ -34,11 +34,17 @@
   - [WasmSandbox](#wasmsandbox)
   - [SandboxConfig](#sandboxconfig)
   - [SkillRegistry](#skillregistry)
+  - [Verified Publishers](#verified-publishers)
 - [Reasoner API](#reasoner-api)
   - [ProcessRewardModel](#processrewardmodel)
   - [SafetyEngine](#safetyengine)
   - [Z3Verifier](#z3verifier)
   - [HybridReasoningLoop](#hybridreasoningloop)
+  - [ZkProver & ZkVerifier](#zkprover--zkverifier)
+  - [PrmToolkit](#prmtoolkit)
+- [Constitution API](#constitution-api)
+  - [ConstitutionalEngine](#constitutionalengine)
+  - [Constitution & Rules](#constitution--rules)
 - [LLM API](#llm-api)
   - [LlmProvider Trait](#llmprovider-trait)
   - [CompletionRequest](#completionrequest)
@@ -696,13 +702,88 @@ let manifest = registry.get_skill_by_name("calculator");
 let skills = registry.list_skills();
 ```
 
+### Verified Publishers
+
+**Module:** `vak::sandbox::verified_publisher`
+
+Publisher verification, reputation tracking, and skill marketplace.
+
+```rust
+use vak::sandbox::verified_publisher::{
+    PublisherRegistry, PublisherProfile, PublisherConfig,
+    VerificationRequest, VerificationMethod, TrustLevel,
+    PublishedSkill, ReportReason,
+};
+
+// Create registry
+let registry = PublisherRegistry::new(PublisherConfig::default());
+
+// Register publisher
+let profile = PublisherProfile::new("acme-corp", "ACME Corp", "dev@acme.com")
+    .with_website("https://acme.com")
+    .with_description("Enterprise tools publisher");
+let id = registry.register(profile)?;
+
+// Request and complete verification
+let request = VerificationRequest::github_org("acme-corp", "acme-org");
+registry.request_verification("acme-corp", request)?;
+registry.complete_verification(
+    "acme-corp",
+    VerificationMethod::GithubOrg { org_name: "acme-org".into() },
+    true,
+    "Verified via GitHub API",
+)?;
+
+// Publish a skill
+let skill = PublishedSkill { /* ... */ };
+registry.publish_skill("acme-corp", skill)?;
+
+// Report malicious skill
+registry.report_skill("skill-id", "reporter", ReportReason::Malicious, "description")?;
+
+// Scan WASM binary
+let scan = registry.scan_skill(&wasm_bytes);
+
+// Query reputation
+let rep = registry.get_reputation("acme-corp")?;
+```
+
+**Key types:**
+
+| Type | Description |
+|------|-------------|
+| `PublisherRegistry` | Central registry for publishers and skills |
+| `PublisherProfile` | Publisher identity, trust level, verifications |
+| `PublisherConfig` | Registry configuration (thresholds, requirements) |
+| `VerificationRequest` | Request for identity verification |
+| `VerificationMethod` | `GithubOrg`, `GpgKey`, `DomainOwnership`, `Email` |
+| `TrustLevel` | `Unverified` → `Basic` → `Verified` → `Trusted` → `Official` |
+| `PublishedSkill` | Published WASM skill with metadata and signatures |
+| `SkillReport` | Report against a malicious skill |
+| `ScanResult` | Vulnerability scan output with issues |
+| `PublisherReputation` | Aggregated reputation details |
+
+**PublisherRegistry methods:**
+
+| Method | Description |
+|--------|-------------|
+| `register(profile)` | Register a new publisher |
+| `get_publisher(id)` | Get publisher profile |
+| `request_verification(id, request)` | Start verification flow |
+| `complete_verification(id, method, success, details)` | Complete verification |
+| `publish_skill(publisher_id, skill)` | Publish a skill |
+| `report_skill(skill_id, reporter, reason, desc)` | Report malicious skill |
+| `scan_skill(wasm_bytes)` | Scan WASM binary for vulnerabilities |
+| `get_reputation(id)` | Get publisher reputation details |
+| `update_reputation(id, delta)` | Adjust reputation score |
+| `list_publishers(min_trust_level)` | List publishers by trust level |
+| `get_reports(skill_id)` | Get reports for a skill |
+
 ---
 
 ## Reasoner API
 
 ### ProcessRewardModel
-
-**Module:** `vak::reasoner`
 
 Scores reasoning steps.
 
@@ -751,6 +832,244 @@ let loop_ = HybridReasoningLoop::new(prm, safety_engine, verifier);
 let plan = loop_.reason(&goal, &context).await?;
 // Returns ExecutionPlan with validated actions
 ```
+
+### ZkProver & ZkVerifier
+
+**Module:** `vak::reasoner::zk_proof`
+
+Zero-knowledge proof generation and verification. Enables agents to prove properties about their actions without revealing sensitive details.
+
+```rust
+use vak::reasoner::zk_proof::{
+    ZkProver, ZkVerifier, ZkStatement, ProofConfig, ProofRegistry,
+};
+
+// Create prover and verifier
+let config = ProofConfig::default();
+let prover = ZkProver::new(config.clone());
+let verifier = ZkVerifier::new(config);
+
+// Policy compliance proof
+let statement = ZkStatement::PolicyCompliance {
+    policy_hash: "sha256-of-policy".into(),
+    action_hash: "sha256-of-action".into(),
+    context_hash: "sha256-of-context".into(),
+};
+let secret = b"the-actual-policy-evaluation-data";
+let proof = prover.prove(&statement, secret)?;
+assert!(verifier.verify(&statement, &proof)?);
+
+// Range proof (prove value is in bounds without revealing it)
+let statement = ZkStatement::RangeProof {
+    value_commitment: commit_value(42, b"nonce"),
+    min: 0,
+    max: 100,
+    domain: "transaction_amount".into(),
+};
+let proof = prover.prove(&statement, &42u64.to_le_bytes())?;
+assert!(verifier.verify(&statement, &proof)?);
+
+// Proof registry for batch verification
+let mut registry = ProofRegistry::new();
+registry.register(proof)?;
+let valid_count = registry.verify_all(&verifier);
+```
+
+**Statement types:**
+
+| Type | Description |
+|------|-------------|
+| `PolicyCompliance` | Prove an action was policy-compliant |
+| `AuditIntegrity` | Prove audit log integrity |
+| `StateTransition` | Prove valid state transitions |
+| `IdentityAttribute` | Prove agent identity attributes |
+| `RangeProof` | Prove a value is within bounds |
+| `SetMembership` | Prove membership in a set |
+
+**Key types:**
+
+| Type | Description |
+|------|-------------|
+| `ZkProver` | Generates zero-knowledge proofs |
+| `ZkVerifier` | Verifies proofs without seeing secrets |
+| `ZkStatement` | Statement to prove (6 variants) |
+| `ZkProof` | Generated proof with metadata |
+| `ProofRegistry` | Registry for batch proof management |
+| `ProofConfig` | Configuration (max proof size, TTL) |
+
+### PrmToolkit
+
+**Module:** `vak::reasoner::prm_toolkit`
+
+Tools for evaluating, calibrating, and fine-tuning Process Reward Models.
+
+```rust
+use vak::reasoner::prm_toolkit::{
+    PrmToolkit, EvaluationDataset, TrainingExample,
+};
+
+let toolkit = PrmToolkit::new();
+
+// Load dataset
+let mut dataset = EvaluationDataset::new("my-dataset");
+dataset.add_example(TrainingExample {
+    input: "Is 2+2=5?".into(),
+    reasoning_steps: vec!["Check arithmetic".into()],
+    predicted_score: 0.2,
+    ground_truth: false,
+    metadata: Default::default(),
+});
+
+// Evaluate model performance
+let metrics = toolkit.evaluate(&dataset)?;
+println!("Accuracy: {:.2}", metrics.accuracy);
+println!("F1: {:.2}", metrics.f1_score);
+println!("AUROC: {:.2}", metrics.auroc);
+println!("ECE: {:.4}", metrics.expected_calibration_error);
+
+// Find optimal threshold
+let threshold = toolkit.find_optimal_threshold(&dataset, 100)?;
+
+// Calibration analysis
+let calibration = toolkit.calibration_analysis(&dataset, 10)?;
+
+// Compare two models
+let report = toolkit.compare_models(&dataset_a, &dataset_b)?;
+
+// Export for fine-tuning
+let examples = toolkit.export_fine_tuning_data(&dataset)?;
+
+// Generate prompt template
+let template = toolkit.generate_prompt_template(&dataset)?;
+```
+
+**EvaluationMetrics fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `accuracy` | `f64` | Overall accuracy |
+| `precision` | `f64` | True positives / (true + false positives) |
+| `recall` | `f64` | True positives / (true + false negatives) |
+| `f1_score` | `f64` | Harmonic mean of precision and recall |
+| `auroc` | `f64` | Area under ROC curve (trapezoidal) |
+| `expected_calibration_error` | `f64` | ECE across calibration bins |
+| `mean_absolute_error` | `f64` | MAE of predicted scores |
+| `root_mean_squared_error` | `f64` | RMSE of predicted scores |
+
+**PrmToolkit methods:**
+
+| Method | Description |
+|--------|-------------|
+| `evaluate(dataset)` | Compute all metrics |
+| `calibration_analysis(dataset, bins)` | Analyze prediction calibration |
+| `compare_models(dataset_a, dataset_b)` | A/B comparison report |
+| `find_optimal_threshold(dataset, steps)` | Search for best threshold |
+| `export_fine_tuning_data(dataset)` | Export JSONL for LLM fine-tuning |
+| `generate_prompt_template(dataset)` | Generate PRM prompt template |
+
+---
+
+## Constitution API
+
+### ConstitutionalEngine
+
+**Module:** `vak::kernel::constitution`
+
+Immutable safety governance layer that enforces fundamental principles on all agent actions.
+
+```rust
+use vak::kernel::constitution::{
+    ConstitutionalEngine, Constitution, ConstitutionalRule,
+    Principle, EnforcementPoint, ConstitutionalDecision,
+};
+
+// Create with default safety constitution
+let engine = ConstitutionalEngine::new_with_defaults();
+
+// Evaluate an action
+let context = serde_json::json!({
+    "action": "file_delete",
+    "resource": "/etc/passwd",
+    "risk_level": "critical",
+});
+let decision = engine.evaluate(&context, EnforcementPoint::PreExecution)?;
+
+match decision {
+    ConstitutionalDecision::Allowed => { /* proceed */ }
+    ConstitutionalDecision::Blocked { rule_id, reason, principle } => {
+        println!("Blocked by rule {}: {}", rule_id, reason);
+    }
+    ConstitutionalDecision::Warning { rule_id, reason, principle } => {
+        println!("Warning from rule {}: {}", rule_id, reason);
+    }
+}
+
+// Lock constitution (makes it immutable)
+engine.lock()?;
+
+// Verify integrity (detects tampering)
+assert!(engine.verify_integrity()?);
+```
+
+### Constitution & Rules
+
+```rust
+// Custom constitution
+let mut constitution = Constitution::new("enterprise-safety");
+constitution.add_principle(Principle {
+    id: "data-sovereignty".into(),
+    name: "Data Sovereignty".into(),
+    description: "Data must not leave approved regions".into(),
+    priority: 95,
+});
+
+constitution.add_rule(ConstitutionalRule {
+    id: "block-external-transfer".into(),
+    principle_id: "data-sovereignty".into(),
+    description: "Block data transfers to external endpoints".into(),
+    enforcement_point: EnforcementPoint::PreExecution,
+    condition_field: "destination".into(),
+    condition_op: ConstraintOp::NotContains("internal.corp".into()),
+    blocking: true,
+});
+
+let engine = ConstitutionalEngine::new(constitution);
+```
+
+**Key types:**
+
+| Type | Description |
+|------|-------------|
+| `ConstitutionalEngine` | Main engine for evaluating constitutional rules |
+| `Constitution` | Collection of principles and rules with integrity hash |
+| `Principle` | Fundamental safety principle with priority |
+| `ConstitutionalRule` | Enforceable rule linked to a principle |
+| `EnforcementPoint` | `PrePolicy`, `PreExecution`, `PostExecution`, `All` |
+| `ConstitutionalDecision` | `Allowed`, `Blocked`, `Warning` |
+| `ConstraintOp` | Comparison operators (Equals, Contains, LessThan, All, Any, Not, etc.) |
+
+**Default principles (priority):**
+
+| Principle | Priority |
+|-----------|----------|
+| No Harm | 100 |
+| Human Override | 100 |
+| Transparency | 90 |
+| Least Privilege | 80 |
+| Data Protection | 70 |
+
+**ConstitutionalEngine methods:**
+
+| Method | Description |
+|--------|-------------|
+| `new(constitution)` | Create with custom constitution |
+| `new_with_defaults()` | Create with default safety principles |
+| `evaluate(context, point)` | Evaluate action against rules |
+| `evaluate_all(context)` | Evaluate at all enforcement points |
+| `lock()` | Make constitution immutable |
+| `verify_integrity()` | Check for tampering via SHA-256 hash |
+| `get_constitution()` | Get constitution reference |
+| `is_locked()` | Check if locked |
 
 ---
 
