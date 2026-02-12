@@ -1,0 +1,160 @@
+# VAK Helm Chart - Default Values
+# Override these in your own values.yaml or via --set flags
+
+# -- Number of replicas
+replicaCount: 2
+
+image:
+  # -- Container image repository
+  repository: vak/kernel
+  # -- Image pull policy
+  pullPolicy: IfNotPresent
+  # -- Image tag (defaults to chart appVersion)
+  tag: ""
+
+# -- Image pull secrets for private registries
+imagePullSecrets: []
+
+# -- Override the chart name
+nameOverride: ""
+# -- Override the full release name
+fullnameOverride: ""
+
+serviceAccount:
+  # -- Create a ServiceAccount
+  create: true
+  # -- Annotations for the ServiceAccount
+  annotations: {}
+  # -- ServiceAccount name (generated if not set)
+  name: ""
+
+# -- Pod annotations
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: "/metrics"
+
+# -- Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+
+# -- Container security context
+securityContext:
+  readOnlyRootFilesystem: false
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  # -- Service type
+  type: ClusterIP
+  # -- Service port
+  port: 8080
+
+ingress:
+  # -- Enable ingress
+  enabled: false
+  # -- Ingress class name
+  className: ""
+  # -- Ingress annotations
+  annotations: {}
+  # -- Ingress hosts
+  hosts:
+    - host: vak.local
+      paths:
+        - path: /
+          pathType: Prefix
+  # -- Ingress TLS configuration
+  tls: []
+
+resources:
+  requests:
+    # -- CPU request
+    cpu: 500m
+    # -- Memory request
+    memory: 512Mi
+  limits:
+    # -- CPU limit
+    cpu: "2"
+    # -- Memory limit
+    memory: 2Gi
+
+autoscaling:
+  # -- Enable HPA
+  enabled: true
+  # -- Minimum replicas
+  minReplicas: 2
+  # -- Maximum replicas
+  maxReplicas: 10
+  # -- Target CPU utilization
+  targetCPUUtilizationPercentage: 70
+  # -- Target memory utilization
+  targetMemoryUtilizationPercentage: 80
+
+# -- Node selector
+nodeSelector: {}
+
+# -- Tolerations
+tolerations: []
+
+# -- Affinity rules
+affinity: {}
+
+# -- Pod disruption budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# -- Network policy
+networkPolicy:
+  enabled: true
+
+# VAK kernel configuration
+vak:
+  # -- Kernel instance name
+  name: "vak-kernel"
+  # -- Log level (trace, debug, info, warn, error)
+  logLevel: "info"
+  # -- Maximum concurrent agents
+  maxConcurrentAgents: 10
+  # -- Maximum execution time in seconds
+  maxExecutionTimeSecs: 30
+
+  security:
+    # -- Enable WASM sandboxing
+    enableSandboxing: true
+    # -- Enable rate limiting
+    enableRateLimiting: true
+    # -- Max requests per minute per agent
+    maxRequestsPerMinute: 60
+
+  audit:
+    # -- Enable audit logging
+    enabled: true
+    # -- Audit log path inside the container
+    logPath: "/app/audit"
+
+  policy:
+    # -- Enable policy enforcement
+    enabled: true
+    # -- Default decision when no rule matches (deny or allow)
+    defaultDecision: "deny"
+
+  resources:
+    # -- Maximum memory per agent in MB
+    maxMemoryMb: 256
+
+persistence:
+  audit:
+    # -- Enable persistent storage for audit logs
+    enabled: true
+    # -- Storage class (use "-" for default)
+    storageClass: ""
+    # -- Access mode
+    accessMode: ReadWriteOnce
+    # -- Storage size
+    size: 10Gi

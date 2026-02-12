@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **DOC-001**: Architecture documentation (ARCHITECTURE.md) - system design, module reference, data flow diagrams, security architecture, deployment guide
 - **DOC-002**: API reference documentation (API.md) - complete API reference for all modules including Rust and Python SDK, configuration reference, error codes
+- **INF-001**: Kubernetes operator manifests - Kustomize base with namespace, deployment, service, HPA, PDB, NetworkPolicy, ConfigMap, PVC, ServiceAccount
+- **INF-002**: Docker images - multi-stage Dockerfile (deps, builder, dev, production), optimized .dockerignore, docker-compose dev profile
+- **INF-003**: Helm charts - full chart with values.yaml, 10 templates (deployment, service, ingress, HPA, PDB, NetworkPolicy, ConfigMap, PVC, ServiceAccount, helpers)
+- **OBS-002**: Cryptographic replay capability - ReplaySession, ReplayVerifier, ActiveReplay with hash-chain verification and step-by-step replay
 - **INT-003**: LangChain Adapter Completion - LLM call interception, callback handler trait, audit integration, tool execution lifecycle management
 - **INT-004**: AutoGPT Adapter Completion - PRM-scored command interception, execution result verification, plan progress tracking, callback handler system, sensitive data detection
 - **SWM-002**: AgentCard Discovery - well-known endpoint support (`/.well-known/agent.json`), HTTP-based remote agent card fetching, agent card validation, TTL-based caching with eviction, search by capability/name, endpoint management

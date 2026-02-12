@@ -1,0 +1,14 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: vak-kernel-pdb
+  namespace: vak-system
+  labels:
+    app.kubernetes.io/name: vak
+    app.kubernetes.io/component: availability
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vak
+      app.kubernetes.io/component: kernel

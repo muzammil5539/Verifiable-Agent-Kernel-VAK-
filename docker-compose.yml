@@ -5,6 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: production
     ports:
       - "8080:8080"
     environment:
@@ -34,8 +35,34 @@ services:
           memory: 512M
           cpus: '0.5'
 
+  # Development variant with debug logging and tools
+  vak-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    ports:
+      - "8081:8080"
+    environment:
+      - VAK_POLICY_PATH=/app/policies
+      - VAK_AUDIT_PATH=/app/audit
+      - VAK_SKILLS_PATH=/app/skills
+      - VAK_LOG_LEVEL=debug
+      - RUST_LOG=vak=debug
+    volumes:
+      - ./policies:/app/policies:ro
+      - ./prompts:/app/prompts:ro
+      - vak-audit-dev:/app/audit
+      - vak-data-dev:/app/data
+    profiles:
+      - dev
+
 volumes:
   vak-audit:
     driver: local
   vak-data:
+    driver: local
+  vak-audit-dev:
+    driver: local
+  vak-data-dev:
     driver: local

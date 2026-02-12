@@ -1,0 +1,27 @@
+# VAK Kubernetes Kustomization
+#
+# Apply with: kubectl apply -k k8s/base/
+#
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: vak-system
+
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - configmap.yaml
+  - pvc.yaml
+  - deployment.yaml
+  - service.yaml
+  - hpa.yaml
+  - pdb.yaml
+  - networkpolicy.yaml
+
+commonLabels:
+  app.kubernetes.io/managed-by: kustomize
+  app.kubernetes.io/part-of: vak-system
+
+images:
+  - name: vak/kernel
+    newTag: "0.1.0"

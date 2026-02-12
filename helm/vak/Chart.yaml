@@ -1,0 +1,20 @@
+apiVersion: v2
+name: vak
+description: Verifiable Agent Kernel - Secure, auditable AI agent execution environment
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/muzammil5539/Verifiable-Agent-Kernel-VAK-
+sources:
+  - https://github.com/muzammil5539/Verifiable-Agent-Kernel-VAK-
+keywords:
+  - ai
+  - agents
+  - kernel
+  - verification
+  - security
+  - wasm
+  - policy
+  - audit
+maintainers:
+  - name: VAK Team

@@ -625,6 +625,73 @@ Layer 7: Formal Verification    Z3 proofs for critical actions
 # - Configurable via environment variables
 ```
 
+### Kubernetes Deployment
+
+VAK includes Kustomize-based Kubernetes manifests in `k8s/base/`:
+
+```
+k8s/base/
+├── kustomization.yaml      # Kustomize orchestration
+├── namespace.yaml           # vak-system namespace
+├── configmap.yaml           # Environment variables
+├── serviceaccount.yaml      # RBAC service account
+├── deployment.yaml          # 2-replica deployment with probes
+├── service.yaml             # ClusterIP on port 8080
+├── pvc.yaml                 # 10Gi PVC for audit logs
+├── hpa.yaml                 # HPA (2-10 replicas, CPU/memory targets)
+├── pdb.yaml                 # PodDisruptionBudget (minAvailable: 1)
+└── networkpolicy.yaml       # Ingress/egress network rules
+```
+
+**Deploy with Kustomize:**
+```bash
+kubectl apply -k k8s/base/
+```
+
+**Features:**
+- Liveness, readiness, and startup probes on `/health`
+- Resource requests/limits (512Mi-2Gi RAM, 500m-2000m CPU)
+- Non-root security context (UID 1000, read-only root filesystem)
+- Prometheus metric annotations
+- HPA with scale-up/scale-down stabilization windows
+- NetworkPolicy restricting ingress to namespace and monitoring
+
+### Helm Chart Deployment
+
+VAK provides a Helm chart in `helm/vak/` for templated Kubernetes deployments:
+
+```
+helm/vak/
+├── Chart.yaml               # Chart metadata (v0.1.0)
+├── values.yaml              # Configurable defaults
+├── .helmignore              # Ignore patterns
+└── templates/
+    ├── _helpers.tpl          # Template helpers
+    ├── deployment.yaml       # Deployment with all probes and env
+    ├── service.yaml          # Service
+    ├── serviceaccount.yaml   # ServiceAccount
+    ├── configmap.yaml        # VAK configuration
+    ├── pvc.yaml              # Persistent storage
+    ├── hpa.yaml              # Autoscaling
+    ├── pdb.yaml              # Pod disruption budget
+    ├── networkpolicy.yaml    # Network isolation
+    └── ingress.yaml          # Optional ingress with TLS
+```
+
+**Deploy with Helm:**
+```bash
+helm install vak helm/vak/ --namespace vak-system --create-namespace
+```
+
+**Override values:**
+```bash
+helm install vak helm/vak/ \
+  --set replicaCount=3 \
+  --set autoscaling.enabled=true \
+  --set ingress.enabled=true \
+  --set ingress.hosts[0].host=vak.example.com
+```
+
 ### Environment Variables
 
 | Variable | Description | Default |
@@ -738,6 +805,10 @@ VAK/
 ├── examples/                     # Usage examples (Rust + Python)
 ├── benches/                      # Criterion benchmarks
 ├── docs/                         # Additional documentation
+├── k8s/                          # Kubernetes manifests
+│   └── base/                     # Kustomize base (deployment, service, HPA, etc.)
+├── helm/                         # Helm charts
+│   └── vak/                      # VAK chart (Chart.yaml, values.yaml, templates/)
 ├── instructions/                 # Agent instruction files (YAML)
 ├── prompts/                      # LLM prompt templates (YAML)
 └── protocols/                    # Communication protocol definitions

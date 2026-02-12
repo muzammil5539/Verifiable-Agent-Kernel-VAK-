@@ -307,6 +307,12 @@ VAK/
 ├── config/                       # Configuration
 │   └── agent_registry.yaml
 │
+├── k8s/                          # Kubernetes manifests
+│   └── base/                    # Kustomize base (deployment, service, hpa, etc.)
+│
+├── helm/                         # Helm charts
+│   └── vak/                     # VAK chart (Chart.yaml, values.yaml, templates/)
+│
 └── benches/                      # Performance benchmarks
 ```
 
@@ -480,7 +486,7 @@ python examples/python_quickstart.py
 
 ## Development Roadmap
 
-### Current Status (v0.1 - Alpha) — ~95% Complete
+### Current Status (v0.1 - Alpha) — ~98% Complete
 
 **Completed Phases:**
 - ✅ Phase 1: Core Kernel Stability ("Iron Kernel")
@@ -494,6 +500,12 @@ python examples/python_quickstart.py
 **Documentation:**
 - ✅ Architecture Documentation (DOC-001)
 - ✅ API Reference Documentation (DOC-002)
+
+**Infrastructure:**
+- ✅ Kubernetes Operator (INF-001)
+- ✅ Docker Images (INF-002)
+- ✅ Helm Charts (INF-003)
+- ✅ Cryptographic Replay (OBS-002)
 
 | Module | Status | Completion |
 |--------|--------|------------|
@@ -577,10 +589,10 @@ python examples/python_quickstart.py
 - [x] DOC-002: API reference documentation
 
 #### 🟡 P2 - Nice to Have
-- [ ] INF-001: Kubernetes operator
-- [ ] INF-002: Docker images
-- [ ] INF-003: Helm charts
-- [ ] OBS-002: Cryptographic replay capability
+- [x] INF-001: Kubernetes operator
+- [x] INF-002: Docker images
+- [x] INF-003: Helm charts
+- [x] OBS-002: Cryptographic replay capability
 
 #### 🟢 P3 - Future (Post-MVP)
 - [ ] FUT-001: Zero-Knowledge Proof integration

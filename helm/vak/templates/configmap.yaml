@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "vak.fullname" . }}-config
+  labels:
+    {{- include "vak.labels" . | nindent 4 }}
+data:
+  VAK_NAME: {{ .Values.vak.name | quote }}
+  VAK_LOG_LEVEL: {{ .Values.vak.logLevel | quote }}
+  VAK_POLICY_PATH: "/app/policies"
+  VAK_AUDIT_PATH: {{ .Values.vak.audit.logPath | quote }}
+  VAK_SKILLS_PATH: "/app/skills"
+  VAK_MAX_CONCURRENT_AGENTS: {{ .Values.vak.maxConcurrentAgents | quote }}
+  VAK_MAX_EXECUTION_TIME_SECS: {{ .Values.vak.maxExecutionTimeSecs | quote }}
+  VAK_SECURITY__ENABLE_SANDBOXING: {{ .Values.vak.security.enableSandboxing | quote }}
+  VAK_SECURITY__ENABLE_RATE_LIMITING: {{ .Values.vak.security.enableRateLimiting | quote }}
+  VAK_SECURITY__MAX_REQUESTS_PER_MINUTE: {{ .Values.vak.security.maxRequestsPerMinute | quote }}
+  VAK_AUDIT__ENABLED: {{ .Values.vak.audit.enabled | quote }}
+  VAK_POLICY__ENABLED: {{ .Values.vak.policy.enabled | quote }}
+  VAK_POLICY__DEFAULT_DECISION: {{ .Values.vak.policy.defaultDecision | quote }}
+  VAK_RESOURCES__MAX_MEMORY_MB: {{ .Values.vak.resources.maxMemoryMb | quote }}
+  RUST_LOG: "vak={{ .Values.vak.logLevel }}"
