@@ -775,6 +775,346 @@ fn bench_signed_audit(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark swarm voting operations (TST-005).
+///
+/// Measures quadratic voting cost calculations and session management.
+fn bench_swarm_voting(c: &mut Criterion) {
+    use vak::swarm::{Proposal, QuadraticVoting, VoteDirection, VotingConfig, VotingSession};
+
+    let mut group = c.benchmark_group("swarm_voting");
+
+    // Quadratic voting cost calculation
+    group.bench_function("quadratic_cost", |b| {
+        let qv = QuadraticVoting::new(100);
+        b.iter(|| {
+            black_box(qv.calculate_cost(5));
+            black_box(qv.calculate_cost(10));
+            black_box(qv.calculate_cost(1));
+        })
+    });
+
+    // Session creation
+    group.bench_function("session_creation", |b| {
+        b.iter(|| {
+            let proposal = Proposal::new("Test proposal")
+                .with_description("A test proposal for benchmarking");
+            let config = VotingConfig::default();
+            black_box(VotingSession::new("bench-session".to_string(), proposal, config));
+        })
+    });
+
+    group.finish();
+}
+
+/// Benchmark sycophancy detection (TST-005).
+///
+/// Measures vote recording and session analysis performance.
+fn bench_sycophancy_detection(c: &mut Criterion) {
+    use vak::swarm::{DetectorConfig, SycophancyDetector};
+
+    let rt = Runtime::new().unwrap();
+    let mut group = c.benchmark_group("sycophancy_detection");
+
+    // Record vote performance
+    group.bench_function("record_vote", |b| {
+        let detector = SycophancyDetector::with_defaults();
+        let mut i = 0u64;
+        b.iter(|| {
+            rt.block_on(async {
+                detector
+                    .record_vote(
+                        "session-1",
+                        &format!("agent-{}", i % 10),
+                        "option-a",
+                        black_box(3),
+                    )
+                    .await;
+            });
+            i += 1;
+        })
+    });
+
+    // Session analysis
+    group.bench_function("analyze_session_50_votes", |b| {
+        let detector = SycophancyDetector::with_defaults();
+        rt.block_on(async {
+            for i in 0..50 {
+                detector
+                    .record_vote(
+                        "analysis-session",
+                        &format!("agent-{}", i % 10),
+                        if i % 3 == 0 { "option-a" } else { "option-b" },
+                        (i % 5 + 1) as u64,
+                    )
+                    .await;
+            }
+        });
+        b.iter(|| {
+            rt.block_on(async {
+                black_box(detector.analyze_session("analysis-session").await);
+            })
+        })
+    });
+
+    group.finish();
+}
+
+/// Benchmark constraint verification (TST-005).
+///
+/// Measures formal constraint checking performance.
+fn bench_constraint_verification(c: &mut Criterion) {
+    use vak::reasoner::{Constraint, ConstraintKind, ConstraintVerifier, FormalVerifier};
+
+    let mut group = c.benchmark_group("constraint_verification");
+
+    // Single constraint verification
+    group.bench_function("verify_single", |b| {
+        let verifier = ConstraintVerifier::new();
+        let constraint = Constraint::new(
+            "max_amount",
+            ConstraintKind::LessThan {
+                field: "amount".to_string(),
+                value: 1000.into(),
+            },
+        );
+        let mut ctx = HashMap::new();
+        ctx.insert("amount".to_string(), 500.into());
+
+        b.iter(|| black_box(verifier.verify(&constraint, &ctx).unwrap()))
+    });
+
+    // Multiple constraints verification
+    group.bench_function("verify_batch_10", |b| {
+        let verifier = ConstraintVerifier::new();
+        let constraints: Vec<_> = (0..10)
+            .map(|i| {
+                Constraint::new(
+                    format!("constraint_{}", i),
+                    ConstraintKind::LessThan {
+                        field: format!("field_{}", i),
+                        value: (1000 + i).into(),
+                    },
+                )
+            })
+            .collect();
+        let mut ctx = HashMap::new();
+        for i in 0..10 {
+            ctx.insert(format!("field_{}", i), (500i64).into());
+        }
+
+        b.iter(|| black_box(verifier.verify_all(&constraints, &ctx).unwrap()))
+    });
+
+    group.finish();
+}
+
+/// Benchmark episodic memory operations (TST-005).
+///
+/// Measures episode recording, retrieval, and chain verification.
+fn bench_episodic_memory(c: &mut Criterion) {
+    use vak::memory::EpisodicMemory;
+
+    let mut group = c.benchmark_group("episodic_memory");
+
+    // Episode recording
+    group.bench_function("record_episode", |b| {
+        let mut memory = EpisodicMemory::new();
+        let mut i = 0u64;
+        b.iter(|| {
+            memory.record_episode(
+                format!("action_{}", i),
+                format!("observation_{}", i),
+                Some(format!("thought_{}", i)),
+            );
+            i += 1;
+        })
+    });
+
+    // Get recent episodes
+    group.bench_function("get_recent_100", |b| {
+        let mut memory = EpisodicMemory::new();
+        for i in 0..200 {
+            memory.record_episode(
+                format!("action_{}", i),
+                format!("observation_{}", i),
+                Some(format!("thought_{}", i)),
+            );
+        }
+        b.iter(|| black_box(memory.get_recent(100)))
+    });
+
+    // Chain verification
+    group.bench_function("verify_chain_100", |b| {
+        let mut memory = EpisodicMemory::new();
+        for i in 0..100 {
+            memory.record_episode(
+                format!("action_{}", i),
+                format!("observation_{}", i),
+                None,
+            );
+        }
+        b.iter(|| black_box(memory.verify_chain().is_ok()))
+    });
+
+    // Content search
+    group.bench_function("search_by_content", |b| {
+        let mut memory = EpisodicMemory::new();
+        for i in 0..100 {
+            memory.record_episode(
+                format!("calculate sum of {}", i),
+                format!("result is {}", i * 2),
+                None,
+            );
+        }
+        b.iter(|| black_box(memory.search_by_content("calculate")))
+    });
+
+    group.finish();
+}
+
+/// Benchmark sparse Merkle tree operations (TST-005).
+///
+/// Measures insert, lookup, and proof generation/verification.
+fn bench_sparse_merkle(c: &mut Criterion) {
+    use vak::memory::SparseMerkleTree;
+
+    let mut group = c.benchmark_group("sparse_merkle");
+
+    // Insert
+    group.bench_function("insert", |b| {
+        let mut tree = SparseMerkleTree::new();
+        let mut i = 0u64;
+        b.iter(|| {
+            tree.insert(&format!("key_{}", i), format!("value_{}", i).as_bytes());
+            i += 1;
+        })
+    });
+
+    // Lookup in tree with 1000 entries
+    group.bench_function("get_from_1000", |b| {
+        let mut tree = SparseMerkleTree::new();
+        for i in 0..1000 {
+            tree.insert(&format!("key_{}", i), format!("value_{}", i).as_bytes());
+        }
+        b.iter(|| black_box(tree.get("key_500")))
+    });
+
+    // Proof generation
+    group.bench_function("generate_proof", |b| {
+        let mut tree = SparseMerkleTree::new();
+        for i in 0..100 {
+            tree.insert(&format!("key_{}", i), format!("value_{}", i).as_bytes());
+        }
+        b.iter(|| black_box(tree.generate_proof("key_50").unwrap()))
+    });
+
+    // Proof verification
+    group.bench_function("verify_proof", |b| {
+        let mut tree = SparseMerkleTree::new();
+        for i in 0..100 {
+            tree.insert(&format!("key_{}", i), format!("value_{}", i).as_bytes());
+        }
+        let proof = tree.generate_proof("key_50").unwrap();
+        b.iter(|| black_box(tree.verify_proof(&proof)))
+    });
+
+    group.finish();
+}
+
+/// Benchmark content-addressable storage (TST-005).
+///
+/// Measures put, get, and existence checks.
+fn bench_content_addressable(c: &mut Criterion) {
+    use vak::memory::{CASConfig, ContentAddressableStore};
+
+    let mut group = c.benchmark_group("content_addressable");
+
+    // Put operation
+    group.bench_function("put", |b| {
+        let store = ContentAddressableStore::new(CASConfig::memory()).unwrap();
+        let mut i = 0u64;
+        b.iter(|| {
+            let data = format!("content data block {}", i).into_bytes();
+            black_box(store.put(&data).unwrap());
+            i += 1;
+        })
+    });
+
+    // Get operation
+    group.bench_function("get", |b| {
+        let store = ContentAddressableStore::new(CASConfig::memory()).unwrap();
+        let cid = store.put(b"benchmark content data for retrieval").unwrap();
+        b.iter(|| black_box(store.get(&cid).unwrap()))
+    });
+
+    // Existence check
+    group.bench_function("exists", |b| {
+        let store = ContentAddressableStore::new(CASConfig::memory()).unwrap();
+        let cid = store.put(b"benchmark content data").unwrap();
+        b.iter(|| black_box(store.exists(&cid).unwrap()))
+    });
+
+    group.finish();
+}
+
+/// Benchmark vector store operations (TST-005).
+///
+/// Measures insert and search performance.
+fn bench_vector_store(c: &mut Criterion) {
+    use vak::memory::{InMemoryVectorStore, VectorEntry, VectorStore, VectorStoreConfig};
+
+    let mut group = c.benchmark_group("vector_store");
+
+    let dim = 128;
+
+    // Generate a random-ish embedding
+    fn make_embedding(seed: usize, dim: usize) -> Vec<f32> {
+        (0..dim)
+            .map(|i| ((seed * 7 + i * 13) % 1000) as f32 / 1000.0)
+            .collect()
+    }
+
+    // Insert
+    group.bench_function("insert", |b| {
+        let config = VectorStoreConfig {
+            embedding_dimension: dim,
+            ..VectorStoreConfig::default()
+        };
+        let mut store = InMemoryVectorStore::new(config);
+        let mut i = 0usize;
+        b.iter(|| {
+            let entry = VectorEntry::new(
+                format!("doc_{}", i),
+                format!("content {}", i).into_bytes(),
+                make_embedding(i, dim),
+            );
+            let _ = black_box(store.insert(entry));
+            i += 1;
+        })
+    });
+
+    // Search in store with 500 entries
+    group.bench_function("search_top10_from_500", |b| {
+        let config = VectorStoreConfig {
+            embedding_dimension: dim,
+            ..VectorStoreConfig::default()
+        };
+        let mut store = InMemoryVectorStore::new(config);
+        for i in 0..500 {
+            let entry = VectorEntry::new(
+                format!("doc_{}", i),
+                format!("content {}", i).into_bytes(),
+                make_embedding(i, dim),
+            );
+            store.insert(entry).unwrap();
+        }
+        let query = make_embedding(250, dim);
+        b.iter(|| black_box(store.search(&query, 10, None).unwrap()))
+    });
+
+    group.finish();
+}
+
 /// Benchmark secrets management operations (TST-005, Issue #37).
 ///
 /// Measures performance of secrets storage, retrieval, and caching.
@@ -882,6 +1222,13 @@ criterion_group!(
     bench_migrations,
     bench_knowledge_graph,
     bench_signed_audit,
+    bench_swarm_voting,
+    bench_sycophancy_detection,
+    bench_constraint_verification,
+    bench_episodic_memory,
+    bench_sparse_merkle,
+    bench_content_addressable,
+    bench_vector_store,
     bench_secrets,
 );
 criterion_main!(benches);

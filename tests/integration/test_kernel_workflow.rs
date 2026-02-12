@@ -79,12 +79,12 @@ async fn test_audit_logging_captures_decisions() {
     let mut logger = AuditLogger::new();
 
     // Log multiple entries
-    let entry1 = logger.log("agent-001", "read", "/data/file1.txt", AuditDecision::Allowed);
-    let entry2 = logger.log("agent-001", "write", "/data/file1.txt", AuditDecision::Denied);
-    let entry3 = logger.log("agent-002", "read", "/data/file2.txt", AuditDecision::Allowed);
+    logger.log("agent-001", "read", "/data/file1.txt", AuditDecision::Allowed);
+    logger.log("agent-001", "write", "/data/file1.txt", AuditDecision::Denied);
+    logger.log("agent-002", "read", "/data/file2.txt", AuditDecision::Allowed);
 
     // Verify: All entries are logged
-    let entries = logger.entries();
+    let entries = logger.load_all_entries().unwrap();
     assert_eq!(entries.len(), 3);
 
     // Verify: Entry details are correct
@@ -135,7 +135,7 @@ async fn test_concurrent_agents() {
     use tokio::task::JoinSet;
 
     // Setup: Policy engine allowing read operations
-    let engine = std::sync::Arc::new(PolicyEngine::new_unlimited());
+    let _engine = std::sync::Arc::new(PolicyEngine::new_unlimited());
     let mut engine_inner = PolicyEngine::new_unlimited();
     engine_inner.add_rule(PolicyRule {
         id: "allow-reads".to_string(),
@@ -237,7 +237,7 @@ async fn test_audit_chain_integrity_under_load() {
     }
 
     // Verify: Chain integrity is maintained
-    assert_eq!(logger.entries().len(), 1000);
+    assert_eq!(logger.load_all_entries().unwrap().len(), 1000);
     assert!(logger.verify_chain().is_ok(), "Audit chain integrity violated");
 }
 

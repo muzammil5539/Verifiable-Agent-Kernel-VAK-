@@ -205,6 +205,7 @@ async fn test_policy_hot_reload() {
 // ============================================================================
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct AuditEntry {
     id: String,
     timestamp_ms: i64,
@@ -419,7 +420,7 @@ async fn simulate_agent_registration(agent_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-async fn simulate_policy_check(agent_id: &str, action: &str, resource: &str) -> PolicyResult {
+async fn simulate_policy_check(_agent_id: &str, action: &str, resource: &str) -> PolicyResult {
     // Default allow for most actions, deny for audit_log deletion
     if action == "delete" && resource.contains("audit_log") {
         PolicyResult {

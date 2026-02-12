@@ -28,15 +28,15 @@ fn test_audit_chain_hash_linking() {
     let mut logger = AuditLogger::new();
 
     // Log several entries
-    let entry1 = logger.log("agent-001", "read", "/data/a.txt", AuditDecision::Allowed);
-    let entry2 = logger.log("agent-001", "write", "/data/b.txt", AuditDecision::Denied);
-    let entry3 = logger.log("agent-002", "read", "/data/c.txt", AuditDecision::Allowed);
+    logger.log("agent-001", "read", "/data/a.txt", AuditDecision::Allowed);
+    logger.log("agent-001", "write", "/data/b.txt", AuditDecision::Denied);
+    logger.log("agent-002", "read", "/data/c.txt", AuditDecision::Allowed);
 
     // Verify chain
     assert!(logger.verify_chain().is_ok());
 
     // Get entries and verify linking
-    let entries = logger.entries();
+    let entries = logger.load_all_entries().unwrap();
     assert_eq!(entries.len(), 3);
 
     // First entry has prev_hash of zeros (genesis)
@@ -70,19 +70,19 @@ fn test_chain_tampering_detection() {
 /// Test: Audit logging with signatures
 #[test]
 fn test_audit_logging_with_signatures() {
-    // Create signer
-    let signer = AuditSigner::new();
-    let mut logger = AuditLogger::new_with_signing(signer);
+    // Create logger with signing
+    let mut logger = AuditLogger::new_with_signing();
 
     // Log entries with automatic signing
     logger.log("agent-001", "read", "/data/file.txt", AuditDecision::Allowed);
     logger.log("agent-001", "write", "/data/file.txt", AuditDecision::Denied);
 
     // Verify signatures
-    assert!(logger.verify_signatures().is_ok());
+    let pk = logger.public_key().unwrap().to_string();
+    assert!(logger.verify_signatures(&pk).is_ok());
 
     // Verify both chain and signatures
-    assert!(logger.verify_all().is_ok());
+    assert!(logger.verify_all(Some(&pk)).is_ok());
 }
 
 /// Test: Signature verification fails for unsigned entries
@@ -93,7 +93,7 @@ fn test_signature_verification_unsigned() {
     logger.log("agent-001", "read", "/data/file.txt", AuditDecision::Allowed);
 
     // Entries should not have signatures
-    let entries = logger.entries();
+    let entries = logger.load_all_entries().unwrap();
     assert!(entries[0].signature.is_none());
 }
 
@@ -109,8 +109,8 @@ fn test_audit_filtering_by_agent() {
     }
 
     // Get entries for a specific agent
-    let agent_000_entries: Vec<_> = logger
-        .entries()
+    let all_entries = logger.load_all_entries().unwrap();
+    let agent_000_entries: Vec<_> = all_entries
         .iter()
         .filter(|e| e.agent_id == "agent-000")
         .collect();
@@ -129,7 +129,7 @@ fn test_audit_filtering_by_time() {
     }
 
     // All entries should have timestamps
-    let entries = logger.entries();
+    let entries = logger.load_all_entries().unwrap();
     assert!(entries.iter().all(|e| !e.timestamp.to_string().is_empty()));
 }
 
@@ -154,7 +154,7 @@ fn test_large_audit_chain_integrity() {
     }
 
     // Verify chain integrity
-    assert_eq!(logger.entries().len(), 1000);
+    assert_eq!(logger.load_all_entries().unwrap().len(), 1000);
     assert!(logger.verify_chain().is_ok());
 }
 
@@ -205,6 +205,6 @@ async fn test_concurrent_audit_logging() {
 
     // Verify all entries were logged
     let logger = logger.read().await;
-    assert_eq!(logger.entries().len(), 100);
+    assert_eq!(logger.load_all_entries().unwrap().len(), 100);
     assert!(logger.verify_chain().is_ok());
 }
