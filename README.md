@@ -27,6 +27,14 @@
 - [Contributing](#contributing)
 - [License](#license)
 
+### Documentation
+
+- [Architecture Documentation](ARCHITECTURE.md) — System design, module reference, data flow, security architecture
+- [API Reference](API.md) — Complete API reference for all modules (Rust & Python)
+- [Python SDK Guide](docs/python-sdk.md) — Getting started with the Python SDK
+- [Contributing Guide](CONTRIBUTING.md) — Development workflow and coding standards
+- [Changelog](CHANGELOG.md) — Version history
+
 ---
 
 ## Overview
@@ -472,7 +480,7 @@ python examples/python_quickstart.py
 
 ## Development Roadmap
 
-### Current Status (v0.1 - Alpha) — ~43% Complete
+### Current Status (v0.1 - Alpha) — ~95% Complete
 
 **Completed Phases:**
 - ✅ Phase 1: Core Kernel Stability ("Iron Kernel")
@@ -481,9 +489,11 @@ python examples/python_quickstart.py
 - ✅ Phase 4: Neuro-Symbolic Cognitive Layer ("Prefrontal Cortex")
 - ✅ Phase 5: Ecosystem & Interoperability
 - ✅ Security Layer
+- ✅ Testing Layer
 
-**In Progress:**
-- ⚠️ Testing Layer (In Progress)
+**Documentation:**
+- ✅ Architecture Documentation (DOC-001)
+- ✅ API Reference Documentation (DOC-002)
 
 | Module | Status | Completion |
 |--------|--------|------------|
@@ -499,6 +509,7 @@ python examples/python_quickstart.py
 | Python SDK | ⚠️ Partial | ~40% |
 | Testing Suite | ✅ Complete | 100% |
 | LLM Interface | ✅ Implemented | 100% |
+| Documentation | ✅ Complete | 100% |
 
 ### Roadmap by Priority
 
@@ -562,10 +573,8 @@ python examples/python_quickstart.py
 - [x] TST-006: Python SDK Tests
 
 #### 🟠 P1 - Important for Production
-- [ ] DOC-001: Architecture documentation
-- [ ] DOC-002: API reference documentation
-- [x] INT-003: LangChain Adapter Completion
-- [x] INT-004: AutoGPT Adapter Completion
+- [x] DOC-001: Architecture documentation
+- [x] DOC-002: API reference documentation
 
 #### 🟡 P2 - Nice to Have
 - [ ] INF-001: Kubernetes operator

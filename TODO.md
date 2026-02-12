@@ -9,7 +9,7 @@
 
 ## Critical Path Analysis
 
-**Status:** Beta — ~90% Complete (61/68 tracked items)
+**Status:** Beta — ~92% Complete (62/68 tracked items)
 
 All critical path items for MVP are **COMPLETE**:
 - [x] LLM Abstraction Layer
@@ -62,7 +62,7 @@ All critical path items for MVP are **COMPLETE**:
 4. [x] ~~INF-002: Database schema and migrations~~ **DONE**
 
 ### Short-term
-1. [ ] DOC-002: Architecture diagrams
+1. [x] ~~DOC-002: Architecture diagrams~~ **DONE** (ARCHITECTURE.md + API.md)
 2. [x] ~~TST-005: Benchmark suite expansion~~ **DONE** (25 benchmark groups)
 3. [x] ~~TST-006: Property-based testing (Issue #33)~~ **DONE** (28 property tests)
 
@@ -137,11 +137,11 @@ All core functionality and production hardening phase 1 implemented.
 | **SWM-002**: AgentCard Discovery (well-known endpoint, HTTP fetch, validation, caching) | Done |
 | Phase 5: Ecosystem & Interoperability marked as COMPLETE | Done |
 
-### Sprint 11: PLANNED
+### Sprint 11: IN PROGRESS
 
 | Task | Status |
 |------|--------|
-| **DOC-002**: Architecture diagrams | Pending |
+| **DOC-002**: Architecture documentation (ARCHITECTURE.md + API.md) | Done |
 | Performance optimization pass | Pending |
 | Security audit finalization | Pending |
 | **Issue #27**: Skill marketplace prototype | Pending |

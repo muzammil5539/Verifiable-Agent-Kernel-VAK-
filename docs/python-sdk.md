@@ -352,8 +352,9 @@ VAK/
 
 ## Further Reading
 
-- [Main README](README.md) — Full project documentation
-- [CONTRIBUTING.md](CONTRIBUTING.md) — Contribution guidelines
-- [CHANGELOG.md](CHANGELOG.md) — Version history
-- [TODO_BINDINGS.md](TODO_BINDINGS.md) — Binding status tracker
-- [examples/](examples/) — Usage examples (Rust and Python)
+- [Main README](../README.md) -- Full project documentation
+- [Architecture Documentation](../ARCHITECTURE.md) -- System design and module reference
+- [API Reference](../API.md) -- Complete API reference (Rust & Python)
+- [CONTRIBUTING.md](../CONTRIBUTING.md) -- Contribution guidelines
+- [CHANGELOG.md](../CHANGELOG.md) -- Version history
+- [examples/](../examples/) -- Usage examples (Rust and Python)

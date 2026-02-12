@@ -111,6 +111,8 @@ cargo bench
 
 ## Architecture Overview
 
+For the full architecture documentation, see [ARCHITECTURE.md](ARCHITECTURE.md). For the complete API reference, see [API.md](API.md).
+
 VAK follows a layered kernel architecture:
 
 ```
