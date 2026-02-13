@@ -73,3 +73,17 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# Coverage reports
+coverage/
+perf-results/
+*.profraw
+*.profdata
+tarpaulin-report.html
+
+# Security audit reports
+security-audit-report.json
+geiger-report.txt
+sbom.json
+dependency-freshness.txt
+benchmark-results.txt

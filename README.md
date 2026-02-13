@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
-[![Status](https://img.shields.io/badge/status-alpha-yellow.svg)](https://github.com/muzammil5539/Verifiable-Agent-Kernel-VAK-)
+[![Status](https://img.shields.io/badge/status-beta-green.svg)](https://github.com/muzammil5539/Verifiable-Agent-Kernel-VAK-)
 
 ---
 
@@ -328,6 +328,12 @@ VAK/
 ├── helm/                         # Helm charts
 │   └── vak/                     # VAK chart (Chart.yaml, values.yaml, templates/)
 │
+├── scripts/                      # Tooling scripts
+│   └── perf-profile.sh          # Performance profiling suite
+│
+├── Makefile                      # Development task automation
+├── tarpaulin.toml                # Code coverage configuration
+│
 └── benches/                      # Performance benchmarks
 ```
 
@@ -501,7 +507,7 @@ python examples/python_quickstart.py
 
 ## Development Roadmap
 
-### Current Status (v0.1 - Alpha) — 100% Complete
+### Current Status (v0.3 - Beta) — 100% Complete
 
 **Completed Phases:**
 - ✅ Phase 1: Core Kernel Stability ("Iron Kernel")
@@ -512,6 +518,15 @@ python examples/python_quickstart.py
 - ✅ Security Layer
 - ✅ Testing Layer
 - ✅ P3 Future Features (ZK Proofs, Constitution, PRM Toolkit, Marketplace)
+
+**v0.3 Additions:**
+- ✅ Full Test Coverage Infrastructure (tarpaulin config, 80%+ threshold enforcement)
+- ✅ Comprehensive CI/CD Pipeline (build, test, coverage, WASM skills, Python SDK)
+- ✅ Cross-Module Integration Tests (policy+audit, memory+audit, reasoner+policy, swarm+audit)
+- ✅ Stress & Load Testing Suite (throughput, concurrency, latency, resource exhaustion)
+- ✅ Performance Profiling Tooling (benchmarks, flamegraph, compile timing, binary analysis)
+- ✅ Enhanced Security Scanning (dependency freshness, WASM integrity, security summary)
+- ✅ Infrastructure Tooling (Makefile, perf-profile script)
 
 **Documentation:**
 - ✅ Architecture Documentation (DOC-001)
@@ -542,6 +557,9 @@ python examples/python_quickstart.py
 | Constitution Protocol | ✅ Complete | 100% |
 | PRM Fine-Tuning Toolkit | ✅ Complete | 100% |
 | Skill Marketplace | ✅ Complete | 100% |
+| CI/CD Pipeline | ✅ Complete | 100% |
+| Code Coverage | ✅ Complete | 100% |
+| Infrastructure Tooling | ✅ Complete | 100% |
 
 ### Roadmap by Priority
 
@@ -603,6 +621,9 @@ python examples/python_quickstart.py
 - [x] TST-004: Integration Test Coverage
 - [x] TST-005: Benchmark Suite Expansion
 - [x] TST-006: Python SDK Tests
+- [x] TST-007: Cross-Module Integration Tests
+- [x] TST-008: Stress & Load Testing Suite
+- [x] TST-009: Code Coverage Infrastructure (tarpaulin, 80%+ threshold)
 
 #### 🟠 P1 - Important for Production
 - [x] DOC-001: Architecture documentation
@@ -613,6 +634,11 @@ python examples/python_quickstart.py
 - [x] INF-002: Docker images
 - [x] INF-003: Helm charts
 - [x] OBS-002: Cryptographic replay capability
+- [x] INF-004: CI/CD pipeline (build, test, coverage, WASM, Python)
+- [x] INF-005: Makefile for development automation
+- [x] INF-006: Performance profiling tooling
+- [x] SEC-006: Dependency freshness monitoring
+- [x] SEC-007: WASM skill integrity verification
 
 #### 🟢 P3 - Future (Post-MVP)
 - [x] FUT-001: Zero-Knowledge Proof integration
@@ -623,9 +649,9 @@ python examples/python_quickstart.py
 ### Target Milestones
 
 - **v0.1 (Alpha)**: Core kernel, policy engine, audit logging, neuro-symbolic layer ✅
-- **v0.2 (Current)**: Complete ecosystem integrations, Python SDK stable ✅
-- **v0.3 (Q2 2026)**: Full test coverage, infrastructure tooling
-- **v1.0 (Q3 2026)**: Production-ready with full documentation
+- **v0.2 (Stable)**: Complete ecosystem integrations, Python SDK stable ✅
+- **v0.3 (Current)**: Full test coverage, infrastructure tooling, CI/CD pipeline ✅
+- **v1.0**: Production-ready with full documentation
 
 ---
 
@@ -717,10 +743,28 @@ cargo test
 cargo test --package vak --lib policy
 
 # Run with coverage
-cargo tarpaulin --out Html
+cargo tarpaulin --config tarpaulin.toml --out Html
+
+# Run integration tests
+cargo test --test '*' --verbose
+
+# Run property-based tests (extended)
+PROPTEST_CASES=512 cargo test --test property_tests
+
+# Run stress tests
+cargo test --test integration_root test_stress
+
+# Run Python SDK tests
+python -m pytest python/tests/ -v
 
 # Run benchmarks
 cargo bench
+
+# Use Makefile shortcuts
+make test          # All Rust tests
+make test-all      # All tests including Python
+make coverage      # Generate coverage report
+make coverage-check # Enforce 80% threshold
 ```
 
 ### Code Quality
@@ -732,8 +776,30 @@ cargo fmt
 # Lint
 cargo clippy -- -D warnings
 
+# Security-focused lints
+cargo clippy -- -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic
+
 # Check for issues
 cargo check
+
+# Full security audit
+make security
+```
+
+### Performance Profiling
+
+```bash
+# Run full profiling suite
+make perf
+
+# Run benchmarks only
+make bench
+
+# Generate flamegraph
+make perf-flamegraph
+
+# Analyze binary sizes
+./scripts/perf-profile.sh binary-size
 ```
 
 ---

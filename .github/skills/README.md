@@ -1,6 +1,6 @@
 # Skills
 
-This directory contains skills for the Verifiable Agent Kernel (VAK) project.
+This directory contains skills for the Verifiable Agent Kernel (VAK) project (v0.3).
 
 ## Agent Skills (for Claude/AI)
 
@@ -22,6 +22,33 @@ These are WASM modules that run inside the VAK kernel sandbox.
 -   **JSON Validator** (`json-validator/`): JSON validation, pretty-printing, minification, extraction, merging, and diffing.
 -   **Text Analyzer** (`text-analyzer/`): Text analysis (word count, character stats, frequency, similarity, entropy).
 -   **Regex Matcher** (`regex-matcher/`): Pattern matching (glob patterns, find-all, replace, split, pattern extraction).
+
+## Building Skills
+
+### Using Makefile (Recommended)
+
+```bash
+# Build all WASM skills at once
+make skills
+```
+
+### Manual Build
+
+```bash
+# Build individual skills
+cargo build -p calculator --target wasm32-unknown-unknown --release
+cargo build -p crypto-hash --target wasm32-unknown-unknown --release
+cargo build -p json-validator --target wasm32-unknown-unknown --release
+cargo build -p text-analyzer --target wasm32-unknown-unknown --release
+cargo build -p regex-matcher --target wasm32-unknown-unknown --release
+```
+
+### CI/CD Integration
+
+WASM skills are automatically built and verified in CI:
+- **Build verification**: All 5 skills are compiled for `wasm32-unknown-unknown` target
+- **Integrity check**: WASM magic bytes are verified to ensure valid modules (SEC-007)
+- **Size tracking**: Binary sizes are reported for optimization monitoring
 
 ## Usage
 

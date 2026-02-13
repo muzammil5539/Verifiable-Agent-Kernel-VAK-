@@ -38,9 +38,16 @@ Thank you for your interest in contributing to the Verifiable Agent Kernel (VAK)
 3. Add tests for new functionality (coverage > 80%).
 4. Run the full check suite:
    ```bash
+   # Using Makefile (recommended)
+   make lint
+   make test
+   make coverage-check
+
+   # Or manually:
    cargo fmt --all
    cargo clippy --all-targets --all-features -- -D warnings
    cargo test
+   cargo tarpaulin --config tarpaulin.toml --fail-under 80
    ```
 5. Commit with a descriptive message (see commit conventions below).
 6. Push and create a pull request against `main`.

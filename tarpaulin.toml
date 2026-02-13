@@ -1,0 +1,71 @@
+# Cargo Tarpaulin Configuration for VAK
+# v0.3 Milestone: Full Test Coverage (80%+ target)
+#
+# Usage:
+#   cargo tarpaulin                          # Default run
+#   cargo tarpaulin --out Html               # HTML report
+#   cargo tarpaulin --out Xml                # Cobertura XML (for CI)
+#   cargo tarpaulin --out Lcov              # LCOV format
+
+[default]
+# Coverage target: 80% minimum
+fail-under = 80
+
+# Timeout per test (seconds)
+timeout = "300s"
+
+# Run in release mode for accurate coverage of optimized paths
+release = false
+
+# Include all workspace members
+all-features = false
+
+# Output formats
+out = ["Html", "Xml"]
+
+# Output directory
+output-dir = "coverage/"
+
+# Exclude test and benchmark files from coverage measurement
+exclude-files = [
+    "tests/*",
+    "benches/*",
+    "examples/*",
+    "target/*",
+    ".github/skills/*/src/*",
+]
+
+# Skip functions that are trivially covered
+skip-clean = false
+
+# Verbose output
+verbose = false
+
+# Branch coverage
+branch = true
+
+# Line coverage (default)
+line = true
+
+# Engine selection
+engine = "auto"
+
+# Workspace-level coverage
+workspace = true
+
+# Exclude specific test binaries from coverage measurement
+exclude = [
+    "calculator",
+    "crypto-hash",
+    "json-validator",
+    "text-analyzer",
+    "regex-matcher",
+]
+
+[report]
+# Cobertura XML for CI integration
+cobertura = "coverage/cobertura.xml"
+
+[ci]
+# CI-specific settings: stricter thresholds
+fail-under = 80

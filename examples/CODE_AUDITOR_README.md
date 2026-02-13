@@ -1,6 +1,8 @@
 # VAK Autonomous Code Auditor - MVP Demo
 
 > **The first autonomous code auditor with cryptographic verifiability and formal safety guarantees.**
+>
+> **Status:** v0.3 Beta - Full test coverage infrastructure, CI/CD pipeline, performance tooling
 
 ## Overview
 
@@ -260,6 +262,19 @@ cargo test --example code_auditor_demo
 
 ```bash
 python -m pytest examples/code_auditor_python.py -v
+```
+
+### Running Full Test Suite (v0.3)
+
+```bash
+# Run all tests including cross-module and stress tests
+make test-all
+
+# Run with code coverage
+make coverage
+
+# Check coverage threshold (80%+)
+make coverage-check
 ```
 
 ## Integration with CI/CD

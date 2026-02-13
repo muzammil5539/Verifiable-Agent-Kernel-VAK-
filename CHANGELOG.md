@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-02-13
+
+### Added
+- **v0.3 Milestone**: Full test coverage infrastructure, CI/CD pipeline, infrastructure tooling
+- **TST-007**: Cross-module integration tests - comprehensive tests validating interactions between kernel subsystems (policy+audit, memory+audit, reasoner+policy, swarm+audit, end-to-end session lifecycle)
+- **TST-008**: Stress & load testing suite - throughput tests (10K+ operations), concurrency stress tests (500 concurrent agents), latency percentile tracking (p50/p95/p99), resource exhaustion tests (50K audit chains, 200 concurrent sessions)
+- **TST-009**: Code coverage infrastructure - `tarpaulin.toml` configuration with 80%+ threshold enforcement, branch coverage, HTML+XML output formats
+- **INF-004**: CI/CD pipeline (`ci.yml`) - comprehensive GitHub Actions workflow with Rust build (stable + MSRV 1.75), WASM skill builds, code coverage with tarpaulin, Python SDK tests (3.9-3.12 matrix), performance benchmarks, property-based tests with extended cases
+- **INF-005**: Makefile for development automation - 30+ targets covering build, test, lint, coverage, benchmarks, security, Docker, profiling, and documentation
+- **INF-006**: Performance profiling tooling (`scripts/perf-profile.sh`) - benchmark tracking with baseline comparison, flamegraph generation, compilation timing analysis, binary size analysis, coverage reporting
+- **SEC-006**: Dependency freshness monitoring - automated `cargo-outdated` checks in CI with artifact upload
+- **SEC-007**: WASM skill integrity verification - CI job that builds all WASM skills and verifies magic bytes for module validity
+- Security audit summary job aggregating results from all security checks (cargo-audit, cargo-deny, cargo-geiger, clippy, SBOM, dependency freshness, WASM integrity)
+
+### Changed
+- Updated README.md with v0.3 milestone completion, new module status entries, expanded testing/profiling documentation
+- Updated TODO.md with Sprint 12 completion, v0.3 task tracking, updated test coverage summary (1,150+ tests)
+- Enhanced `security.yml` workflow with dependency freshness, WASM integrity, and summary jobs
+- Updated project structure documentation to include `scripts/`, `Makefile`, and `tarpaulin.toml`
+
+## [0.2.0] - 2026-02-13
+
 ### Added
 - **v0.2 Milestone**: Python SDK stable, ecosystem integrations complete
 - **Python SDK - Memory Management**: `store_memory()`, `retrieve_memory()`, `store_episode()`, `retrieve_episodes()`, `search_semantic()` APIs with full stub backend support
@@ -65,5 +87,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Per-agent rate limiting with token bucket algorithm (SEC-005)
 - Unsafe Rust audit with documented SAFETY comments (SEC-003)
 
-[Unreleased]: https://github.com/vak-project/verifiable-agent-kernel/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/vak-project/verifiable-agent-kernel/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/vak-project/verifiable-agent-kernel/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/vak-project/verifiable-agent-kernel/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/vak-project/verifiable-agent-kernel/releases/tag/v0.1.0

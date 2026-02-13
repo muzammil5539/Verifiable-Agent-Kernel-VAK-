@@ -1,0 +1,214 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  # Build and test the Rust crate
+  build:
+    name: Build & Test (Rust)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: [stable, "1.75"]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (${{ matrix.rust }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.rust }}-
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy lints
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Build
+        run: cargo build --all-targets
+
+      - name: Run unit tests
+        run: cargo test --lib --verbose
+
+      - name: Run doc tests
+        run: cargo test --doc --verbose
+
+      - name: Run integration tests
+        run: cargo test --test '*' --verbose
+
+  # WASM skill builds
+  wasm-skills:
+    name: Build WASM Skills
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-wasm-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build calculator skill
+        run: cargo build -p calculator --target wasm32-unknown-unknown --release
+
+      - name: Build crypto-hash skill
+        run: cargo build -p crypto-hash --target wasm32-unknown-unknown --release
+
+      - name: Build json-validator skill
+        run: cargo build -p json-validator --target wasm32-unknown-unknown --release
+
+      - name: Build text-analyzer skill
+        run: cargo build -p text-analyzer --target wasm32-unknown-unknown --release
+
+      - name: Build regex-matcher skill
+        run: cargo build -p regex-matcher --target wasm32-unknown-unknown --release
+
+  # Code coverage with cargo-tarpaulin
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-coverage-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin --locked
+
+      - name: Run coverage
+        run: cargo tarpaulin --config tarpaulin.toml --out Xml --out Html --output-dir coverage/
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 30
+
+      - name: Enforce coverage threshold (80%)
+        run: cargo tarpaulin --config tarpaulin.toml --fail-under 80
+
+  # Python SDK tests
+  python-tests:
+    name: Python SDK Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "./python[dev]" || pip install pytest pytest-asyncio
+          pip install -r requirements.txt || true
+
+      - name: Run Python tests
+        run: python -m pytest python/tests/ -v --tb=short
+
+  # Benchmarks (non-blocking, for tracking performance)
+  benchmarks:
+    name: Performance Benchmarks
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-bench-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run benchmarks
+        run: cargo bench --bench kernel_benchmarks -- --output-format bencher | tee benchmark-results.txt
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark-results.txt
+          retention-days: 90
+
+  # Property-based tests (extended)
+  property-tests:
+    name: Property-Based Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-proptest-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run property tests with extended cases
+        env:
+          PROPTEST_CASES: 512
+        run: cargo test --test property_tests --verbose
