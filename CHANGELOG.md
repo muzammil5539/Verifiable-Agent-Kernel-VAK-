@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-02-13
+
+### Added
+- **v1.0 Milestone**: Production-ready release with full documentation
+- **Production Deployment Guide** (`docs/production-deployment.md`): Comprehensive deployment reference covering Docker Compose, Kubernetes with Kustomize, and Helm chart deployments. Includes configuration reference, storage sizing guidelines, scaling strategies, monitoring setup, backup/recovery procedures, and a production readiness checklist.
+- **Security Hardening Guide** (`docs/security-hardening.md`): Complete security best practices covering defense-in-depth layers, policy engine hardening, WASM sandbox security, audit log integrity, cryptographic configuration, container security, network security, secrets management, supply chain security, prompt injection protection, rate limiting, and compliance considerations.
+- **Performance Tuning Guide** (`docs/performance-tuning.md`): Optimization reference with benchmarking procedures, kernel tuning parameters, policy engine optimization, WASM sandbox performance, audit logging optimization, memory system tuning, Python SDK performance tips, profiling tools, resource sizing formulas, and production monitoring guidance.
+- **Troubleshooting Guide** (`docs/troubleshooting.md`): Diagnostic reference covering build issues, runtime errors, policy engine problems, WASM sandbox failures, audit log issues, memory system problems, Python SDK errors, Docker/Kubernetes issues, and performance debugging.
+- **Migration Guide** (`docs/migration-guide.md`): Step-by-step upgrade instructions from v0.1, v0.2, and v0.3 to v1.0, covering configuration changes, API compatibility, Python SDK migration, Helm chart migration, and verification steps.
+
+### Changed
+- Bumped version to `1.0.0` across all artifacts (Cargo.toml workspace, Helm chart, Dockerfile labels)
+- Updated README.md with v1.0 milestone completion, new documentation links, and production status badge
+- Updated TODO.md with v1.0 completion status and Sprint 13 tracking
+- Updated API.md version reference to v1.0.0
+- Updated ARCHITECTURE.md Helm chart version reference
+- Updated `.github/skills/README.md` version reference to v1.0
+- Updated `examples/CODE_AUDITOR_README.md` status to v1.0
+
 ## [0.3.0] - 2026-02-13
 
 ### Added
@@ -87,7 +106,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Per-agent rate limiting with token bucket algorithm (SEC-005)
 - Unsafe Rust audit with documented SAFETY comments (SEC-003)
 
-[Unreleased]: https://github.com/vak-project/verifiable-agent-kernel/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/vak-project/verifiable-agent-kernel/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/vak-project/verifiable-agent-kernel/compare/v0.3.0...v1.0.0
 [0.3.0]: https://github.com/vak-project/verifiable-agent-kernel/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/vak-project/verifiable-agent-kernel/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/vak-project/verifiable-agent-kernel/releases/tag/v0.1.0

@@ -1,6 +1,6 @@
 # Skills
 
-This directory contains skills for the Verifiable Agent Kernel (VAK) project (v0.3).
+This directory contains skills for the Verifiable Agent Kernel (VAK) project (v1.0).
 
 ## Agent Skills (for Claude/AI)
 

@@ -1,15 +1,15 @@
 # VAK Implementation TODO & Roadmap
 
-> **Project:** Verifiable Agent Kernel (VAK) / Exo-Cortex 0.3
+> **Project:** Verifiable Agent Kernel (VAK) / Exo-Cortex 1.0
 > **Target:** Autonomous Code Auditor MVP
 > **Generated:** January 30, 2026
-> **Last Refined:** February 13, 2026 - Sprint 12 Completed (v0.3 Milestone)
+> **Last Refined:** February 13, 2026 - Sprint 13 Completed (v1.0 Milestone)
 
 ---
 
 ## Critical Path Analysis
 
-**Status:** Beta — 100% Complete (85/85 tracked items)
+**Status:** Production Ready — 100% Complete (90/90 tracked items)
 
 All critical path items for MVP are **COMPLETE**:
 - [x] LLM Abstraction Layer
@@ -52,6 +52,13 @@ All critical path items for MVP are **COMPLETE**:
 - [x] Enhanced Security Scanning (SEC-006: dependency freshness, SEC-007: WASM integrity)
 - [x] Security Audit Summary Job
 
+**v1.0 Additions:**
+- [x] Production Deployment Guide (docs/production-deployment.md)
+- [x] Security Hardening Guide (docs/security-hardening.md)
+- [x] Performance Tuning Guide (docs/performance-tuning.md)
+- [x] Troubleshooting Guide (docs/troubleshooting.md)
+- [x] Migration Guide (docs/migration-guide.md)
+
 ---
 
 ## Quick Status Overview
@@ -65,6 +72,7 @@ All critical path items for MVP are **COMPLETE**:
 | Phase 5: Security | Complete | 100% |
 | Phase 6: Production Hardening | Complete | 100% |
 | Phase 7: Test Coverage & Tooling (v0.3) | Complete | 100% |
+| Phase 8: Production Documentation (v1.0) | Complete | 100% |
 
 ---
 
@@ -210,6 +218,18 @@ All core functionality and production hardening phase 1 implemented.
 | Performance optimization tooling | Done |
 | Security audit enhancement | Done |
 
+### Sprint 13: COMPLETED (February 2026) - v1.0 Milestone
+
+| Task | Status |
+|------|--------|
+| **DOC-004**: Production Deployment Guide | Done |
+| **DOC-005**: Security Hardening Guide | Done |
+| **DOC-006**: Performance Tuning Guide | Done |
+| **DOC-007**: Troubleshooting Guide | Done |
+| **DOC-008**: Migration Guide (v0.x to v1.0) | Done |
+| Version bump to 1.0.0 (Cargo.toml, Helm chart, Dockerfile) | Done |
+| Update all README and documentation files for v1.0 | Done |
+
 ---
 
 ## Definition of Done
@@ -238,5 +258,4 @@ All core functionality and production hardening phase 1 implemented.
 ---
 
 *Last updated: February 13, 2026*
-*Current milestone: v0.3 (Test Coverage & Infrastructure Tooling) — COMPLETE*
-*Next milestone: v1.0 (Production-ready with full documentation)*
+*Current milestone: v1.0 (Production-ready with full documentation) — COMPLETE*

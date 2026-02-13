@@ -768,7 +768,7 @@ VAK provides a Helm chart in `helm/vak/` for templated Kubernetes deployments:
 
 ```
 helm/vak/
-├── Chart.yaml               # Chart metadata (v0.1.0)
+├── Chart.yaml               # Chart metadata (v1.0.0)
 ├── values.yaml              # Configurable defaults
 ├── .helmignore              # Ignore patterns
 └── templates/
