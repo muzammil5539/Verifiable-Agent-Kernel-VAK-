@@ -280,6 +280,7 @@ impl MemorySecretsProvider {
     }
 
     /// Create with initial secrets
+    #[allow(clippy::unwrap_used)]
     pub fn with_secrets(secrets: HashMap<String, String>) -> Self {
         let provider = Self::new();
         {

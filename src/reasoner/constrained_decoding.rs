@@ -2,6 +2,8 @@
 //!
 //! Provides grammar-based constraints for LLM output to eliminate parse errors.
 
+#![allow(clippy::unwrap_used)]
+
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
