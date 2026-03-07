@@ -508,9 +508,6 @@ struct CachedAgentCard {
     card: AgentCard,
     /// When the entry was cached
     cached_at: SystemTime,
-    /// Source URL (if fetched remotely)
-    #[allow(dead_code)]
-    source_url: Option<String>,
 }
 
 /// Enhanced discovery service with HTTP fetch, caching, and validation (SWM-002)
@@ -703,7 +700,6 @@ impl AgentCardDiscovery {
                 CachedAgentCard {
                     card: card.clone(),
                     cached_at: SystemTime::now(),
-                    source_url: Some(url),
                 },
             );
         }
