@@ -14,28 +14,15 @@ while guaranteeing it won't access sensitive files or introduce bugs.
 Run with: python examples/code_auditor_python.py
 """
 
-import re
 import hashlib
-import json
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 # Import VAK Python SDK types
-from vak import (
-    VakKernel,
-    ToolRequest,
-    ToolResponse,
-    PolicyDecision,
-    PolicyEffect,
-    AuditEntry,
-    AuditLevel,
-    AgentConfig,
-)
-
 
 # =============================================================================
 # Enums and Data Classes
@@ -49,7 +36,7 @@ class FindingSeverity(Enum):
     MEDIUM = auto()
     LOW = auto()
     INFO = auto()
-    
+
     def __str__(self) -> str:
         icons = {
             FindingSeverity.CRITICAL: "🔴 CRITICAL",
@@ -87,11 +74,11 @@ class Episode:
     timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     hash: str = field(default="")
     prev_hash: str = field(default="")
-    
+
     def __post_init__(self):
         if not self.hash:
             self.hash = self._compute_hash()
-    
+
     def _compute_hash(self) -> str:
         data = f"{self.timestamp}:{self.episode_type.value}:{self.content}:{self.prev_hash}"
         return hashlib.sha256(data.encode()).hexdigest()
@@ -151,24 +138,24 @@ class MockPRM:
     Mock Process Reward Model for scoring reasoning steps.
     In production, this would be a fine-tuned LLM.
     """
-    
+
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
         self.default_score = 0.75
         self.default_confidence = 0.8
-    
+
     def score_step(self, thought: str, context: str) -> Dict[str, float]:
         """Score a reasoning step."""
         # Simple heuristic scoring for demo
         score = self.default_score
         confidence = self.default_confidence
-        
+
         # Boost score for specific keywords indicating good reasoning
         good_patterns = ["check", "verify", "validate", "analyze", "review"]
         for pattern in good_patterns:
             if pattern in thought.lower():
                 score = min(1.0, score + 0.05)
-        
+
         return {
             "score": score,
             "confidence": confidence,
@@ -183,11 +170,11 @@ class MockPRM:
 
 class EpisodicMemory:
     """Hash-chained episodic memory for recording agent history."""
-    
+
     def __init__(self):
         self.episodes: List[Episode] = []
         self._genesis_hash = "0" * 64
-    
+
     def append(self, episode: Episode) -> Episode:
         """Append an episode to the memory chain."""
         prev_hash = self.episodes[-1].hash if self.episodes else self._genesis_hash
@@ -195,28 +182,28 @@ class EpisodicMemory:
         episode.hash = episode._compute_hash()
         self.episodes.append(episode)
         return episode
-    
+
     def get_all(self) -> List[Episode]:
         """Get all episodes."""
         return self.episodes.copy()
-    
+
     def root_hash(self) -> str:
         """Get the current root hash of the memory chain."""
         return self.episodes[-1].hash if self.episodes else self._genesis_hash
-    
+
     def verify_chain(self) -> bool:
         """Verify the integrity of the episode chain."""
         if not self.episodes:
             return True
-        
+
         for i, episode in enumerate(self.episodes):
             expected_prev = self.episodes[i - 1].hash if i > 0 else self._genesis_hash
             if episode.prev_hash != expected_prev:
                 return False
-            
+
             computed_hash = episode._compute_hash()
             # Note: hash is already computed in __post_init__, but we can re-verify
-        
+
         return True
 
 
@@ -227,12 +214,12 @@ class EpisodicMemory:
 
 class AuditLogger:
     """Cryptographic audit logger with hash-chained entries."""
-    
+
     def __init__(self):
         self.entries: List[AuditLogEntry] = []
         self._next_id = 1
         self._genesis_hash = "0" * 64
-    
+
     def log(
         self,
         agent_id: str,
@@ -243,11 +230,11 @@ class AuditLogger:
         """Log an action with cryptographic hash chaining."""
         timestamp = datetime.utcnow().isoformat()
         prev_hash = self.entries[-1].hash if self.entries else self._genesis_hash
-        
+
         # Compute hash
         data = f"{self._next_id}:{timestamp}:{agent_id}:{action}:{resource}:{decision}:{prev_hash}"
         hash_value = hashlib.sha256(data.encode()).hexdigest()
-        
+
         entry = AuditLogEntry(
             id=self._next_id,
             timestamp=timestamp,
@@ -258,23 +245,23 @@ class AuditLogger:
             hash=hash_value,
             prev_hash=prev_hash,
         )
-        
+
         self.entries.append(entry)
         self._next_id += 1
         return entry
-    
+
     def verify_chain(self) -> bool:
         """Verify the integrity of the audit chain."""
         if not self.entries:
             return True
-        
+
         for i, entry in enumerate(self.entries):
             expected_prev = self.entries[i - 1].hash if i > 0 else self._genesis_hash
             if entry.prev_hash != expected_prev:
                 return False
-        
+
         return True
-    
+
     def get_entries(self) -> List[AuditLogEntry]:
         """Get all audit entries."""
         return self.entries.copy()
@@ -292,7 +279,7 @@ class CodeAuditor:
     Reviews code for security vulnerabilities and logic errors while
     providing cryptographic proof of its reasoning and decisions.
     """
-    
+
     def __init__(self, config: Optional[CodeAuditorConfig] = None):
         self.config = config or CodeAuditorConfig()
         self.episodic_memory = EpisodicMemory()
@@ -301,48 +288,48 @@ class CodeAuditor:
         self.step_count = 0
         self.files_analyzed: List[str] = []
         self.findings: List[CodeFinding] = []
-    
+
     def is_forbidden_file(self, file_path: str) -> bool:
         """Check if a file is forbidden from access."""
         for pattern in self.config.forbidden_files:
             if pattern in file_path or file_path.endswith(pattern):
                 return True
         return False
-    
+
     def verify_constraints(self) -> Tuple[bool, Optional[str]]:
         """Verify operational constraints."""
         if self.step_count >= self.config.max_steps:
             return False, f"Max steps exceeded: {self.step_count} >= {self.config.max_steps}"
-        
+
         if len(self.files_analyzed) >= self.config.max_files:
             return False, f"Max files exceeded: {len(self.files_analyzed)} >= {self.config.max_files}"
-        
+
         return True, None
-    
+
     def record_observation(self, observation: str) -> None:
         """Record an observation in episodic memory."""
         episode = Episode(EpisodeType.OBSERVATION, observation)
         self.episodic_memory.append(episode)
-    
+
     def record_thought(self, thought: str) -> None:
         """Record a thought in episodic memory."""
         episode = Episode(EpisodeType.THOUGHT, thought)
         self.episodic_memory.append(episode)
-    
+
     def record_action(self, action: str) -> None:
         """Record an action in episodic memory."""
         episode = Episode(EpisodeType.ACTION, action)
         self.episodic_memory.append(episode)
-    
+
     def analyze_file(self, file_path: str, content: str) -> Tuple[bool, Optional[str]]:
         """Analyze a file for security vulnerabilities and issues."""
         self.step_count += 1
-        
+
         # Verify constraints
         ok, error = self.verify_constraints()
         if not ok:
             return False, error
-        
+
         # Check if file is forbidden
         if self.is_forbidden_file(file_path):
             self.audit_logger.log(
@@ -352,7 +339,7 @@ class CodeAuditor:
                 "DENIED"
             )
             return False, f"Access denied: '{file_path}' is a forbidden file"
-        
+
         # Log allowed access
         self.audit_logger.log(
             "code-auditor",
@@ -360,11 +347,11 @@ class CodeAuditor:
             file_path,
             "ALLOWED"
         )
-        
+
         # Record observation
         self.record_observation(f"Reading file: {file_path}")
         self.files_analyzed.append(file_path)
-        
+
         # Split content into lines once for all analysis passes
         lines = content.split('\n')
 
@@ -373,24 +360,24 @@ class CodeAuditor:
         self._analyze_hardcoded_secrets(file_path, lines)
         self._analyze_input_validation(file_path, lines)
         self._analyze_error_handling(file_path, lines)
-        
+
         return True, None
-    
+
     def _analyze_sql_injection(self, file_path: str, lines: List[str]) -> None:
         """Check for SQL injection vulnerabilities."""
         self.step_count += 1
         self.record_thought("Checking for potential SQL injection vulnerabilities")
-        
+
         # Score reasoning step
         score = self.prm.score_step(
             "Analyzing for SQL injection patterns",
             "SQL injection analysis"
         )
-        
+
         if score["score"] < self.config.prm_threshold:
             self.record_thought(f"Low confidence reasoning (score: {score['score']}), skipping")
             return
-        
+
         # Dangerous patterns
         patterns = [
             (r'format!\s*\(\s*"SELECT', "String formatting in SQL SELECT"),
@@ -403,7 +390,7 @@ class CodeAuditor:
             (r'\.format\s*\(.*SELECT', ".format() in SQL query"),
             (r'\+\s*["\']SELECT', "String concatenation in SQL"),
         ]
-        
+
         for line_num, line in enumerate(lines, 1):
             for pattern, desc in patterns:
                 if re.search(pattern, line, re.IGNORECASE):
@@ -419,24 +406,24 @@ class CodeAuditor:
                     )
                     self.findings.append(finding)
                     self.record_action(f"Found SQL injection vulnerability at line {line_num}")
-                    
+
                     self.audit_logger.log(
                         "code-auditor",
                         "report_finding",
                         f"{file_path}:{line_num}",
                         "ALLOWED"
                     )
-    
+
     def _analyze_hardcoded_secrets(self, file_path: str, lines: List[str]) -> None:
         """Check for hardcoded secrets."""
         self.step_count += 1
         self.record_thought("Checking for hardcoded secrets and credentials")
-        
+
         score = self.prm.score_step(
             "Analyzing for hardcoded secrets",
             "Secret detection analysis"
         )
-        
+
         secret_patterns = [
             ("api_key", "API key"),
             ("apikey", "API key"),
@@ -452,10 +439,10 @@ class CodeAuditor:
             ("aws_secret", "AWS secret"),
             ("database_url", "Database URL"),
         ]
-        
+
         for line_num, line in enumerate(lines, 1):
             line_lower = line.lower()
-            
+
             for pattern, desc in secret_patterns:
                 if pattern in line_lower and ('=' in line or ':' in line):
                     # Check for string assignment
@@ -472,17 +459,17 @@ class CodeAuditor:
                         )
                         self.findings.append(finding)
                         self.record_action(f"Found hardcoded secret at line {line_num}")
-    
+
     def _analyze_input_validation(self, file_path: str, lines: List[str]) -> None:
         """Check for input validation issues."""
         self.step_count += 1
         self.record_thought("Checking for missing input validation")
-        
+
         score = self.prm.score_step(
             "Analyzing for input validation",
             "Input validation analysis"
         )
-        
+
         patterns = [
             (r'\.unwrap\(\)', "Unchecked unwrap", FindingSeverity.MEDIUM),
             (r'\.expect\(', "Consider proper error handling instead of expect", FindingSeverity.LOW),
@@ -490,7 +477,7 @@ class CodeAuditor:
             (r'\beval\s*\(', "Use of eval() is dangerous", FindingSeverity.CRITICAL),
             (r'\bexec\s*\(', "Use of exec() requires careful validation", FindingSeverity.HIGH),
         ]
-        
+
         for line_num, line in enumerate(lines, 1):
             for pattern, desc, severity in patterns:
                 if re.search(pattern, line):
@@ -506,17 +493,17 @@ class CodeAuditor:
                     )
                     self.findings.append(finding)
                     self.record_action(f"Found input validation issue at line {line_num}")
-    
+
     def _analyze_error_handling(self, file_path: str, lines: List[str]) -> None:
         """Check for error handling issues."""
         self.step_count += 1
         self.record_thought("Checking for error handling issues")
-        
+
         score = self.prm.score_step(
             "Analyzing error handling",
             "Error handling analysis"
         )
-        
+
         patterns = [
             (r'let\s+_\s*=', "Silently discarding Result", FindingSeverity.LOW),
             (r'panic!\s*\(', "Explicit panic", FindingSeverity.HIGH),
@@ -525,7 +512,7 @@ class CodeAuditor:
             (r'except:\s*$', "Bare except clause (Python)", FindingSeverity.MEDIUM),
             (r'except\s+Exception:', "Catching broad Exception", FindingSeverity.LOW),
         ]
-        
+
         for line_num, line in enumerate(lines, 1):
             for pattern, desc, severity in patterns:
                 if re.search(pattern, line):
@@ -540,17 +527,17 @@ class CodeAuditor:
                         confidence=score["score"],
                     )
                     self.findings.append(finding)
-    
+
     def generate_audit_receipt(self) -> Dict[str, Any]:
         """Generate a cryptographic receipt for the audit."""
         entries = self.audit_logger.get_entries()
         chain_hash = entries[-1].hash if entries else "0" * 64
-        
+
         severity_counts: Dict[str, int] = {}
         for finding in self.findings:
             key = finding.severity.name
             severity_counts[key] = severity_counts.get(key, 0) + 1
-        
+
         return {
             "session_id": str(uuid.uuid4()),
             "timestamp": datetime.utcnow().isoformat(),
@@ -561,11 +548,11 @@ class CodeAuditor:
             "audit_chain_hash": chain_hash,
             "episodic_memory_hash": self.episodic_memory.root_hash(),
         }
-    
+
     def get_findings(self) -> List[CodeFinding]:
         """Get all findings."""
         return self.findings.copy()
-    
+
     def get_episodes(self) -> List[Episode]:
         """Get all episodes from episodic memory."""
         return self.episodic_memory.get_all()
@@ -696,60 +683,60 @@ def main():
     print("║     VAK AUTONOMOUS CODE AUDITOR - PYTHON MVP DEMO            ║")
     print("╚" + "═" * 63 + "╝")
     print()
-    
+
     # Create the Code Auditor
     print("🔧 Initializing Code Auditor...\n")
     config = CodeAuditorConfig()
     auditor = CodeAuditor(config)
-    
+
     print("   Configuration:")
     print(f"   ├── Max Steps: {config.max_steps}")
     print(f"   ├── PRM Threshold: {config.prm_threshold:.2f}")
     print(f"   ├── Max Files: {config.max_files}")
     print(f"   └── Forbidden Files: {config.forbidden_files[:3]}...")
     print()
-    
+
     # Demo 1: Test forbidden file access
     print_header("DEMO 1: Testing access control (forbidden file access)")
-    
+
     ok, error = auditor.analyze_file(".env", "SECRET=value")
     if not ok:
         print(f"   ✅ Access correctly denied: {error}")
     else:
         print("   ❌ Unexpected: Access should have been denied!")
     print()
-    
+
     # Demo 2: Analyze vulnerable code
     print_header("DEMO 2: Analyzing vulnerable code")
-    
+
     ok, error = auditor.analyze_file("src/vulnerable.py", SAMPLE_VULNERABLE_CODE)
     if ok:
         print("   ✅ Analysis complete\n")
     else:
         print(f"   ❌ Analysis failed: {error}\n")
-    
+
     # Display findings
     print("   📋 FINDINGS:\n")
     for finding in auditor.get_findings():
         print_finding(finding)
-    
+
     # Demo 3: Analyze safe code
     print_header("DEMO 3: Analyzing safe code")
-    
+
     initial_findings = len(auditor.get_findings())
     ok, error = auditor.analyze_file("src/safe_code.py", SAMPLE_SAFE_CODE)
     new_findings = len(auditor.get_findings()) - initial_findings
-    
+
     if ok:
         print("   ✅ Safe code analysis complete")
         print(f"   New findings: {new_findings} (expected: minimal)\n")
-    
+
     # Demo 4: View episodic memory
     print_header("DEMO 4: Episodic Memory Chain (Reasoning Trace)")
-    
+
     episodes = auditor.get_episodes()
     print(f"   Total episodes recorded: {len(episodes)}\n")
-    
+
     # Show last 10 episodes
     for i, episode in enumerate(episodes[-10:], len(episodes) - 9):
         type_icons = {
@@ -761,27 +748,27 @@ def main():
         icon = type_icons.get(episode.episode_type, "📝")
         print(f"   [{i}] {icon} {episode.content[:60]}...")
     print()
-    
+
     # Demo 5: Generate audit receipt
     print_header("DEMO 5: Cryptographic Audit Receipt")
-    
+
     receipt = auditor.generate_audit_receipt()
     print_receipt(receipt)
     print()
-    
+
     # Demo 6: Verify chain integrity
     print_header("DEMO 6: Audit Chain Verification")
-    
+
     if auditor.audit_logger.verify_chain():
         print("   ✅ Audit chain integrity verified - no tampering detected\n")
     else:
         print("   ❌ Audit chain verification failed!\n")
-    
+
     if auditor.episodic_memory.verify_chain():
         print("   ✅ Episodic memory chain integrity verified\n")
     else:
         print("   ❌ Episodic memory chain verification failed!\n")
-    
+
     # Summary
     print_header("                        DEMO SUMMARY")
     print()
