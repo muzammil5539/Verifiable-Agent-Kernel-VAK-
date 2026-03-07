@@ -78,6 +78,7 @@ class AgentConfig:
         return AgentConfig(
             agent_id=self.agent_id,
             name=self.name,
+            role=self.role,
             description=self.description,
             capabilities=new_capabilities,
             allowed_tools=self.allowed_tools.copy(),
@@ -86,6 +87,7 @@ class AgentConfig:
             max_concurrent_requests=self.max_concurrent_requests,
             trusted=self.trusted,
             metadata=self.metadata.copy(),
+            attributes=self.attributes.copy(),
         )
 
     def with_tool_access(self, tool_id: str) -> AgentConfig:
@@ -104,6 +106,7 @@ class AgentConfig:
         return AgentConfig(
             agent_id=self.agent_id,
             name=self.name,
+            role=self.role,
             description=self.description,
             capabilities=self.capabilities.copy(),
             allowed_tools=new_tools,
@@ -112,6 +115,7 @@ class AgentConfig:
             max_concurrent_requests=self.max_concurrent_requests,
             trusted=self.trusted,
             metadata=self.metadata.copy(),
+            attributes=self.attributes.copy(),
         )
 
 

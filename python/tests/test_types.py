@@ -367,6 +367,25 @@ class TestAgentConfig:
         assert "new_capability" in new_config.capabilities
         assert "existing" in new_config.capabilities
 
+    def test_with_capability_preserves_fields(self):
+        """Test that with_capability preserves other fields like role and attributes."""
+        config = AgentConfig(
+            agent_id="agent-1",
+            name="Test Agent",
+            role="admin",
+            attributes={"dept": "engineering"},
+            metadata={"version": "1.0"}
+        )
+        new_config = config.with_capability("new_cap")
+
+        assert new_config.role == "admin"
+        assert new_config.attributes == {"dept": "engineering"}
+        assert new_config.metadata == {"version": "1.0"}
+
+        # Verify attributes is a copy
+        new_config.attributes["new"] = True
+        assert "new" not in config.attributes
+
     def test_with_capability_no_duplicate(self):
         """Test that with_capability doesn't add duplicates."""
         config = AgentConfig(
@@ -391,6 +410,25 @@ class TestAgentConfig:
         # New config has the tool
         assert "web_search" in new_config.allowed_tools
         assert "calculator" in new_config.allowed_tools
+
+    def test_with_tool_access_preserves_fields(self):
+        """Test that with_tool_access preserves other fields like role and attributes."""
+        config = AgentConfig(
+            agent_id="agent-1",
+            name="Test Agent",
+            role="admin",
+            attributes={"dept": "engineering"},
+            metadata={"version": "1.0"}
+        )
+        new_config = config.with_tool_access("new_tool")
+
+        assert new_config.role == "admin"
+        assert new_config.attributes == {"dept": "engineering"}
+        assert new_config.metadata == {"version": "1.0"}
+
+        # Verify attributes is a copy
+        new_config.attributes["new"] = True
+        assert "new" not in config.attributes
 
     def test_with_tool_access_no_duplicate(self):
         """Test that with_tool_access doesn't add duplicates."""
