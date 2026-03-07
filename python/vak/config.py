@@ -53,7 +53,7 @@ class SecurityConfig:
         rate_limit_per_second: Maximum requests per agent per second.
     """
     enable_sandboxing: bool = True
-    signature_verification: bool = False
+    signature_verification: bool = True
     default_policy_effect: str = "deny"
     allowed_tools: list[str] = field(default_factory=list)
     blocked_tools: list[str] = field(default_factory=list)
