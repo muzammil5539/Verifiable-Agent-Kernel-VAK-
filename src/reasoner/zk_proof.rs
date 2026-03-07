@@ -503,7 +503,7 @@ impl ZkProver {
         let mut hash = hasher.finalize();
         for _ in 1..self.config.hash_rounds {
             let mut h = Sha256::new();
-            h.update(&hash);
+            h.update(hash);
             h.update(self.config.domain_tag.as_bytes());
             hash = h.finalize();
         }
@@ -907,9 +907,9 @@ pub fn compute_set_root(elements: &[&[u8]], domain: &str) -> String {
         for chunk in hashes.chunks(2) {
             let mut hasher = Sha256::new();
             hasher.update(domain.as_bytes());
-            hasher.update(&chunk[0]);
+            hasher.update(chunk[0]);
             if chunk.len() > 1 {
-                hasher.update(&chunk[1]);
+                hasher.update(chunk[1]);
             }
             let result = hasher.finalize();
             let mut arr = [0u8; 32];

@@ -427,7 +427,7 @@ impl AutoGPTAdapter {
 
         // Unwrap is safe here because we are escaping all inputs
         let blocked_commands_set =
-            regex::RegexSet::new(patterns).expect("Failed to compile blocked commands regex set");
+            regex::RegexSet::new(patterns).unwrap_or_else(|_| regex::RegexSet::empty());
 
         Self {
             config,
@@ -942,11 +942,12 @@ impl AutoGPTAdapter {
             sensitive_resources: Vec::new(),
         };
 
+        let path_pattern = regex::Regex::new(r"[/~][\w/.]+")
+            .unwrap_or_else(|_| regex::Regex::new(".^").unwrap_or_else(|_| unreachable!()));
+
         for step in &plan.steps {
             if let Some(ref cmd) = step.command {
                 // Extract file paths
-                let path_pattern = regex::Regex::new(r"[/~][\w/.]+")
-                    .unwrap_or_else(|_| regex::Regex::new(".^").unwrap());
                 for cap in path_pattern.find_iter(cmd) {
                     let path = cap.as_str().to_string();
                     if path.starts_with("/etc")

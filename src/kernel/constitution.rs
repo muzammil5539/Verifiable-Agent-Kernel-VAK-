@@ -591,7 +591,7 @@ impl Constitution {
             hasher.update(principle.id.as_bytes());
             hasher.update(principle.name.as_bytes());
             hasher.update(principle.description.as_bytes());
-            hasher.update(&principle.priority.to_le_bytes());
+            hasher.update(principle.priority.to_le_bytes());
         }
 
         for rule in &self.rules {
@@ -601,7 +601,7 @@ impl Constitution {
             hasher.update(rule.enforcement_point.to_string().as_bytes());
         }
 
-        hasher.update(&[self.locked as u8]);
+        hasher.update([self.locked as u8]);
 
         hex::encode(hasher.finalize())
     }

@@ -44,7 +44,7 @@ WASM skills are workspace members located in `.github/skills/`. To build them in
 
 ```bash
 cargo build -p calculator --target wasm32-unknown-unknown --release
-cargo build -p crypto-hash --target wasm32-unknown-unknown --release
+cargo build -p crypto-hasher --target wasm32-unknown-unknown --release
 cargo build -p json-validator --target wasm32-unknown-unknown --release
 cargo build -p text-analyzer --target wasm32-unknown-unknown --release
 cargo build -p regex-matcher --target wasm32-unknown-unknown --release

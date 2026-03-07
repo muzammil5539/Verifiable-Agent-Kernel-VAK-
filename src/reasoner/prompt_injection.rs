@@ -437,6 +437,7 @@ impl PromptInjectionDetector {
     }
 
     /// Analyze an input for prompt injection
+    #[allow(clippy::cognitive_complexity)]
     pub fn analyze(&self, input: &str) -> DetectionResult {
         use std::sync::atomic::Ordering;
 

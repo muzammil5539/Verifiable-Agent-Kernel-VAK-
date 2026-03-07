@@ -169,7 +169,7 @@ jobs:
 
       - name: Build all WASM skills
         run: |
-          for skill in calculator crypto-hash json-validator text-analyzer regex-matcher; do
+          for skill in calculator crypto-hasher json-validator text-analyzer regex-matcher; do
             echo "Building $skill..."
             cargo build -p $skill --target wasm32-unknown-unknown --release
           done

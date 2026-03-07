@@ -786,11 +786,10 @@ impl AgentCardDiscovery {
         let ttl = Duration::from_secs(self.config.cache_ttl_secs);
         for entry in cache.values() {
             let elapsed = entry.cached_at.elapsed().unwrap_or(Duration::from_secs(u64::MAX));
-            if elapsed < ttl && entry.card.name.to_lowercase().contains(&query_lower) {
-                if !results.iter().any(|r| r.id == entry.card.id) {
+            if elapsed < ttl && entry.card.name.to_lowercase().contains(&query_lower)
+                && !results.iter().any(|r| r.id == entry.card.id) {
                     results.push(entry.card.clone());
                 }
-            }
         }
 
         results
@@ -804,11 +803,10 @@ impl AgentCardDiscovery {
         let ttl = Duration::from_secs(self.config.cache_ttl_secs);
         for entry in cache.values() {
             let elapsed = entry.cached_at.elapsed().unwrap_or(Duration::from_secs(u64::MAX));
-            if elapsed < ttl {
-                if !results.iter().any(|r| r.id == entry.card.id) {
+            if elapsed < ttl
+                && !results.iter().any(|r| r.id == entry.card.id) {
                     results.push(entry.card.clone());
                 }
-            }
         }
 
         results

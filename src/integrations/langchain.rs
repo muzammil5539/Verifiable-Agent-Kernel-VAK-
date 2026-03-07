@@ -848,7 +848,7 @@ impl LlmCall {
         ActionContext::new(ActionType::LlmCall, &self.model, agent_id)
             .with_metadata("request_id", &self.request_id)
             .with_metadata("model", &self.model)
-            .with_metadata("message_count", &self.messages.len().to_string())
+            .with_metadata("message_count", self.messages.len().to_string())
     }
 }
 
