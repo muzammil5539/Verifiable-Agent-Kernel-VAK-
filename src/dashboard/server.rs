@@ -258,6 +258,21 @@ impl HttpResponse {
 // Dashboard HTML Generator
 // ============================================================================
 
+fn escape_html(s: &str) -> String {
+    let mut escaped = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '&' => escaped.push_str("&amp;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            _ => escaped.push(c),
+        }
+    }
+    escaped
+}
+
 fn generate_dashboard_html(
     config: &DashboardConfig,
     metrics: &MetricsCollector,
@@ -269,7 +284,7 @@ fn generate_dashboard_html(
     format!(
         include_str!("dashboard.html"),
         refresh = config.refresh_interval_secs,
-        title = config.title,
+        title = escape_html(&config.title),
         status = format!("{:?}", health_check.status),
         status_class = match health_check.status {
             HealthStatus::Healthy => "healthy",
@@ -316,13 +331,13 @@ fn generate_components_html(
 
         html.push_str(&format!(
             include_str!("component.html"),
-            name = name,
+            name = escape_html(name),
             message = if message.is_empty() {
                 "".to_string()
             } else {
                 format!(
                     "<span style=\"color: var(--text-secondary); font-size: 0.75rem;\">{}</span>",
-                    message
+                    escape_html(message)
                 )
             },
             status_class = status_class,
@@ -523,5 +538,54 @@ mod tests {
         assert_eq!(format_bytes(1536.0), "1.50 KB");
         assert_eq!(format_bytes(1572864.0), "1.50 MB");
         assert_eq!(format_bytes(1610612736.0), "1.50 GB");
+    }
+
+    #[test]
+    fn test_dashboard_xss_vulnerability() {
+        let mut config = DashboardConfig::default();
+        config.title = "<script>alert('xss-title')</script>".to_string();
+
+        let metrics = Arc::new(MetricsCollector::default());
+        let health = Arc::new(HealthChecker::new());
+        let discovery = Arc::new(DiscoveryService::new());
+
+        // Register a component with XSS payload
+        let xss_name = "<script>alert('xss-name')</script>";
+        let xss_message = "<img src=x onerror=alert('xss-message')>";
+
+        health.register_check(xss_name, move || {
+            crate::dashboard::health::ComponentHealth::unhealthy(xss_name, xss_message)
+        });
+
+        let server = DashboardServer::new(config, metrics, health, discovery);
+        let response = server.dashboard_response();
+
+        // Check if payloads are correctly escaped
+        assert!(
+            response.body.contains("&lt;script&gt;alert(&#39;xss-title&#39;)&lt;/script&gt;"),
+            "Title XSS not escaped"
+        );
+        assert!(
+            response.body.contains("&lt;script&gt;alert(&#39;xss-name&#39;)&lt;/script&gt;"),
+            "Name XSS not escaped"
+        );
+        assert!(
+            response.body.contains("&lt;img src=x onerror=alert(&#39;xss-message&#39;)&gt;"),
+            "Message XSS not escaped"
+        );
+
+        // Also ensure the unescaped payloads are NOT present
+        assert!(
+            !response.body.contains("<script>alert('xss-title')</script>"),
+            "Unescaped title XSS found"
+        );
+        assert!(
+            !response.body.contains("<script>alert('xss-name')</script>"),
+            "Unescaped name XSS found"
+        );
+        assert!(
+            !response.body.contains("<img src=x onerror=alert('xss-message')>"),
+            "Unescaped message XSS found"
+        );
     }
 }
