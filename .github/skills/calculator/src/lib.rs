@@ -322,3 +322,13 @@ mod tests {
         assert!(!output.success);
     }
 }
+
+#[cfg(all(not(test), target_arch = "wasm32"))]
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    core::arch::wasm32::unreachable()
+}
+
+#[cfg(all(not(test), target_arch = "wasm32"))]
+#[global_allocator]
+static ALLOC: lol_alloc::AssumeSingleThreaded<lol_alloc::FreeListAllocator> = unsafe { lol_alloc::AssumeSingleThreaded::new(lol_alloc::FreeListAllocator::new()) };
