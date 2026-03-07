@@ -72,6 +72,10 @@ pub enum Z3Error {
     /// Unsupported constraint
     #[error("Unsupported constraint type for Z3: {0}")]
     UnsupportedConstraint(String),
+
+    /// Invalid Z3 executable path
+    #[error("Invalid Z3 executable path: {0}")]
+    InvalidPath(String),
 }
 
 impl From<Z3Error> for VerificationError {
@@ -294,8 +298,39 @@ impl Z3FormalVerifier {
         Self { config }
     }
 
+    /// Validates the Z3 executable path to prevent arbitrary command execution.
+    fn validate_z3_path(path_str: &str) -> Result<(), Z3Error> {
+        // Normalize backslashes to forward slashes for cross-platform checking
+        let normalized_path_str = path_str.replace('\\', "/");
+        let path = std::path::Path::new(&normalized_path_str);
+
+        // Check for directory traversal
+        if path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            return Err(Z3Error::InvalidPath("Path contains directory traversal (..)".to_string()));
+        }
+
+        // Verify the file name is strictly 'z3' or 'z3.exe'
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| Z3Error::InvalidPath("Path does not have a valid filename".to_string()))?;
+
+        if file_name != "z3" && file_name != "z3.exe" {
+            return Err(Z3Error::InvalidPath(format!(
+                "Executable must be named 'z3' or 'z3.exe', found '{}'",
+                file_name
+            )));
+        }
+
+        Ok(())
+    }
+
     /// Check if Z3 is available
     pub fn is_available(&self) -> bool {
+        if Self::validate_z3_path(&self.config.z3_path).is_err() {
+            return false;
+        }
+
         Command::new(&self.config.z3_path)
             .arg("--version")
             .output()
@@ -432,6 +467,8 @@ impl Z3FormalVerifier {
 
     /// Run Z3 solver on SMT-LIB2 script
     fn run_z3(&self, script: &str) -> Result<Z3Output, Z3Error> {
+        Self::validate_z3_path(&self.config.z3_path)?;
+
         use std::io::Write;
 
         // Create temp file
@@ -770,6 +807,27 @@ mod tests {
             Z3FormalVerifier::translate_value(&ConstraintValue::String("hello".to_string())),
             "\"hello\""
         );
+    }
+
+    #[test]
+    fn test_validate_z3_path() {
+        // Valid paths
+        assert!(Z3FormalVerifier::validate_z3_path("z3").is_ok());
+        assert!(Z3FormalVerifier::validate_z3_path("z3.exe").is_ok());
+        assert!(Z3FormalVerifier::validate_z3_path("/usr/bin/z3").is_ok());
+        assert!(Z3FormalVerifier::validate_z3_path("C:\\Program Files\\z3\\bin\\z3.exe").is_ok());
+        assert!(Z3FormalVerifier::validate_z3_path("./z3").is_ok());
+
+        // Invalid paths - wrong executable name
+        assert!(Z3FormalVerifier::validate_z3_path("rm").is_err());
+        assert!(Z3FormalVerifier::validate_z3_path("/usr/bin/python").is_err());
+        assert!(Z3FormalVerifier::validate_z3_path("z3_malicious.exe").is_err());
+        assert!(Z3FormalVerifier::validate_z3_path("z3.sh").is_err());
+
+        // Invalid paths - directory traversal
+        assert!(Z3FormalVerifier::validate_z3_path("../z3").is_err());
+        assert!(Z3FormalVerifier::validate_z3_path("/usr/bin/../z3").is_err());
+        assert!(Z3FormalVerifier::validate_z3_path("C:\\z3\\..\\z3.exe").is_err());
     }
 
     #[test]
