@@ -172,8 +172,6 @@ pub struct MultiRegionConfig {
     pub compression: bool,
     /// Consistency check interval in seconds
     pub consistency_check_interval_secs: u64,
-    /// Enable async replication (for ActivePassive mode)
-    pub async_replication: bool,
     /// Replication lag tolerance in seconds
     pub replication_lag_tolerance_secs: u64,
 }
@@ -192,7 +190,6 @@ impl Default for MultiRegionConfig {
             flush_interval_secs: 300,
             compression: true,
             consistency_check_interval_secs: 3600,
-            async_replication: true,
             replication_lag_tolerance_secs: 60,
         }
     }
@@ -429,35 +426,10 @@ pub struct MultiRegionS3Backend {
     local_cache: Arc<RwLock<Vec<AuditEntry>>>,
     /// Maximum cache size
     max_cache_size: usize,
-    /// Replication channel sender
-    replication_tx: Option<mpsc::Sender<ReplicationTask>>,
     /// Last flush timestamp
     last_flush: Arc<RwLock<SystemTime>>,
 }
 
-/// Task for async replication
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-struct ReplicationTask {
-    /// Entries to replicate
-    entries: Vec<AuditEntry>,
-    /// Target region for replication
-    target_region: String,
-    /// Source region of the entries
-    source_region: String,
-}
-
-impl ReplicationTask {
-    /// Create a new replication task
-    #[allow(dead_code)]
-    pub fn new(entries: Vec<AuditEntry>, source_region: String, target_region: String) -> Self {
-        Self {
-            entries,
-            target_region,
-            source_region,
-        }
-    }
-}
 
 impl MultiRegionS3Backend {
     /// Create a new multi-region S3 backend
@@ -481,15 +453,6 @@ impl MultiRegionS3Backend {
             health.insert(region.region.clone(), RegionHealth::healthy(&region.region));
         }
 
-        let (replication_tx, _replication_rx) = if config.async_replication {
-            let (tx, rx) = mpsc::channel::<ReplicationTask>(1000);
-            // In production, spawn a task to process replication
-            // For now, we'll handle it synchronously when needed
-            (Some(tx), Some(rx))
-        } else {
-            (None, None)
-        };
-
         Ok(Self {
             config,
             client,
@@ -500,7 +463,6 @@ impl MultiRegionS3Backend {
             entry_counter: AtomicU64::new(0),
             local_cache: Arc::new(RwLock::new(Vec::new())),
             max_cache_size: 10000,
-            replication_tx,
             last_flush: Arc::new(RwLock::new(SystemTime::now())),
         })
     }
@@ -883,17 +845,6 @@ impl MultiRegionS3Backend {
                                 uploaded_keys.push(format!("{}:{}", primary_region, key));
                             }
 
-                            // Queue async replication to replicas
-                            if let Some(ref tx) = self.replication_tx {
-                                for replica in &self.config.replicas {
-                                    let task = ReplicationTask {
-                                        entries: entries.clone(),
-                                        target_region: replica.region.clone(),
-                                        source_region: primary_region.clone(),
-                                    };
-                                    let _ = tx.try_send(task);
-                                }
-                            }
                         }
                         Err(e) => {
                             tracing::error!(
