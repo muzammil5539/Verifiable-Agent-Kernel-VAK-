@@ -294,8 +294,22 @@ impl Z3FormalVerifier {
         Self { config }
     }
 
+    /// Validates the Z3 path to prevent arbitrary command execution.
+    fn is_valid_z3_path(&self) -> bool {
+        let path = std::path::Path::new(&self.config.z3_path);
+        if let Some(file_name) = path.file_name() {
+            let name = file_name.to_string_lossy();
+            return name == "z3" || name == "z3.exe";
+        }
+        false
+    }
+
     /// Check if Z3 is available
     pub fn is_available(&self) -> bool {
+        if !self.is_valid_z3_path() {
+            return false;
+        }
+
         Command::new(&self.config.z3_path)
             .arg("--version")
             .output()
@@ -432,6 +446,13 @@ impl Z3FormalVerifier {
 
     /// Run Z3 solver on SMT-LIB2 script
     fn run_z3(&self, script: &str) -> Result<Z3Output, Z3Error> {
+        if !self.is_valid_z3_path() {
+            return Err(Z3Error::ExecutionFailed(format!(
+                "Invalid Z3 path: {}",
+                self.config.z3_path
+            )));
+        }
+
         use std::io::Write;
 
         // Create temp file
@@ -750,6 +771,47 @@ mod tests {
         assert!(script.contains("(declare-const y Int)"));
         assert!(script.contains("(assert (< x 10))"));
         assert!(script.contains("(check-sat)"));
+    }
+
+    #[test]
+    fn test_valid_z3_paths() {
+        let mut verifier = create_test_verifier();
+
+        // Valid paths
+        verifier.config.z3_path = "z3".to_string();
+        assert!(verifier.is_valid_z3_path());
+
+        verifier.config.z3_path = "/usr/bin/z3".to_string();
+        assert!(verifier.is_valid_z3_path());
+
+        #[cfg(windows)]
+        {
+            verifier.config.z3_path = "C:\\Program Files\\z3\\bin\\z3.exe".to_string();
+            assert!(verifier.is_valid_z3_path());
+        }
+        #[cfg(not(windows))]
+        {
+            // On non-Windows platforms, backslashes are just parts of the filename,
+            // so we test a forward-slash equivalent for the "exe" ending.
+            verifier.config.z3_path = "/usr/bin/z3.exe".to_string();
+            assert!(verifier.is_valid_z3_path());
+        }
+
+        verifier.config.z3_path = "z3.exe".to_string();
+        assert!(verifier.is_valid_z3_path());
+
+        // Invalid paths
+        verifier.config.z3_path = "bash".to_string();
+        assert!(!verifier.is_valid_z3_path());
+
+        verifier.config.z3_path = "/usr/bin/bash".to_string();
+        assert!(!verifier.is_valid_z3_path());
+
+        verifier.config.z3_path = "z3_malicious.exe".to_string();
+        assert!(!verifier.is_valid_z3_path());
+
+        verifier.config.z3_path = "z3.sh".to_string();
+        assert!(!verifier.is_valid_z3_path());
     }
 
     #[test]
