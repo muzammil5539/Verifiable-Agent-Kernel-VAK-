@@ -316,7 +316,7 @@ impl MockMemoryManager {
         let mut stores = self.stores.lock().unwrap();
         stores
             .entry(agent_id.to_string())
-            .or_insert_with(std::collections::HashMap::new)
+            .or_default()
             .insert(key.to_string(), value.to_string());
     }
     

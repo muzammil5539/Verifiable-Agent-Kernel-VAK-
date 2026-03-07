@@ -166,7 +166,7 @@ fn test_signer_key_export_import() {
     let key_bytes = signer1.export_key_bytes();
 
     // Create new signer from exported key
-    let signer2 = AuditSigner::from_key_bytes(&key_bytes).expect("Failed to import key");
+    let _signer2 = AuditSigner::from_key_bytes(&key_bytes).expect("Failed to import key");
 
     // Both signers should produce same public key
     // (Signatures would be identical for same data)

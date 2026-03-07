@@ -194,6 +194,7 @@ async fn test_concurrent_read_write_memory() {
     }
 
     // Readers
+    let mut reader_handles = Vec::new();
     for _reader_id in 0..10 {
         let data_clone = data.clone();
         let handle = tokio::spawn(async move {
@@ -206,10 +207,13 @@ async fn test_concurrent_read_write_memory() {
             }
             reads
         });
-        handles.push(handle);
+        reader_handles.push(handle);
     }
 
     for handle in handles {
+        handle.await.expect("Task should complete without panic");
+    }
+    for handle in reader_handles {
         handle.await.expect("Task should complete without panic");
     }
 
@@ -257,7 +261,7 @@ async fn test_sustained_operation_stability() {
         "All iterations should be accounted for"
     );
     assert!(
-        log.len() > 0,
+        !log.is_empty(),
         "At least some operations should succeed"
     );
 }
@@ -291,7 +295,7 @@ async fn test_large_audit_chain_handling() {
 
     // Verify chain traversal is still performant
     let start = Instant::now();
-    let count = entries.iter().count();
+    let count = entries.len();
     let read_elapsed = start.elapsed();
 
     assert_eq!(count, chain_size);

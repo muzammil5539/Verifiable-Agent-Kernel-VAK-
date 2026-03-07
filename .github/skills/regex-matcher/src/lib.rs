@@ -205,10 +205,7 @@ fn extract_patterns(text: &str) -> serde_json::Value {
     let mut in_number = false;
 
     for c in text.chars() {
-        if c.is_ascii_digit() || (c == '.' && in_number && !current_num.contains('.')) {
-            current_num.push(c);
-            in_number = true;
-        } else if c == '-' && !in_number {
+        if c.is_ascii_digit() || (c == '.' && in_number && !current_num.contains('.')) || (c == '-' && !in_number) {
             current_num.push(c);
             in_number = true;
         } else {

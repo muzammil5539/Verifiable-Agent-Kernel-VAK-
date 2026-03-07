@@ -971,7 +971,7 @@ mod tests {
         let (train, val) = dataset.split(0.25);
 
         assert_eq!(train.len() + val.len(), dataset.len());
-        assert!(val.len() >= 1);
+        assert!(!val.is_empty());
     }
 
     #[test]

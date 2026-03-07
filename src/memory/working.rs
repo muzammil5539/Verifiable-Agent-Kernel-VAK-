@@ -1030,7 +1030,7 @@ mod tests {
         // English text should estimate reasonably (~4 chars/token)
         let english = "this is a longer message";
         let tokens = estimate_tokens(english);
-        assert!(tokens >= 4 && tokens <= 10, "English estimate: {}", tokens);
+        assert!((4..=10).contains(&tokens), "English estimate: {}", tokens);
 
         // Code with symbols should estimate higher than pure text
         let code = r#"fn main() { println!("hello"); }"#;

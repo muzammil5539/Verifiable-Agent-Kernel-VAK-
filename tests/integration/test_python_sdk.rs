@@ -197,7 +197,7 @@ mod python_sdk_type_tests {
     /// TST-006: Test LLM tool definitions for Python SDK.
     #[test]
     fn test_tool_definitions_python_workflow() {
-        use vak::lib_integration::{builtin_tool_definitions, ToolDefinition};
+        use vak::lib_integration::builtin_tool_definitions;
 
         let tools = builtin_tool_definitions();
         assert!(!tools.is_empty(), "Should have built-in tools");

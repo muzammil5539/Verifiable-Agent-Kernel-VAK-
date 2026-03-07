@@ -45,7 +45,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use std::collections::HashMap;
 
 #[cfg(feature = "python")]
-use crate::policy::{PolicyContext, PolicyEffect, PolicyEngine, PolicyRule};
+use crate::policy::{PolicyContext, PolicyEngine, PolicyRule};
 
 #[cfg(feature = "python")]
 use crate::audit::{AuditDecision, AuditLogger};
@@ -1012,7 +1012,7 @@ mod tests {
             let empty_dict = PyDict::new(py);
 
             kernel
-                .register_agent("test-agent", "Test Agent", empty_dict.bind(py).clone())
+                .register_agent("test-agent", "Test Agent", empty_dict.clone())
                 .unwrap();
             assert!(kernel.agents.contains_key("test-agent"));
 

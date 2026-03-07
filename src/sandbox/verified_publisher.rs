@@ -1001,7 +1001,7 @@ fn generate_challenge(publisher_id: &str, method: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(publisher_id.as_bytes());
     hasher.update(method.as_bytes());
-    hasher.update(&now().to_le_bytes());
+    hasher.update(now().to_le_bytes());
     hex::encode(hasher.finalize())[..32].to_string()
 }
 

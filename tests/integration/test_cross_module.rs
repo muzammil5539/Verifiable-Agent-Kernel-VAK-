@@ -273,8 +273,8 @@ async fn test_swarm_consensus_audited() {
     let audit_log = Arc::new(RwLock::new(Vec::<CrossModuleAuditEntry>::new()));
 
     // Simulate a multi-agent voting session
-    let agents = vec!["agent-1", "agent-2", "agent-3", "agent-4", "agent-5"];
-    let votes = vec![true, true, false, true, true]; // 4-1 in favor
+    let agents = ["agent-1", "agent-2", "agent-3", "agent-4", "agent-5"];
+    let votes = [true, true, false, true, true]; // 4-1 in favor
 
     // Log vote submission for each agent
     for (agent, vote) in agents.iter().zip(votes.iter()) {
@@ -337,11 +337,9 @@ async fn test_sycophancy_detection_in_swarm() {
     );
 
     // Verify diverse opinions are not flagged
-    let healthy_rounds = vec![
-        vec![true, false, true, true, false],
+    let healthy_rounds = [vec![true, false, true, true, false],
         vec![false, true, true, false, true],
-        vec![true, true, false, true, false],
-    ];
+        vec![true, true, false, true, false]];
 
     let healthy_unanimity = healthy_rounds
         .iter()
@@ -377,7 +375,7 @@ async fn test_full_session_lifecycle() {
     // Phase 4: Reasoning (PRM scoring)
     let prm_score = session.score_reasoning("Analyzing input for vulnerabilities");
     assert!(
-        prm_score >= 0.0 && prm_score <= 1.0,
+        (0.0..=1.0).contains(&prm_score),
         "PRM score should be in [0, 1]"
     );
 
@@ -655,7 +653,7 @@ impl MockCrossModuleMemory {
     fn store(&self, tier: &str, key: &str, value: &str) {
         let mut data = self.data.lock().unwrap();
         data.entry(tier.to_string())
-            .or_insert_with(HashMap::new)
+            .or_default()
             .insert(key.to_string(), value.to_string());
     }
 
@@ -802,13 +800,11 @@ impl MockSession {
     }
 
     fn execute_tool(&self, tool_name: &str, _input: &str) -> ToolExecutionResult {
-        let known_tools = vec![
-            "calculator",
+        let known_tools = ["calculator",
             "text-analyzer",
             "crypto-hash",
             "json-validator",
-            "regex-matcher",
-        ];
+            "regex-matcher"];
 
         let success = known_tools.contains(&tool_name);
         if success {

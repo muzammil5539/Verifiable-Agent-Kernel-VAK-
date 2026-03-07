@@ -99,19 +99,19 @@ mod sandbox_memory_tests {
 
         // Create sandbox with strict memory limit
         let config = SandboxConfig {
-            memory_limit: 1 * 1024 * 1024, // 1MB
+            memory_limit: 1024 * 1024, // 1MB
             fuel_limit: 1_000_000,
             timeout: Duration::from_secs(5),
         };
 
         let sandbox = WasmSandbox::new(config.clone()).expect("Sandbox creation failed");
-        assert_eq!(sandbox.config().memory_limit, 1 * 1024 * 1024);
+        assert_eq!(sandbox.config().memory_limit, 1024 * 1024);
     }
 
     /// TST-002: Test that fuel limits prevent unbounded allocation loops.
     #[test]
     fn test_fuel_prevents_allocation_loop() {
-        use wasmtime::{Config, Engine, Linker, Module, Store, StoreLimitsBuilder};
+        use wasmtime::{Config, Engine, Linker, Module, Store};
 
         let mut config = Config::new();
         config.consume_fuel(true);
@@ -162,7 +162,7 @@ mod sandbox_memory_tests {
     /// TST-002: Test that memory.grow returns -1 when exceeding store limits.
     #[test]
     fn test_memory_grow_returns_minus_one_at_limit() {
-        use wasmtime::{Config, Engine, Linker, Module, Store, StoreLimitsBuilder};
+        use wasmtime::{Engine, Linker, Module, Store, StoreLimitsBuilder};
 
         let engine = Engine::default();
 
@@ -208,7 +208,7 @@ mod sandbox_memory_tests {
 /// Tests for multi-tier memory state containment
 #[cfg(test)]
 mod state_memory_tests {
-    use super::*;
+
 
     /// TST-002: Test that ephemeral storage respects namespace isolation.
     #[test]
