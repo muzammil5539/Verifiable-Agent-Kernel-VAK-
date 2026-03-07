@@ -365,15 +365,18 @@ class CodeAuditor:
         self.record_observation(f"Reading file: {file_path}")
         self.files_analyzed.append(file_path)
         
+        # Split content into lines once for all analysis passes
+        lines = content.split('\n')
+
         # Run all analysis passes
-        self._analyze_sql_injection(file_path, content)
-        self._analyze_hardcoded_secrets(file_path, content)
-        self._analyze_input_validation(file_path, content)
-        self._analyze_error_handling(file_path, content)
+        self._analyze_sql_injection(file_path, lines)
+        self._analyze_hardcoded_secrets(file_path, lines)
+        self._analyze_input_validation(file_path, lines)
+        self._analyze_error_handling(file_path, lines)
         
         return True, None
     
-    def _analyze_sql_injection(self, file_path: str, content: str) -> None:
+    def _analyze_sql_injection(self, file_path: str, lines: List[str]) -> None:
         """Check for SQL injection vulnerabilities."""
         self.step_count += 1
         self.record_thought("Checking for potential SQL injection vulnerabilities")
@@ -401,7 +404,7 @@ class CodeAuditor:
             (r'\+\s*["\']SELECT', "String concatenation in SQL"),
         ]
         
-        for line_num, line in enumerate(content.split('\n'), 1):
+        for line_num, line in enumerate(lines, 1):
             for pattern, desc in patterns:
                 if re.search(pattern, line, re.IGNORECASE):
                     finding = CodeFinding(
@@ -424,7 +427,7 @@ class CodeAuditor:
                         "ALLOWED"
                     )
     
-    def _analyze_hardcoded_secrets(self, file_path: str, content: str) -> None:
+    def _analyze_hardcoded_secrets(self, file_path: str, lines: List[str]) -> None:
         """Check for hardcoded secrets."""
         self.step_count += 1
         self.record_thought("Checking for hardcoded secrets and credentials")
@@ -450,7 +453,7 @@ class CodeAuditor:
             ("database_url", "Database URL"),
         ]
         
-        for line_num, line in enumerate(content.split('\n'), 1):
+        for line_num, line in enumerate(lines, 1):
             line_lower = line.lower()
             
             for pattern, desc in secret_patterns:
@@ -470,7 +473,7 @@ class CodeAuditor:
                         self.findings.append(finding)
                         self.record_action(f"Found hardcoded secret at line {line_num}")
     
-    def _analyze_input_validation(self, file_path: str, content: str) -> None:
+    def _analyze_input_validation(self, file_path: str, lines: List[str]) -> None:
         """Check for input validation issues."""
         self.step_count += 1
         self.record_thought("Checking for missing input validation")
@@ -488,7 +491,7 @@ class CodeAuditor:
             (r'\bexec\s*\(', "Use of exec() requires careful validation", FindingSeverity.HIGH),
         ]
         
-        for line_num, line in enumerate(content.split('\n'), 1):
+        for line_num, line in enumerate(lines, 1):
             for pattern, desc, severity in patterns:
                 if re.search(pattern, line):
                     finding = CodeFinding(
@@ -504,7 +507,7 @@ class CodeAuditor:
                     self.findings.append(finding)
                     self.record_action(f"Found input validation issue at line {line_num}")
     
-    def _analyze_error_handling(self, file_path: str, content: str) -> None:
+    def _analyze_error_handling(self, file_path: str, lines: List[str]) -> None:
         """Check for error handling issues."""
         self.step_count += 1
         self.record_thought("Checking for error handling issues")
@@ -523,7 +526,7 @@ class CodeAuditor:
             (r'except\s+Exception:', "Catching broad Exception", FindingSeverity.LOW),
         ]
         
-        for line_num, line in enumerate(content.split('\n'), 1):
+        for line_num, line in enumerate(lines, 1):
             for pattern, desc, severity in patterns:
                 if re.search(pattern, line):
                     finding = CodeFinding(
