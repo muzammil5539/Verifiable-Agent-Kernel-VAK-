@@ -1,4 +1,3 @@
-from typing import Optional
 """
 Tests for VAK Kernel functionality.
 
@@ -163,7 +162,7 @@ class TestPolicyEvaluation:
         """Test custom policy hook that denies."""
         kernel = VakKernel.default()
         
-        def deny_dangerous(agent_id: str, action: str, context: dict) -> Optional[PolicyDecision]:
+        def deny_dangerous(agent_id: str, action: str, context: dict) -> PolicyDecision | None:
             if action.startswith("dangerous."):
                 return PolicyDecision(
                     effect=PolicyEffect.DENY,
@@ -186,7 +185,7 @@ class TestPolicyEvaluation:
         """Test removing a policy hook."""
         kernel = VakKernel.default()
         
-        def deny_all(agent_id: str, action: str, context: dict) -> Optional[PolicyDecision]:
+        def deny_all(agent_id: str, action: str, context: dict) -> PolicyDecision | None:
             return PolicyDecision(
                 effect=PolicyEffect.DENY,
                 policy_id="deny-all",
@@ -474,7 +473,7 @@ class TestPolicyHookChain:
         """Test that first returning hook wins."""
         kernel = VakKernel.default()
         
-        def hook1(agent_id: str, action: str, context: dict) -> Optional[PolicyDecision]:
+        def hook1(agent_id: str, action: str, context: dict) -> PolicyDecision | None:
             if action == "test":
                 return PolicyDecision(
                     effect=PolicyEffect.ALLOW,
@@ -483,7 +482,7 @@ class TestPolicyHookChain:
                 )
             return None
         
-        def hook2(agent_id: str, action: str, context: dict) -> Optional[PolicyDecision]:
+        def hook2(agent_id: str, action: str, context: dict) -> PolicyDecision | None:
             return PolicyDecision(
                 effect=PolicyEffect.DENY,
                 policy_id="hook2",
@@ -507,11 +506,11 @@ class TestPolicyHookChain:
         
         call_count = {"hook1": 0, "hook2": 0}
         
-        def hook1(agent_id: str, action: str, context: dict) -> Optional[PolicyDecision]:
+        def hook1(agent_id: str, action: str, context: dict) -> PolicyDecision | None:
             call_count["hook1"] += 1
             return None  # Pass to next
         
-        def hook2(agent_id: str, action: str, context: dict) -> Optional[PolicyDecision]:
+        def hook2(agent_id: str, action: str, context: dict) -> PolicyDecision | None:
             call_count["hook2"] += 1
             return PolicyDecision(
                 effect=PolicyEffect.ALLOW,

@@ -490,7 +490,7 @@ mod context_integration_tests {
         let engine = IntegratedPolicyEngine::new(config);
 
         // Engine should be created successfully
-        assert!(engine.is_ok() || true); // May fail if dependencies not initialized
+        assert!(engine.is_ok()); // May fail if dependencies not initialized
     }
 
     #[test]

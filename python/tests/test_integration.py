@@ -1,4 +1,3 @@
-from typing import Optional
 """
 Integration tests for the VAK Python SDK.
 
@@ -89,7 +88,7 @@ class TestEndToEndWorkflow:
         kernel = VakKernel.default()
         
         # Add a policy that denies access to sensitive files
-        def deny_sensitive_files(agent_id: str, action: str, context: dict) -> Optional[PolicyDecision]:
+        def deny_sensitive_files(agent_id: str, action: str, context: dict) -> PolicyDecision | None:
             if action == "tool.execute":
                 file_path = context.get("parameters", {}).get("path", "")
                 if file_path.endswith(".env") or "secrets" in file_path:
@@ -254,7 +253,7 @@ class TestSecurityScenarios:
         kernel = VakKernel.default()
         
         # Policy hook that checks for privilege escalation
-        def prevent_escalation(agent_id: str, action: str, context: dict) -> Optional[PolicyDecision]:
+        def prevent_escalation(agent_id: str, action: str, context: dict) -> PolicyDecision | None:
             if action == "agent.register":
                 target_trusted = context.get("trusted", False)
                 if target_trusted and agent_id != "system":
@@ -282,7 +281,7 @@ class TestSecurityScenarios:
         # Add policy to block dangerous operations
         forbidden_actions = {"delete_all", "drop_database", "rm_rf"}
         
-        def block_forbidden(agent_id: str, action: str, context: dict) -> Optional[PolicyDecision]:
+        def block_forbidden(agent_id: str, action: str, context: dict) -> PolicyDecision | None:
             tool_action = context.get("action", "")
             if tool_action in forbidden_actions:
                 return PolicyDecision(
@@ -371,7 +370,7 @@ class TestErrorRecovery:
         assert r1.success
         
         # Simulate a policy violation (blocked action)
-        def block_once(agent_id: str, action: str, context: dict) -> Optional[PolicyDecision]:
+        def block_once(agent_id: str, action: str, context: dict) -> PolicyDecision | None:
             params = context.get("parameters", {})
             if params.get("error_trigger"):
                 return PolicyDecision(
@@ -438,7 +437,7 @@ class TestComplexPolicyScenarios:
             "viewer": ["code.read"]
         }
         
-        def rbac_policy(agent_id: str, action: str, context: dict) -> Optional[PolicyDecision]:
+        def rbac_policy(agent_id: str, action: str, context: dict) -> PolicyDecision | None:
             # Get agent's role from metadata
             role = context.get("role", "viewer")
             allowed = role_permissions.get(role, [])
@@ -481,7 +480,7 @@ class TestComplexPolicyScenarios:
         request_counts: dict[str, int] = {}
         max_requests = 3
         
-        def rate_limit_policy(agent_id: str, action: str, context: dict) -> Optional[PolicyDecision]:
+        def rate_limit_policy(agent_id: str, action: str, context: dict) -> PolicyDecision | None:
             if action == "tool.execute":
                 count = request_counts.get(agent_id, 0)
                 if count >= max_requests:
@@ -520,7 +519,7 @@ class TestComplexPolicyScenarios:
         """Test policy that uses full context for decisions."""
         kernel = VakKernel.default()
         
-        def context_aware_policy(agent_id: str, action: str, context: dict) -> Optional[PolicyDecision]:
+        def context_aware_policy(agent_id: str, action: str, context: dict) -> PolicyDecision | None:
             # Check time of day (simulated)
             time_of_day = context.get("time_of_day", "day")
             is_production = context.get("environment") == "production"

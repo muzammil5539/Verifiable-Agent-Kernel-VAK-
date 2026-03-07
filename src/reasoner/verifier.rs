@@ -1330,7 +1330,7 @@ mod tests {
         let int_val: ConstraintValue = 42.into();
         assert_eq!(int_val.as_integer(), Some(42));
 
-        let float_val: ConstraintValue = 3.14.into();
+        let float_val: ConstraintValue = std::f64::consts::PI.into();
         assert!(float_val.as_float().is_some());
 
         let str_val: ConstraintValue = "hello".into();

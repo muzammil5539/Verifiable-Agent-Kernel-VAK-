@@ -26,8 +26,6 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "warn"
 # Ignore specific advisories (with justification)
 ignore = [
-    "RUSTSEC-2025-0060", # crypto-hash crate is unmaintained but used in tests
-    "RUSTSEC-2022-0054", # wee_alloc is unmaintained
     # Example: "RUSTSEC-2020-0001", # Reason for ignoring
 ]
 
