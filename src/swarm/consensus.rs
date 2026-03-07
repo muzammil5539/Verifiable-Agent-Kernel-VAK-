@@ -67,8 +67,7 @@ pub enum ConsensusError {
 // ============================================================================
 
 /// Types of consensus mechanisms
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ConsensusMechanism {
     /// Simple majority (>50%)
     #[default]
@@ -86,7 +85,6 @@ pub enum ConsensusMechanism {
     /// Quadratic voting
     QuadraticMajority,
 }
-
 
 // ============================================================================
 // Consensus Configuration

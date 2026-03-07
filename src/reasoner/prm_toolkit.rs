@@ -305,9 +305,9 @@ impl EvaluationDataset {
             return Err(ToolkitError::EmptyDataset);
         }
         for (i, example) in self.examples.iter().enumerate() {
-            example.validate().map_err(|e| {
-                ToolkitError::InvalidExample(format!("Example {}: {}", i, e))
-            })?;
+            example
+                .validate()
+                .map_err(|e| ToolkitError::InvalidExample(format!("Example {}: {}", i, e)))?;
         }
         Ok(())
     }
@@ -383,7 +383,12 @@ impl fmt::Display for EvaluationMetrics {
         writeln!(f, "=== PRM Evaluation Metrics ===")?;
         writeln!(f, "Total examples: {}", self.total_examples)?;
         writeln!(f, "Threshold:      {:.2}", self.threshold)?;
-        writeln!(f, "Accuracy:       {:.4} ({:.1}%)", self.accuracy, self.accuracy * 100.0)?;
+        writeln!(
+            f,
+            "Accuracy:       {:.4} ({:.1}%)",
+            self.accuracy,
+            self.accuracy * 100.0
+        )?;
         writeln!(f, "Precision:      {:.4}", self.precision)?;
         writeln!(f, "Recall:         {:.4}", self.recall)?;
         writeln!(f, "F1 Score:       {:.4}", self.f1_score)?;
@@ -446,7 +451,11 @@ impl fmt::Display for ComparisonReport {
         writeln!(f, "Best accuracy:     {}", self.best_accuracy)?;
         writeln!(f, "Best calibration:  {}", self.best_calibration)?;
         writeln!(f, "Best F1:           {}", self.best_f1)?;
-        writeln!(f, "Disagreement rate: {:.2}%", self.disagreement_rate * 100.0)?;
+        writeln!(
+            f,
+            "Disagreement rate: {:.2}%",
+            self.disagreement_rate * 100.0
+        )?;
         writeln!(f)?;
         for model in &self.models {
             writeln!(f, "--- {} ---", model.model_id)?;
@@ -515,7 +524,9 @@ impl PrmToolkit {
         let mut total_sq_error = 0.0f64;
 
         for example in &dataset.examples {
-            let predicted = example.predicted_score.unwrap_or(example.ground_truth_score);
+            let predicted = example
+                .predicted_score
+                .unwrap_or(example.ground_truth_score);
             let predicted_positive = predicted >= threshold;
             let actually_positive = example.is_correct;
 
@@ -594,7 +605,9 @@ impl PrmToolkit {
 
         // Assign examples to bins
         for example in &dataset.examples {
-            let score = example.predicted_score.unwrap_or(example.ground_truth_score);
+            let score = example
+                .predicted_score
+                .unwrap_or(example.ground_truth_score);
             let bin_idx = ((score * num_bins as f64).floor() as usize).min(num_bins - 1);
             bins[bin_idx].count += 1;
             bins[bin_idx].avg_predicted += score;
@@ -803,7 +816,12 @@ impl PrmToolkit {
         let avg_step_length = if dataset.is_empty() {
             100
         } else {
-            dataset.examples.iter().map(|e| e.step_text.len()).sum::<usize>() / dataset.len()
+            dataset
+                .examples
+                .iter()
+                .map(|e| e.step_text.len())
+                .sum::<usize>()
+                / dataset.len()
         };
 
         let correct_ratio = if dataset.is_empty() {
@@ -931,7 +949,11 @@ mod tests {
 
         let metrics = toolkit.evaluate_dataset(&dataset);
 
-        assert!(metrics.accuracy > 0.9, "Expected high accuracy, got {}", metrics.accuracy);
+        assert!(
+            metrics.accuracy > 0.9,
+            "Expected high accuracy, got {}",
+            metrics.accuracy
+        );
         assert_eq!(metrics.total_examples, 8);
         assert!(metrics.precision > 0.0);
         assert!(metrics.recall > 0.0);

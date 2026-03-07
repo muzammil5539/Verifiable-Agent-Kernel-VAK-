@@ -390,7 +390,6 @@ pub enum SortOrder {
     Name,
 }
 
-
 /// Query for searching skills
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SkillQuery {

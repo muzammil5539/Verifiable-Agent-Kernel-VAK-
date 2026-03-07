@@ -36,14 +36,12 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-
 // ============================================================================
 // Configuration
 // ============================================================================
 
 /// Replication mode for multi-region setup
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ReplicationMode {
     /// Active-Active: Write to all regions simultaneously
     ActiveActive,
@@ -54,10 +52,8 @@ pub enum ReplicationMode {
     PrimaryOnly,
 }
 
-
 /// Failover strategy when primary region is unavailable
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum FailoverStrategy {
     /// Automatic failover to healthy replica
     #[default]
@@ -67,7 +63,6 @@ pub enum FailoverStrategy {
     /// Fail-closed: deny writes if primary unavailable
     FailClosed,
 }
-
 
 /// Configuration for a single region
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -429,7 +424,6 @@ pub struct MultiRegionS3Backend {
     /// Last flush timestamp
     last_flush: Arc<RwLock<SystemTime>>,
 }
-
 
 impl MultiRegionS3Backend {
     /// Create a new multi-region S3 backend
@@ -844,7 +838,6 @@ impl MultiRegionS3Backend {
                             if !key.is_empty() {
                                 uploaded_keys.push(format!("{}:{}", primary_region, key));
                             }
-
                         }
                         Err(e) => {
                             tracing::error!(

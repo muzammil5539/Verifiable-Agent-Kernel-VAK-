@@ -766,13 +766,12 @@ impl TimeTravelManager {
             }
 
             // Verify parent linkage (except for genesis)
-            if i < history.len() - 1
-                && snapshot.parent_id != Some(history[i + 1].id) {
-                    return Err(TimeTravelError::VerificationFailed {
-                        snapshot_id: snapshot.id,
-                        reason: "Parent ID mismatch".to_string(),
-                    });
-                }
+            if i < history.len() - 1 && snapshot.parent_id != Some(history[i + 1].id) {
+                return Err(TimeTravelError::VerificationFailed {
+                    snapshot_id: snapshot.id,
+                    reason: "Parent ID mismatch".to_string(),
+                });
+            }
         }
 
         // Verify genesis has no parent

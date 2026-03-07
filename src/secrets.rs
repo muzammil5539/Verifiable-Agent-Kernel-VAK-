@@ -95,7 +95,11 @@ pub struct Secret {
 
 impl Secret {
     /// Create a new secret
-    pub fn new(key: impl Into<String>, value: impl Into<String>, source: impl Into<String>) -> Self {
+    pub fn new(
+        key: impl Into<String>,
+        value: impl Into<String>,
+        source: impl Into<String>,
+    ) -> Self {
         Self {
             key: key.into(),
             value: value.into(),
@@ -377,15 +381,13 @@ impl FileSecretsProvider {
 
     fn write_file(&self, secrets: &HashMap<String, String>) -> SecretsResult<()> {
         if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| SecretsError::IoError(e.to_string()))?;
+            std::fs::create_dir_all(parent).map_err(|e| SecretsError::IoError(e.to_string()))?;
         }
 
         let content = serde_json::to_string_pretty(secrets)
             .map_err(|e| SecretsError::ProviderError(e.to_string()))?;
 
-        std::fs::write(&self.path, content)
-            .map_err(|e| SecretsError::IoError(e.to_string()))?;
+        std::fs::write(&self.path, content).map_err(|e| SecretsError::IoError(e.to_string()))?;
 
         Ok(())
     }
@@ -605,7 +607,9 @@ impl SecretsProvider for ChainedSecretsProvider {
         if let Some(provider) = self.providers.first() {
             provider.set_secret(key, value).await
         } else {
-            Err(SecretsError::ProviderError("No providers configured".to_string()))
+            Err(SecretsError::ProviderError(
+                "No providers configured".to_string(),
+            ))
         }
     }
 
@@ -680,7 +684,10 @@ mod tests {
     #[tokio::test]
     async fn test_secrets_manager_caching() {
         let provider = MemorySecretsProvider::new();
-        provider.set_secret("cached_key", "cached_value").await.unwrap();
+        provider
+            .set_secret("cached_key", "cached_value")
+            .await
+            .unwrap();
 
         let manager = SecretsManager::new(Box::new(provider));
 
@@ -716,16 +723,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_secret_expiry() {
-        let secret = Secret::new("key", "value", "test")
-            .with_expiry(0); // Already expired
+        let secret = Secret::new("key", "value", "test").with_expiry(0); // Already expired
         assert!(secret.is_expired());
 
         let future = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs() + 3600;
-        let secret = Secret::new("key", "value", "test")
-            .with_expiry(future);
+            .as_secs()
+            + 3600;
+        let secret = Secret::new("key", "value", "test").with_expiry(future);
         assert!(!secret.is_expired());
     }
 

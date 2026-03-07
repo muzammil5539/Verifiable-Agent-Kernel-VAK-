@@ -305,15 +305,19 @@ impl Z3FormalVerifier {
         let path = std::path::Path::new(&normalized_path_str);
 
         // Check for directory traversal
-        if path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
-            return Err(Z3Error::InvalidPath("Path contains directory traversal (..)".to_string()));
+        if path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(Z3Error::InvalidPath(
+                "Path contains directory traversal (..)".to_string(),
+            ));
         }
 
         // Verify the file name is strictly 'z3' or 'z3.exe'
-        let file_name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .ok_or_else(|| Z3Error::InvalidPath("Path does not have a valid filename".to_string()))?;
+        let file_name = path.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
+            Z3Error::InvalidPath("Path does not have a valid filename".to_string())
+        })?;
 
         if file_name != "z3" && file_name != "z3.exe" {
             return Err(Z3Error::InvalidPath(format!(

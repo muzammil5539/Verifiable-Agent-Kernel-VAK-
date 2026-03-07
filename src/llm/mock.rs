@@ -418,10 +418,7 @@ impl LlmProvider for MockLlmProvider {
                 // Generate a simple deterministic embedding based on text
                 let seed = text.len() as f32 + i as f32;
                 (0..embeddings.dimension)
-                    .map(|j| {
-                        
-                        ((seed + j as f32) * 0.1).sin() * 0.5
-                    })
+                    .map(|j| ((seed + j as f32) * 0.1).sin() * 0.5)
                     .collect()
             })
             .collect();

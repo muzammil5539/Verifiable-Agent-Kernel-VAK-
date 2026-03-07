@@ -1234,7 +1234,11 @@ impl AuditLogger {
         };
 
         // Archive to archival backend if configured
-        if let Some(ref mut archival) = self.rotation.as_mut().and_then(|r| r.archival_backend.as_mut()) {
+        if let Some(ref mut archival) = self
+            .rotation
+            .as_mut()
+            .and_then(|r| r.archival_backend.as_mut())
+        {
             for entry in &entries_to_archive {
                 if let Err(e) = archival.append(entry) {
                     tracing::error!("Failed to archive audit entry {}: {:?}", entry.id, e);
@@ -1994,7 +1998,10 @@ mod tests {
         // After rotation, count should not exceed max_entries
         let count = logger.count().unwrap();
         assert!(count <= 5, "Expected <= 5 entries, got {}", count);
-        assert!(logger.rotated_count() > 0, "Expected some entries to be rotated out");
+        assert!(
+            logger.rotated_count() > 0,
+            "Expected some entries to be rotated out"
+        );
     }
 
     #[test]
@@ -2002,10 +2009,7 @@ mod tests {
         let mut logger = AuditLogger::new();
 
         let archival = Box::new(MemoryAuditBackend::new());
-        logger.set_rotation(RotationConfig::with_archival(
-            3,
-            archival,
-        ));
+        logger.set_rotation(RotationConfig::with_archival(3, archival));
 
         // Add 5 entries
         for i in 0..5 {
@@ -2019,7 +2023,11 @@ mod tests {
 
         // Primary should have at most 3 entries
         let count = logger.count().unwrap();
-        assert!(count <= 3, "Primary backend should have <= 3 entries, got {}", count);
+        assert!(
+            count <= 3,
+            "Primary backend should have <= 3 entries, got {}",
+            count
+        );
     }
 
     #[test]
@@ -2062,7 +2070,11 @@ mod tests {
                 resource: "/test".to_string(),
                 decision: AuditDecision::Allowed,
                 hash: format!("hash-{}", i),
-                prev_hash: if i == 0 { "0".repeat(64) } else { format!("hash-{}", i - 1) },
+                prev_hash: if i == 0 {
+                    "0".repeat(64)
+                } else {
+                    format!("hash-{}", i - 1)
+                },
                 signature: None,
                 metadata: None,
             };

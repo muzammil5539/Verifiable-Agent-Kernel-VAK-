@@ -205,7 +205,10 @@ mod python_sdk_type_tests {
         for tool in &tools {
             // Each tool must have valid name and description
             assert!(!tool.name.is_empty(), "Tool name must not be empty");
-            assert!(!tool.description.is_empty(), "Tool description must not be empty");
+            assert!(
+                !tool.description.is_empty(),
+                "Tool description must not be empty"
+            );
 
             // Verify OpenAI format conversion
             let openai = tool.to_openai();

@@ -562,21 +562,29 @@ mod tests {
 
         // Check if payloads are correctly escaped
         assert!(
-            response.body.contains("&lt;script&gt;alert(&#39;xss-title&#39;)&lt;/script&gt;"),
+            response
+                .body
+                .contains("&lt;script&gt;alert(&#39;xss-title&#39;)&lt;/script&gt;"),
             "Title XSS not escaped"
         );
         assert!(
-            response.body.contains("&lt;script&gt;alert(&#39;xss-name&#39;)&lt;/script&gt;"),
+            response
+                .body
+                .contains("&lt;script&gt;alert(&#39;xss-name&#39;)&lt;/script&gt;"),
             "Name XSS not escaped"
         );
         assert!(
-            response.body.contains("&lt;img src=x onerror=alert(&#39;xss-message&#39;)&gt;"),
+            response
+                .body
+                .contains("&lt;img src=x onerror=alert(&#39;xss-message&#39;)&gt;"),
             "Message XSS not escaped"
         );
 
         // Also ensure the unescaped payloads are NOT present
         assert!(
-            !response.body.contains("<script>alert('xss-title')</script>"),
+            !response
+                .body
+                .contains("<script>alert('xss-title')</script>"),
             "Unescaped title XSS found"
         );
         assert!(
@@ -584,7 +592,9 @@ mod tests {
             "Unescaped name XSS found"
         );
         assert!(
-            !response.body.contains("<img src=x onerror=alert('xss-message')>"),
+            !response
+                .body
+                .contains("<img src=x onerror=alert('xss-message')>"),
             "Unescaped message XSS found"
         );
     }

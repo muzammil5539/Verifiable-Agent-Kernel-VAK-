@@ -756,7 +756,10 @@ impl AgentCardDiscovery {
         let cache = self.cache.read().await;
         let ttl = Duration::from_secs(self.config.cache_ttl_secs);
         for entry in cache.values() {
-            let elapsed = entry.cached_at.elapsed().unwrap_or(Duration::from_secs(u64::MAX));
+            let elapsed = entry
+                .cached_at
+                .elapsed()
+                .unwrap_or(Duration::from_secs(u64::MAX));
             if elapsed < ttl && entry.card.has_capability(capability_type) {
                 // Avoid duplicates
                 if !results.iter().any(|r| r.id == entry.card.id) {
@@ -785,11 +788,16 @@ impl AgentCardDiscovery {
         let cache = self.cache.read().await;
         let ttl = Duration::from_secs(self.config.cache_ttl_secs);
         for entry in cache.values() {
-            let elapsed = entry.cached_at.elapsed().unwrap_or(Duration::from_secs(u64::MAX));
-            if elapsed < ttl && entry.card.name.to_lowercase().contains(&query_lower)
-                && !results.iter().any(|r| r.id == entry.card.id) {
-                    results.push(entry.card.clone());
-                }
+            let elapsed = entry
+                .cached_at
+                .elapsed()
+                .unwrap_or(Duration::from_secs(u64::MAX));
+            if elapsed < ttl
+                && entry.card.name.to_lowercase().contains(&query_lower)
+                && !results.iter().any(|r| r.id == entry.card.id)
+            {
+                results.push(entry.card.clone());
+            }
         }
 
         results
@@ -802,11 +810,13 @@ impl AgentCardDiscovery {
         let cache = self.cache.read().await;
         let ttl = Duration::from_secs(self.config.cache_ttl_secs);
         for entry in cache.values() {
-            let elapsed = entry.cached_at.elapsed().unwrap_or(Duration::from_secs(u64::MAX));
-            if elapsed < ttl
-                && !results.iter().any(|r| r.id == entry.card.id) {
-                    results.push(entry.card.clone());
-                }
+            let elapsed = entry
+                .cached_at
+                .elapsed()
+                .unwrap_or(Duration::from_secs(u64::MAX));
+            if elapsed < ttl && !results.iter().any(|r| r.id == entry.card.id) {
+                results.push(entry.card.clone());
+            }
         }
 
         results
@@ -818,13 +828,7 @@ impl AgentCardDiscovery {
         let ttl = Duration::from_secs(self.config.cache_ttl_secs);
         let before = cache.len();
 
-        cache.retain(|_, entry| {
-            entry
-                .cached_at
-                .elapsed()
-                .map(|d| d < ttl)
-                .unwrap_or(false)
-        });
+        cache.retain(|_, entry| entry.cached_at.elapsed().map(|d| d < ttl).unwrap_or(false));
 
         let removed = before - cache.len();
         if removed > 0 {
@@ -863,12 +867,7 @@ impl AgentCardDiscovery {
         let total = cache.len();
         let valid = cache
             .values()
-            .filter(|e| {
-                e.cached_at
-                    .elapsed()
-                    .map(|d| d < ttl)
-                    .unwrap_or(false)
-            })
+            .filter(|e| e.cached_at.elapsed().map(|d| d < ttl).unwrap_or(false))
             .count();
         (total, valid)
     }
@@ -1015,8 +1014,7 @@ mod tests {
 
     #[test]
     fn test_validate_card_endpoint_warning() {
-        let card = AgentCard::new("agent-1", "Test Agent")
-            .with_endpoint("tcp://localhost:8080");
+        let card = AgentCard::new("agent-1", "Test Agent").with_endpoint("tcp://localhost:8080");
 
         let result = AgentCardDiscovery::validate_card(&card);
         assert!(result.valid);
@@ -1040,10 +1038,10 @@ mod tests {
     async fn test_agent_card_discovery_search_by_capability() {
         let discovery = AgentCardDiscovery::with_defaults();
 
-        let card1 = AgentCard::new("agent-1", "Reasoner")
-            .with_capability(A2ACapability::new("reasoning"));
-        let card2 = AgentCard::new("agent-2", "Coder")
-            .with_capability(A2ACapability::new("coding"));
+        let card1 =
+            AgentCard::new("agent-1", "Reasoner").with_capability(A2ACapability::new("reasoning"));
+        let card2 =
+            AgentCard::new("agent-2", "Coder").with_capability(A2ACapability::new("coding"));
 
         discovery.register_local(card1).await.unwrap();
         discovery.register_local(card2).await.unwrap();

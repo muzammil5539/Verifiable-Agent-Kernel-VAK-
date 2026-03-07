@@ -160,8 +160,7 @@ impl std::fmt::Display for SwarmAgentId {
 // ============================================================================
 
 /// Role of an agent in the swarm
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum AgentRole {
     /// Leader agent that coordinates tasks
     Leader,
@@ -177,7 +176,6 @@ pub enum AgentRole {
     /// Custom role with a name
     Custom(String),
 }
-
 
 impl std::fmt::Display for AgentRole {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

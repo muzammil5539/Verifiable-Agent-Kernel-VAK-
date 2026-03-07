@@ -217,9 +217,7 @@ pub mod prelude {
     pub use crate::kernel::Kernel;
 
     // LLM integration types for library consumers
-    pub use crate::lib_integration::{
-        ToolCall, ToolDefinition, ToolResult, VakAgent, VakRuntime,
-    };
+    pub use crate::lib_integration::{ToolCall, ToolDefinition, ToolResult, VakAgent, VakRuntime};
 
     // Secrets management
     pub use crate::secrets::{SecretsManager, SecretsProvider};

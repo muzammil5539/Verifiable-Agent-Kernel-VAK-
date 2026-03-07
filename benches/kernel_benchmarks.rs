@@ -17,8 +17,8 @@
 //! - Secrets management with caching (Issue #37)
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use std::collections::HashMap;
 use rusqlite::Connection;
+use std::collections::HashMap;
 use tokio::runtime::Runtime;
 
 use vak::audit::{AuditDecision, AuditLogger};
@@ -447,7 +447,6 @@ fn bench_policy_validation(c: &mut Criterion) {
     });
 }
 
-
 /// Benchmark memory state operations across tiers (TST-005).
 ///
 /// Measures set/get performance for ephemeral and merkle tiers,
@@ -464,7 +463,11 @@ fn bench_memory_state_operations(c: &mut Criterion) {
         b.iter(|| {
             let key = agent_key("bench-agent", &format!("key_{}", i));
             manager
-                .set_state(&key, black_box(b"benchmark_value".to_vec()), StateTier::Ephemeral)
+                .set_state(
+                    &key,
+                    black_box(b"benchmark_value".to_vec()),
+                    StateTier::Ephemeral,
+                )
                 .unwrap();
             i += 1;
         })
@@ -486,7 +489,11 @@ fn bench_memory_state_operations(c: &mut Criterion) {
         b.iter(|| {
             let key = agent_key("bench-agent", &format!("merkle_key_{}", i));
             manager
-                .set_state(&key, black_box(b"verified_value".to_vec()), StateTier::Merkle)
+                .set_state(
+                    &key,
+                    black_box(b"verified_value".to_vec()),
+                    StateTier::Merkle,
+                )
                 .unwrap();
             i += 1;
         })
@@ -530,7 +537,12 @@ fn bench_audit_logging_grouped(c: &mut Criterion) {
     group.bench_function("verify_chain_10", |b| {
         let mut logger = AuditLogger::new();
         for i in 0..10 {
-            logger.log(&format!("agent-{}", i), "read", "/data/file.txt", AuditDecision::Allowed);
+            logger.log(
+                &format!("agent-{}", i),
+                "read",
+                "/data/file.txt",
+                AuditDecision::Allowed,
+            );
         }
         b.iter(|| {
             let _ = black_box(logger.verify_chain());
@@ -540,7 +552,12 @@ fn bench_audit_logging_grouped(c: &mut Criterion) {
     group.bench_function("verify_chain_100", |b| {
         let mut logger = AuditLogger::new();
         for i in 0..100 {
-            logger.log(&format!("agent-{}", i), "read", "/data/file.txt", AuditDecision::Allowed);
+            logger.log(
+                &format!("agent-{}", i),
+                "read",
+                "/data/file.txt",
+                AuditDecision::Allowed,
+            );
         }
         b.iter(|| {
             let _ = black_box(logger.verify_chain());
@@ -624,7 +641,7 @@ fn bench_migrations(c: &mut Criterion) {
 /// Measures entity insertion, relationship creation, traversal,
 /// and search performance on graphs of varying sizes.
 fn bench_knowledge_graph(c: &mut Criterion) {
-    use vak::memory::knowledge_graph::{Entity, KnowledgeGraph, Relationship, RelationType};
+    use vak::memory::knowledge_graph::{Entity, KnowledgeGraph, RelationType, Relationship};
 
     let mut group = c.benchmark_group("knowledge_graph");
 
@@ -699,8 +716,8 @@ fn bench_knowledge_graph(c: &mut Criterion) {
     group.bench_function("compute_hash", |b| {
         let mut kg = KnowledgeGraph::new("bench");
         for i in 0..50 {
-            let entity = Entity::new(format!("e_{}", i), "Type")
-                .with_property("key", format!("val_{}", i));
+            let entity =
+                Entity::new(format!("e_{}", i), "Type").with_property("key", format!("val_{}", i));
             kg.add_entity(entity).unwrap();
         }
 
@@ -796,10 +813,14 @@ fn bench_swarm_voting(c: &mut Criterion) {
     // Session creation
     group.bench_function("session_creation", |b| {
         b.iter(|| {
-            let proposal = Proposal::new("Test proposal")
-                .with_description("A test proposal for benchmarking");
+            let proposal =
+                Proposal::new("Test proposal").with_description("A test proposal for benchmarking");
             let config = VotingConfig::default();
-            black_box(VotingSession::new("bench-session".to_string(), proposal, config));
+            black_box(VotingSession::new(
+                "bench-session".to_string(),
+                proposal,
+                config,
+            ));
         })
     });
 
@@ -947,11 +968,7 @@ fn bench_episodic_memory(c: &mut Criterion) {
     group.bench_function("verify_chain_100", |b| {
         let mut memory = EpisodicMemory::new();
         for i in 0..100 {
-            memory.record_episode(
-                format!("action_{}", i),
-                format!("observation_{}", i),
-                None,
-            );
+            memory.record_episode(format!("action_{}", i), format!("observation_{}", i), None);
         }
         b.iter(|| black_box(memory.verify_chain().is_ok()))
     });

@@ -85,8 +85,7 @@ pub type StorageResult<T> = Result<T, StorageError>;
 // ============================================================================
 
 /// Types of storage backends
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum BackendType {
     /// In-memory storage (non-persistent, for testing)
     #[default]
@@ -98,7 +97,6 @@ pub enum BackendType {
     /// LevelDB/RocksDB-style key-value store
     KeyValue,
 }
-
 
 // ============================================================================
 // Storage Configuration

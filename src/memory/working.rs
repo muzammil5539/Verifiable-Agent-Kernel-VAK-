@@ -120,8 +120,7 @@ impl WorkingMemoryConfig {
 // ============================================================================
 
 /// Priority level for memory items
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 pub enum ItemPriority {
     /// Low priority - can be summarized early
     Low = 0,
@@ -133,7 +132,6 @@ pub enum ItemPriority {
     /// Critical - never automatically summarized
     Critical = 3,
 }
-
 
 /// Type of memory item
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

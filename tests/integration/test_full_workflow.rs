@@ -16,19 +16,22 @@ async fn test_full_agent_workflow() {
     // Test setup: Create mock components
     let session_id = uuid::Uuid::new_v4().to_string();
     let agent_id = uuid::Uuid::new_v4().to_string();
-    
+
     // Step 1: Simulate agent registration
     let registration_result = simulate_agent_registration(&agent_id).await;
-    assert!(registration_result.is_ok(), "Agent registration should succeed");
-    
+    assert!(
+        registration_result.is_ok(),
+        "Agent registration should succeed"
+    );
+
     // Step 2: Simulate policy evaluation
     let policy_result = simulate_policy_check(&agent_id, "read", "/data/test.txt").await;
     assert!(policy_result.allowed, "Read action should be allowed");
-    
+
     // Step 3: Simulate tool execution
     let execution_result = simulate_tool_execution(&agent_id, &session_id, "file_read").await;
     assert!(execution_result.success, "Tool execution should succeed");
-    
+
     // Step 4: Verify audit log was created
     let audit_entries = get_audit_entries(&session_id).await;
     assert!(!audit_entries.is_empty(), "Audit log should have entries");
@@ -38,11 +41,14 @@ async fn test_full_agent_workflow() {
 #[tokio::test]
 async fn test_policy_enforcement_blocks_unauthorized() {
     let agent_id = uuid::Uuid::new_v4().to_string();
-    
+
     // Try to access a protected resource
     let policy_result = simulate_policy_check(&agent_id, "delete", "/system/audit_log").await;
-    assert!(!policy_result.allowed, "Delete on audit_log should be denied");
-    
+    assert!(
+        !policy_result.allowed,
+        "Delete on audit_log should be denied"
+    );
+
     // Verify denial was logged
     assert!(policy_result.denial_logged, "Denial should be logged");
 }
@@ -52,7 +58,7 @@ async fn test_policy_enforcement_blocks_unauthorized() {
 async fn test_audit_chain_concurrent_integrity() {
     let audit_chain = Arc::new(RwLock::new(Vec::<AuditEntry>::new()));
     let mut handles = Vec::new();
-    
+
     // Spawn multiple tasks to add entries concurrently
     for i in 0..10 {
         let chain = audit_chain.clone();
@@ -69,12 +75,12 @@ async fn test_audit_chain_concurrent_integrity() {
         });
         handles.push(handle);
     }
-    
+
     // Wait for all tasks
     for handle in handles {
         handle.await.expect("Task should complete");
     }
-    
+
     // Verify all entries were added
     let chain = audit_chain.read().await;
     assert_eq!(chain.len(), 100, "Should have 100 entries");
@@ -84,22 +90,22 @@ async fn test_audit_chain_concurrent_integrity() {
 #[tokio::test]
 async fn test_checkpoint_and_rollback() {
     let mut state = MockKernelState::new();
-    
+
     // Add some initial state
     for i in 0..5 {
         state.add_entry(format!("entry-{}", i));
     }
-    
+
     // Create checkpoint
     let checkpoint = state.create_checkpoint("before-changes");
     assert_eq!(checkpoint.entry_count, 5);
-    
+
     // Add more entries
     for i in 5..10 {
         state.add_entry(format!("entry-{}", i));
     }
     assert_eq!(state.entry_count(), 10);
-    
+
     // Rollback to checkpoint
     state.rollback_to(&checkpoint);
     assert_eq!(state.entry_count(), 5, "Should rollback to 5 entries");
@@ -109,7 +115,7 @@ async fn test_checkpoint_and_rollback() {
 #[tokio::test]
 async fn test_time_range_audit_queries() {
     let mut audit_store = MockAuditStore::new();
-    
+
     // Add entries with different timestamps
     let base_time = 1700000000000i64;
     for i in 0..10 {
@@ -122,12 +128,12 @@ async fn test_time_range_audit_queries() {
             decision: "allow".to_string(),
         });
     }
-    
+
     // Query by time range
     let start = base_time + 3000;
     let end = base_time + 7000;
     let results = audit_store.query_by_time_range(start, end);
-    
+
     // Should include entries 3, 4, 5, 6, 7
     assert_eq!(results.len(), 5, "Should have 5 entries in range");
     for entry in &results {
@@ -139,17 +145,17 @@ async fn test_time_range_audit_queries() {
 #[tokio::test]
 async fn test_agent_memory_isolation() {
     let memory_manager = MockMemoryManager::new();
-    
+
     let agent1 = "agent-1";
     let agent2 = "agent-2";
-    
+
     // Agent 1 stores data
     memory_manager.store(agent1, "secret", "agent1_secret_value");
-    
+
     // Agent 2 should not be able to access Agent 1's data
     let result = memory_manager.retrieve(agent2, "secret");
     assert!(result.is_none(), "Agent 2 should not access Agent 1's data");
-    
+
     // Agent 1 can still access its own data
     let result = memory_manager.retrieve(agent1, "secret");
     assert_eq!(result, Some("agent1_secret_value".to_string()));
@@ -160,42 +166,51 @@ async fn test_agent_memory_isolation() {
 async fn test_rate_limiting_enforcement() {
     let rate_limiter = MockRateLimiter::new(10, std::time::Duration::from_secs(1));
     let agent_id = "rate-test-agent";
-    
+
     // First 10 requests should succeed
     for _ in 0..10 {
         assert!(rate_limiter.check(agent_id), "Request should be allowed");
     }
-    
+
     // 11th request should be rate limited
-    assert!(!rate_limiter.check(agent_id), "Request should be rate limited");
+    assert!(
+        !rate_limiter.check(agent_id),
+        "Request should be rate limited"
+    );
 }
 
 /// Test default deny policy behavior
 #[tokio::test]
 async fn test_default_deny_policy() {
     let policy_engine = MockPolicyEngine::new_default_deny();
-    
+
     // Unknown action should be denied
     let result = policy_engine.evaluate("unknown-agent", "unknown-action", "/unknown/resource");
-    assert!(!result.allowed, "Unknown action should be denied by default");
-    assert_eq!(result.reason, Some("Default deny: no matching policy".to_string()));
+    assert!(
+        !result.allowed,
+        "Unknown action should be denied by default"
+    );
+    assert_eq!(
+        result.reason,
+        Some("Default deny: no matching policy".to_string())
+    );
 }
 
 /// Test policy hot-reload functionality
 #[tokio::test]
 async fn test_policy_hot_reload() {
     let mut policy_manager = MockPolicyManager::new();
-    
+
     // Initial policy denies all
     policy_manager.load_policy("deny-all");
     assert!(!policy_manager.check("agent-1", "read", "/data"));
-    
+
     // Hot-reload a new policy that allows reads
     policy_manager.hot_reload("allow-reads");
-    
+
     // Now reads should be allowed
     assert!(policy_manager.check("agent-1", "read", "/data"));
-    
+
     // Writes should still be denied
     assert!(!policy_manager.check("agent-1", "write", "/data"));
 }
@@ -220,7 +235,7 @@ fn create_audit_entry(agent_id: String, action: String, resource: String) -> Aud
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64;
-    
+
     AuditEntry {
         id: uuid::Uuid::new_v4().to_string(),
         timestamp_ms,
@@ -248,15 +263,15 @@ impl MockKernelState {
             checkpoints: Vec::new(),
         }
     }
-    
+
     fn add_entry(&mut self, entry: String) {
         self.entries.push(entry);
     }
-    
+
     fn entry_count(&self) -> usize {
         self.entries.len()
     }
-    
+
     fn create_checkpoint(&mut self, label: &str) -> Checkpoint {
         let checkpoint = Checkpoint {
             label: label.to_string(),
@@ -265,7 +280,7 @@ impl MockKernelState {
         self.checkpoints.push(checkpoint.clone());
         checkpoint
     }
-    
+
     fn rollback_to(&mut self, checkpoint: &Checkpoint) {
         self.entries.truncate(checkpoint.entry_count);
     }
@@ -286,13 +301,15 @@ struct MockAuditStore {
 
 impl MockAuditStore {
     fn new() -> Self {
-        Self { entries: Vec::new() }
+        Self {
+            entries: Vec::new(),
+        }
     }
-    
+
     fn add_entry(&mut self, entry: AuditEntry) {
         self.entries.push(entry);
     }
-    
+
     fn query_by_time_range(&self, start: i64, end: i64) -> Vec<&AuditEntry> {
         self.entries
             .iter()
@@ -302,7 +319,9 @@ impl MockAuditStore {
 }
 
 struct MockMemoryManager {
-    stores: std::sync::Mutex<std::collections::HashMap<String, std::collections::HashMap<String, String>>>,
+    stores: std::sync::Mutex<
+        std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    >,
 }
 
 impl MockMemoryManager {
@@ -311,7 +330,7 @@ impl MockMemoryManager {
             stores: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
-    
+
     fn store(&self, agent_id: &str, key: &str, value: &str) {
         let mut stores = self.stores.lock().unwrap();
         stores
@@ -319,7 +338,7 @@ impl MockMemoryManager {
             .or_insert_with(std::collections::HashMap::new)
             .insert(key.to_string(), value.to_string());
     }
-    
+
     fn retrieve(&self, agent_id: &str, key: &str) -> Option<String> {
         let stores = self.stores.lock().unwrap();
         stores.get(agent_id)?.get(key).cloned()
@@ -340,7 +359,7 @@ impl MockRateLimiter {
             counts: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
-    
+
     fn check(&self, agent_id: &str) -> bool {
         let mut counts = self.counts.lock().unwrap();
         let count = counts.entry(agent_id.to_string()).or_insert(0);
@@ -367,7 +386,7 @@ impl MockPolicyEngine {
     fn new_default_deny() -> Self {
         Self { default_deny: true }
     }
-    
+
     fn evaluate(&self, _agent: &str, _action: &str, _resource: &str) -> PolicyResult {
         if self.default_deny {
             PolicyResult {
@@ -395,15 +414,15 @@ impl MockPolicyManager {
             current_policy: String::new(),
         }
     }
-    
+
     fn load_policy(&mut self, policy: &str) {
         self.current_policy = policy.to_string();
     }
-    
+
     fn hot_reload(&mut self, policy: &str) {
         self.current_policy = policy.to_string();
     }
-    
+
     fn check(&self, _agent: &str, action: &str, _resource: &str) -> bool {
         match self.current_policy.as_str() {
             "deny-all" => false,
@@ -441,7 +460,11 @@ struct ExecutionResult {
     success: bool,
 }
 
-async fn simulate_tool_execution(_agent_id: &str, _session_id: &str, _tool: &str) -> ExecutionResult {
+async fn simulate_tool_execution(
+    _agent_id: &str,
+    _session_id: &str,
+    _tool: &str,
+) -> ExecutionResult {
     ExecutionResult { success: true }
 }
 

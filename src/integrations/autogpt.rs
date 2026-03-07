@@ -1126,8 +1126,7 @@ pub struct VerificationOptions {
 }
 
 /// Risk level for operations
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 pub enum RiskLevel {
     /// Low risk, no special action needed
     #[default]
@@ -1139,7 +1138,6 @@ pub enum RiskLevel {
     /// Critical risk, should be blocked or escalated
     Critical,
 }
-
 
 /// Full verification result (INT-004)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1938,8 +1936,7 @@ mod tests {
     #[tokio::test]
     async fn test_callback_handler() {
         let handler = Arc::new(AutoGPTAuditHandler::new());
-        let adapter =
-            AutoGPTAdapter::new(AutoGPTConfig::default()).with_callback(handler.clone());
+        let adapter = AutoGPTAdapter::new(AutoGPTConfig::default()).with_callback(handler.clone());
 
         assert_eq!(adapter.callback_count(), 1);
 
@@ -1970,9 +1967,7 @@ mod tests {
         let eval = adapter.evaluate_plan(&plan, "agent-1").await.unwrap();
         assert!(eval.approved);
 
-        adapter
-            .complete_plan_with_status(&plan.plan_id, true)
-            .await;
+        adapter.complete_plan_with_status(&plan.plan_id, true).await;
 
         // Plan should be removed after completion
         let progress = adapter.get_plan_progress(&plan.plan_id).await;

@@ -96,8 +96,7 @@ pub struct ContentId {
 }
 
 /// Content codec types
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum Codec {
     /// Raw binary data
     #[default]
@@ -109,7 +108,6 @@ pub enum Codec {
     /// Protobuf (for compatibility)
     Protobuf,
 }
-
 
 impl ContentId {
     /// Create a new CID from content

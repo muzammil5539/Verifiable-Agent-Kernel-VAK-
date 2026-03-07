@@ -94,7 +94,11 @@ async fn test_audit_logging_throughput() {
     let log = audit_log.read().await;
     let throughput = log.len() as f64 / elapsed.as_secs_f64();
 
-    assert_eq!(log.len(), total_entries as usize, "All entries should be logged");
+    assert_eq!(
+        log.len(),
+        total_entries as usize,
+        "All entries should be logged"
+    );
     assert!(
         throughput > 500.0,
         "Audit logging throughput should exceed 500/s, got {:.0}/s",
@@ -133,7 +137,11 @@ async fn test_memory_operation_throughput() {
     let mem = memory.read().await;
     let throughput = mem.len() as f64 / elapsed.as_secs_f64();
 
-    assert_eq!(mem.len(), total_ops as usize, "All memory ops should complete");
+    assert_eq!(
+        mem.len(),
+        total_ops as usize,
+        "All memory ops should complete"
+    );
     assert!(
         throughput > 500.0,
         "Memory throughput should exceed 500/s, got {:.0}/s",
@@ -215,11 +223,7 @@ async fn test_concurrent_read_write_memory() {
 
     // Verify data consistency: all 20 keys should exist
     let data_final = data.read().await;
-    assert_eq!(
-        data_final.len(),
-        20,
-        "Should have exactly 20 unique keys"
-    );
+    assert_eq!(data_final.len(), 20, "Should have exactly 20 unique keys");
 }
 
 /// Test sustained operation over many iterations
@@ -256,10 +260,7 @@ async fn test_sustained_operation_stability() {
         iterations,
         "All iterations should be accounted for"
     );
-    assert!(
-        log.len() > 0,
-        "At least some operations should succeed"
-    );
+    assert!(log.len() > 0, "At least some operations should succeed");
 }
 
 // ============================================================================

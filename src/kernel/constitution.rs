@@ -159,7 +159,11 @@ pub struct Principle {
 
 impl Principle {
     /// Create a new principle
-    pub fn new(id: impl Into<String>, name: impl Into<String>, description: impl Into<String>) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
@@ -417,7 +421,8 @@ impl Constitution {
     /// Create the default safety constitution
     pub fn default_safety_constitution() -> Self {
         let mut constitution = Self::new("VAK Safety Constitution", "1.0.0");
-        constitution.description = "Fundamental safety principles for AI agent behavior".to_string();
+        constitution.description =
+            "Fundamental safety principles for AI agent behavior".to_string();
 
         // Principle 1: No harm
         let p1 = Principle::new(
@@ -611,7 +616,9 @@ impl Constitution {
         let mut rules: Vec<_> = self
             .rules
             .iter()
-            .filter(|r| r.enforcement_point == point || r.enforcement_point == EnforcementPoint::All)
+            .filter(|r| {
+                r.enforcement_point == point || r.enforcement_point == EnforcementPoint::All
+            })
             .collect();
         rules.sort_by(|a, b| b.priority.cmp(&a.priority));
         rules
@@ -701,7 +708,10 @@ impl ConstitutionalEngine {
     }
 
     /// Evaluate an action against the constitution
-    pub fn evaluate(&self, context: &serde_json::Value) -> ConstitutionResult<ConstitutionalDecision> {
+    pub fn evaluate(
+        &self,
+        context: &serde_json::Value,
+    ) -> ConstitutionResult<ConstitutionalDecision> {
         self.evaluate_at_point(context, None)
     }
 
@@ -756,7 +766,9 @@ impl ConstitutionalEngine {
                         field: self.extract_field_from_constraint(&rule.constraint),
                         value: self.extract_value_from_context(
                             context,
-                            &self.extract_field_from_constraint(&rule.constraint).unwrap_or_default(),
+                            &self
+                                .extract_field_from_constraint(&rule.constraint)
+                                .unwrap_or_default(),
                         ),
                     };
 
@@ -853,27 +865,27 @@ impl ConstitutionalEngine {
             }
             ConstraintOp::LessThan { field, value } => {
                 let ctx_value = self.get_field(context, field)?;
-                let num = ctx_value.as_f64().ok_or_else(|| {
-                    ConstitutionError::RuleEvaluationFailed {
-                        rule_id: String::new(),
-                        reason: format!("Field '{}' is not a number", field),
-                    }
-                })?;
+                let num =
+                    ctx_value
+                        .as_f64()
+                        .ok_or_else(|| ConstitutionError::RuleEvaluationFailed {
+                            rule_id: String::new(),
+                            reason: format!("Field '{}' is not a number", field),
+                        })?;
                 Ok(num < *value)
             }
             ConstraintOp::GreaterThan { field, value } => {
                 let ctx_value = self.get_field(context, field)?;
-                let num = ctx_value.as_f64().ok_or_else(|| {
-                    ConstitutionError::RuleEvaluationFailed {
-                        rule_id: String::new(),
-                        reason: format!("Field '{}' is not a number", field),
-                    }
-                })?;
+                let num =
+                    ctx_value
+                        .as_f64()
+                        .ok_or_else(|| ConstitutionError::RuleEvaluationFailed {
+                            rule_id: String::new(),
+                            reason: format!("Field '{}' is not a number", field),
+                        })?;
                 Ok(num > *value)
             }
-            ConstraintOp::Exists { field } => {
-                Ok(context.get(field).is_some())
-            }
+            ConstraintOp::Exists { field } => Ok(context.get(field).is_some()),
             ConstraintOp::All(constraints) => {
                 for c in constraints {
                     if !self.evaluate_constraint(c, context)? {
@@ -890,9 +902,7 @@ impl ConstitutionalEngine {
                 }
                 Ok(false)
             }
-            ConstraintOp::Not(constraint) => {
-                Ok(!self.evaluate_constraint(constraint, context)?)
-            }
+            ConstraintOp::Not(constraint) => Ok(!self.evaluate_constraint(constraint, context)?),
         }
     }
 
@@ -953,8 +963,12 @@ impl ConstitutionalEngine {
     /// Get evaluation statistics
     pub fn stats(&self) -> ConstitutionStats {
         ConstitutionStats {
-            total_evaluations: self.evaluation_count.load(std::sync::atomic::Ordering::Relaxed),
-            total_violations: self.violation_count.load(std::sync::atomic::Ordering::Relaxed),
+            total_evaluations: self
+                .evaluation_count
+                .load(std::sync::atomic::Ordering::Relaxed),
+            total_violations: self
+                .violation_count
+                .load(std::sync::atomic::Ordering::Relaxed),
             rule_count: self.constitution.rules.len(),
             principle_count: self.constitution.principles.len(),
             constitution_locked: self.constitution.locked,
@@ -1079,10 +1093,14 @@ mod tests {
 
         let engine = ConstitutionalEngine::new(ConstitutionConfig::default(), constitution);
 
-        let allowed = engine.evaluate(&serde_json::json!({"action": "read"})).unwrap();
+        let allowed = engine
+            .evaluate(&serde_json::json!({"action": "read"}))
+            .unwrap();
         assert!(allowed.is_allowed());
 
-        let denied = engine.evaluate(&serde_json::json!({"action": "write"})).unwrap();
+        let denied = engine
+            .evaluate(&serde_json::json!({"action": "write"}))
+            .unwrap();
         assert!(!denied.is_allowed());
     }
 
@@ -1252,10 +1270,7 @@ mod tests {
             enabled: false,
             ..ConstitutionConfig::default()
         };
-        let engine = ConstitutionalEngine::new(
-            config,
-            Constitution::default_safety_constitution(),
-        );
+        let engine = ConstitutionalEngine::new(config, Constitution::default_safety_constitution());
 
         let context = test_context("delete_system", "/system");
         let decision = engine.evaluate(&context).unwrap();
@@ -1293,9 +1308,7 @@ mod tests {
     fn test_engine_stats() {
         let engine = ConstitutionalEngine::with_default_constitution();
 
-        engine
-            .evaluate(&test_context("read", "/data"))
-            .unwrap();
+        engine.evaluate(&test_context("read", "/data")).unwrap();
         engine
             .evaluate(&test_context("delete_system", "/system"))
             .unwrap();
@@ -1320,6 +1333,9 @@ mod tests {
         );
 
         let result = constitution.add_rule(rule);
-        assert!(matches!(result, Err(ConstitutionError::InvalidConstitution(_))));
+        assert!(matches!(
+            result,
+            Err(ConstitutionError::InvalidConstitution(_))
+        ));
     }
 }

@@ -518,7 +518,6 @@ pub enum LogLevel {
     Error,
 }
 
-
 /// Policy engine configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyConfig {
@@ -570,7 +569,6 @@ pub enum DefaultPolicyDecision {
     #[default]
     Deny,
 }
-
 
 /// Resource limits configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]

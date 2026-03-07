@@ -558,7 +558,10 @@ mod reasoning_tests {
         };
 
         let result = host.verify_plan(&plan);
-        assert!(!result.allowed, "Custom critical file deletion should be denied");
+        assert!(
+            !result.allowed,
+            "Custom critical file deletion should be denied"
+        );
     }
 
     #[test]
