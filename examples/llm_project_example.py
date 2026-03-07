@@ -40,7 +40,7 @@ config = KernelConfig(
     security=SecurityConfig(
         enable_sandboxing=True,
         default_policy_effect="deny",       # deny by default — explicit allow
-        signature_verification=False,        # enable in production
+        signature_verification=True,         # enabled by default for security
         max_memory_bytes=256 * 1024 * 1024,  # 256 MB per tool
         sandbox_timeout_ms=10000,            # 10 s per tool call
     ),

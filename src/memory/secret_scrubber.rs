@@ -305,11 +305,19 @@ impl SecretScrubber {
 
     /// Detect all secrets in text
     pub fn detect(&self, text: &str) -> Vec<SecretDetection> {
+        self.detect_internal(text, true)
+    }
+
+    /// Internal detection logic with optional preview generation for performance
+    fn detect_internal(&self, text: &str, include_previews: bool) -> Vec<SecretDetection> {
         if !self.config.enabled {
             return Vec::new();
         }
 
         let mut detections = Vec::new();
+
+        // Only generate previews if explicitly requested OR if logging is enabled
+        let generate_previews = include_previews || self.config.log_detections;
 
         for compiled in &self.patterns {
             if compiled.confidence < self.config.min_confidence {
@@ -322,7 +330,11 @@ impl SecretScrubber {
                     pattern_type: compiled.pattern_type,
                     start: m.start(),
                     end: m.end(),
-                    preview: SecretDetection::create_preview(matched),
+                    preview: if generate_previews {
+                        SecretDetection::create_preview(matched)
+                    } else {
+                        String::new()
+                    },
                     confidence: compiled.confidence,
                 };
 
@@ -351,7 +363,7 @@ impl SecretScrubber {
             return text.to_string();
         }
 
-        let detections = self.detect(text);
+        let detections = self.detect_internal(text, false);
         if detections.is_empty() {
             return text.to_string();
         }
@@ -460,7 +472,7 @@ impl SecretScrubber {
 
     /// Get count of secrets in text
     pub fn count_secrets(&self, text: &str) -> usize {
-        self.detect(text).len()
+        self.detect_internal(text, false).len()
     }
 
     /// Create a scrubbing report
