@@ -133,7 +133,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 # Labels for container metadata
 LABEL org.opencontainers.image.title="VAK Kernel" \
       org.opencontainers.image.description="Verifiable Agent Kernel - Secure AI agent execution environment" \
-      org.opencontainers.image.version="0.1.0" \
+      org.opencontainers.image.version="1.0.0" \
       org.opencontainers.image.vendor="VAK Project" \
       org.opencontainers.image.url="https://github.com/muzammil5539/Verifiable-Agent-Kernel-VAK-" \
       org.opencontainers.image.source="https://github.com/muzammil5539/Verifiable-Agent-Kernel-VAK-" \

@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
-[![Status](https://img.shields.io/badge/status-beta-green.svg)](https://github.com/muzammil5539/Verifiable-Agent-Kernel-VAK-)
+[![Status](https://img.shields.io/badge/status-production--ready-brightgreen.svg)](https://github.com/muzammil5539/Verifiable-Agent-Kernel-VAK-)
 
 ---
 
@@ -32,6 +32,11 @@
 - [Architecture Documentation](ARCHITECTURE.md) — System design, module reference, data flow, security architecture
 - [API Reference](API.md) — Complete API reference for all modules (Rust & Python)
 - [Python SDK Guide](docs/python-sdk.md) — Getting started with the Python SDK
+- [Production Deployment Guide](docs/production-deployment.md) — Docker, Kubernetes, and Helm deployment
+- [Security Hardening Guide](docs/security-hardening.md) — Production security best practices
+- [Performance Tuning Guide](docs/performance-tuning.md) — Optimization and profiling
+- [Troubleshooting Guide](docs/troubleshooting.md) — Common issues and solutions
+- [Migration Guide](docs/migration-guide.md) — Upgrading from v0.x to v1.0
 - [Contributing Guide](CONTRIBUTING.md) — Development workflow and coding standards
 - [Changelog](CHANGELOG.md) — Version history
 
@@ -507,7 +512,7 @@ python examples/python_quickstart.py
 
 ## Development Roadmap
 
-### Current Status (v0.3 - Beta) — 100% Complete
+### Current Status (v1.0 - Production Ready) — 100% Complete
 
 **Completed Phases:**
 - ✅ Phase 1: Core Kernel Stability ("Iron Kernel")
@@ -518,15 +523,15 @@ python examples/python_quickstart.py
 - ✅ Security Layer
 - ✅ Testing Layer
 - ✅ P3 Future Features (ZK Proofs, Constitution, PRM Toolkit, Marketplace)
+- ✅ Full Production Documentation
 
-**v0.3 Additions:**
-- ✅ Full Test Coverage Infrastructure (tarpaulin config, 80%+ threshold enforcement)
-- ✅ Comprehensive CI/CD Pipeline (build, test, coverage, WASM skills, Python SDK)
-- ✅ Cross-Module Integration Tests (policy+audit, memory+audit, reasoner+policy, swarm+audit)
-- ✅ Stress & Load Testing Suite (throughput, concurrency, latency, resource exhaustion)
-- ✅ Performance Profiling Tooling (benchmarks, flamegraph, compile timing, binary analysis)
-- ✅ Enhanced Security Scanning (dependency freshness, WASM integrity, security summary)
-- ✅ Infrastructure Tooling (Makefile, perf-profile script)
+**v1.0 Additions:**
+- ✅ Production Deployment Guide (Docker, Kubernetes, Helm)
+- ✅ Security Hardening Guide (defense-in-depth, compliance)
+- ✅ Performance Tuning Guide (benchmarking, optimization, profiling)
+- ✅ Troubleshooting Guide (diagnostics, common issues)
+- ✅ Migration Guide (v0.x to v1.0 upgrade path)
+- ✅ Version 1.0.0 release across all artifacts
 
 **Documentation:**
 - ✅ Architecture Documentation (DOC-001)
@@ -560,6 +565,7 @@ python examples/python_quickstart.py
 | CI/CD Pipeline | ✅ Complete | 100% |
 | Code Coverage | ✅ Complete | 100% |
 | Infrastructure Tooling | ✅ Complete | 100% |
+| Production Documentation | ✅ Complete | 100% |
 
 ### Roadmap by Priority
 
@@ -650,8 +656,8 @@ python examples/python_quickstart.py
 
 - **v0.1 (Alpha)**: Core kernel, policy engine, audit logging, neuro-symbolic layer ✅
 - **v0.2 (Stable)**: Complete ecosystem integrations, Python SDK stable ✅
-- **v0.3 (Current)**: Full test coverage, infrastructure tooling, CI/CD pipeline ✅
-- **v1.0**: Production-ready with full documentation
+- **v0.3 (Beta)**: Full test coverage, infrastructure tooling, CI/CD pipeline ✅
+- **v1.0 (Current)**: Production-ready with full documentation ✅
 
 ---
 

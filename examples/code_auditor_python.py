@@ -18,7 +18,7 @@ import hashlib
 import re
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum, auto
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -71,7 +71,7 @@ class Episode:
     """Represents a single episode in the agent's memory."""
     episode_type: EpisodeType
     content: str
-    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     hash: str = field(default="")
     prev_hash: str = field(default="")
 
@@ -126,6 +126,52 @@ class CodeAuditorConfig:
         ".pypirc",
     ])
     max_files: int = 100
+
+    # Vulnerability detection patterns
+    secret_patterns: List[Tuple[str, str]] = field(default_factory=lambda: [
+        ("api_key", "API key"),
+        ("apikey", "API key"),
+        ("api-key", "API key"),
+        ("secret_key", "Secret key"),
+        ("secretkey", "Secret key"),
+        ("password", "Password"),
+        ("passwd", "Password"),
+        ("private_key", "Private key"),
+        ("access_token", "Access token"),
+        ("auth_token", "Auth token"),
+        ("bearer", "Bearer token"),
+        ("aws_secret", "AWS secret"),
+        ("database_url", "Database URL"),
+    ])
+
+    sql_injection_patterns: List[Tuple[str, str]] = field(default_factory=lambda: [
+        (r'format!\s*\(\s*"SELECT', "String formatting in SQL SELECT"),
+        (r'format!\s*\(\s*"INSERT', "String formatting in SQL INSERT"),
+        (r'format!\s*\(\s*"UPDATE', "String formatting in SQL UPDATE"),
+        (r'format!\s*\(\s*"DELETE', "String formatting in SQL DELETE"),
+        (r'f"SELECT.*\{', "f-string in SQL SELECT (Python)"),
+        (r'f"INSERT.*\{', "f-string in SQL INSERT (Python)"),
+        (r'execute\s*\(\s*f"', "execute with f-string"),
+        (r'\.format\s*\(.*SELECT', ".format() in SQL query"),
+        (r'\+\s*["\']SELECT', "String concatenation in SQL"),
+    ])
+
+    input_validation_patterns: List[Tuple[str, str, FindingSeverity]] = field(default_factory=lambda: [
+        (r'\.unwrap\(\)', "Unchecked unwrap", FindingSeverity.MEDIUM),
+        (r'\.expect\(', "Consider proper error handling instead of expect", FindingSeverity.LOW),
+        (r'unsafe\s*\{', "Unsafe code block", FindingSeverity.HIGH),
+        (r'\beval\s*\(', "Use of eval() is dangerous", FindingSeverity.CRITICAL),
+        (r'\bexec\s*\(', "Use of exec() requires careful validation", FindingSeverity.HIGH),
+    ])
+
+    error_handling_patterns: List[Tuple[str, str, FindingSeverity]] = field(default_factory=lambda: [
+        (r'let\s+_\s*=', "Silently discarding Result", FindingSeverity.LOW),
+        (r'panic!\s*\(', "Explicit panic", FindingSeverity.HIGH),
+        (r'todo!\s*\(\)', "Unimplemented code (todo!)", FindingSeverity.HIGH),
+        (r'unimplemented!\s*\(\)', "Unimplemented code", FindingSeverity.HIGH),
+        (r'except:\s*$', "Bare except clause (Python)", FindingSeverity.MEDIUM),
+        (r'except\s+Exception:', "Catching broad Exception", FindingSeverity.LOW),
+    ])
 
 
 # =============================================================================
@@ -228,7 +274,7 @@ class AuditLogger:
         decision: str
     ) -> AuditLogEntry:
         """Log an action with cryptographic hash chaining."""
-        timestamp = datetime.utcnow().isoformat()
+        timestamp = datetime.now(timezone.utc).isoformat()
         prev_hash = self.entries[-1].hash if self.entries else self._genesis_hash
 
         # Compute hash
@@ -392,7 +438,7 @@ class CodeAuditor:
         ]
 
         for line_num, line in enumerate(lines, 1):
-            for pattern, desc in patterns:
+            for pattern, desc in self.config.sql_injection_patterns:
                 if re.search(pattern, line, re.IGNORECASE):
                     finding = CodeFinding(
                         id=f"SQL-{file_path.replace('/', '_')}-{line_num}",
@@ -479,7 +525,7 @@ class CodeAuditor:
         ]
 
         for line_num, line in enumerate(lines, 1):
-            for pattern, desc, severity in patterns:
+            for pattern, desc, severity in self.config.input_validation_patterns:
                 if re.search(pattern, line):
                     finding = CodeFinding(
                         id=f"INPUT-{file_path.replace('/', '_')}-{line_num}",
@@ -514,7 +560,7 @@ class CodeAuditor:
         ]
 
         for line_num, line in enumerate(lines, 1):
-            for pattern, desc, severity in patterns:
+            for pattern, desc, severity in self.config.error_handling_patterns:
                 if re.search(pattern, line):
                     finding = CodeFinding(
                         id=f"ERR-{file_path.replace('/', '_')}-{line_num}",
@@ -540,7 +586,7 @@ class CodeAuditor:
 
         return {
             "session_id": str(uuid.uuid4()),
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "total_steps": self.step_count,
             "files_analyzed": self.files_analyzed.copy(),
             "findings_count": len(self.findings),
@@ -581,14 +627,14 @@ def process_input(data):
     result = eval(data)  # Dangerous eval!
     return result
 
-def incomplete_feature():
-    # TODO: implement this
-    pass
+def incomplete_feature(data):
+    # Dangerous: executing arbitrary code
+    exec(data)
 
 def ignore_error():
     try:
         risky_operation()
-    except:  # Bare except!
+    except Exception:  # Catching Exception
         pass
 '''
 

@@ -472,6 +472,8 @@ VAK/
 - [Main README](../README.md) -- Full project documentation
 - [Architecture Documentation](../ARCHITECTURE.md) -- System design and module reference
 - [API Reference](../API.md) -- Complete API reference (Rust & Python)
+- [Production Deployment Guide](production-deployment.md) -- Docker, Kubernetes, Helm deployment
+- [Troubleshooting Guide](troubleshooting.md) -- Common issues and solutions
 - [CONTRIBUTING.md](../CONTRIBUTING.md) -- Contribution guidelines
 - [CHANGELOG.md](../CHANGELOG.md) -- Version history
 - [examples/](../examples/) -- Usage examples (Rust and Python)

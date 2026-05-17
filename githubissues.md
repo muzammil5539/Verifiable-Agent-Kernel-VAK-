@@ -2,8 +2,8 @@
 
 **Generated**: February 1, 2026  
 **Repository**: Verifiable Agent Kernel (VAK) / Exo-Cortex  
-**Version**: v0.1 (Alpha)  
-**Last Updated**: February 10, 2026
+**Version**: v1.0 (Production Ready)
+**Last Updated**: February 13, 2026
 
 ---
 

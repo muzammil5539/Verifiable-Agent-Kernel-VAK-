@@ -7,7 +7,7 @@ description: Instructions for releasing and publishing the VAK project to crates
 
 This skill provides instructions for publishing new releases of the VAK project.
 
-**Current Status**: Alpha (v0.1.0) - Internal development, not yet published.
+**Current Status**: Production Ready (v1.0.0) - Ready for publishing.
 
 ## Prerequisites
 

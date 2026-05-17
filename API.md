@@ -1,6 +1,6 @@
 # VAK API Reference
 
-> **Verifiable Agent Kernel (VAK) v0.1.0** -- Complete API Reference
+> **Verifiable Agent Kernel (VAK) v1.0.0** -- Complete API Reference
 
 ---
 
@@ -97,8 +97,8 @@ use vak::prelude::*;
 **Library version:**
 
 ```rust
-let version_str: &str = vak::VERSION;           // "0.1.0"
-let (major, minor, patch) = vak::version();      // (0, 1, 0)
+let version_str: &str = vak::VERSION;           // "1.0.0"
+let (major, minor, patch) = vak::version();      // (1, 0, 0)
 ```
 
 ---
