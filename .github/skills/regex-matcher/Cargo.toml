@@ -9,6 +9,7 @@ license = "MIT"
 crate-type = ["cdylib"]
 
 [dependencies]
+lol_alloc = "0.4.1"
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 

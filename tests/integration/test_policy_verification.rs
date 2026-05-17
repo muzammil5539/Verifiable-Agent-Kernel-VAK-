@@ -112,7 +112,10 @@ mod abac_verification_tests {
 
         let c = ctx("agent-1", "user");
         let decision = engine.evaluate("data/file.txt", "read", &c);
-        assert!(decision.allowed, "High-priority allow should override low-priority deny");
+        assert!(
+            decision.allowed,
+            "High-priority allow should override low-priority deny"
+        );
     }
 
     /// TST-003: Verify condition-based policies work with attribute matching.
@@ -181,8 +184,16 @@ mod abac_verification_tests {
             }
         }
 
-        assert!(allowed <= 4, "Should allow at most burst_size + 1 requests, got {}", allowed);
-        assert!(denied >= 6, "Should deny most excess requests, got {}", denied);
+        assert!(
+            allowed <= 4,
+            "Should allow at most burst_size + 1 requests, got {}",
+            allowed
+        );
+        assert!(
+            denied >= 6,
+            "Should deny most excess requests, got {}",
+            denied
+        );
     }
 
     /// TST-003: Verify wildcard patterns work correctly.
@@ -235,9 +246,7 @@ mod abac_verification_tests {
 /// Tests for Cedar enforcer
 #[cfg(test)]
 mod cedar_enforcer_tests {
-    use vak::policy::{
-        Action, CedarEnforcer, EnforcerConfig, Principal, Resource,
-    };
+    use vak::policy::{Action, CedarEnforcer, EnforcerConfig, Principal, Resource};
 
     /// TST-003: Cedar enforcer with no policies defaults to deny.
     #[tokio::test]
@@ -273,7 +282,10 @@ rules:
     action: "*"
     resource: "*.secret\""
 "#;
-        enforcer.load_policies_from_str(policies_yaml).await.unwrap();
+        enforcer
+            .load_policies_from_str(policies_yaml)
+            .await
+            .unwrap();
 
         let p = Principal::agent("agent-1");
         let a = Action::new("File", "read");
@@ -330,7 +342,10 @@ rules:
     action: "*"
     resource: "*"
 "#;
-        enforcer.load_policies_from_str(policies_yaml).await.unwrap();
+        enforcer
+            .load_policies_from_str(policies_yaml)
+            .await
+            .unwrap();
 
         let decision = enforcer
             .authorize(
@@ -343,7 +358,10 @@ rules:
             .unwrap();
 
         assert!(decision.allowed);
-        assert!(decision.matched_policy.is_some(), "Should track matched policy");
+        assert!(
+            decision.matched_policy.is_some(),
+            "Should track matched policy"
+        );
     }
 }
 
@@ -359,7 +377,10 @@ mod policy_analyzer_tests {
     async fn test_analyzer_default_invariants() {
         let analyzer = PolicyAnalyzer::new(AnalyzerConfig::default());
         let invariants = analyzer.list_invariants().await;
-        assert!(!invariants.is_empty(), "Should have default safety invariants");
+        assert!(
+            !invariants.is_empty(),
+            "Should have default safety invariants"
+        );
     }
 
     /// TST-003: Analyzing an empty policy set succeeds without violations.
@@ -577,7 +598,10 @@ mod constraint_verification_tests {
         ctx.insert("b".to_string(), 10.into());
 
         let result = verifier.verify_all(&constraints, &ctx).unwrap();
-        assert!(result.all_satisfied(), "All constraints should be satisfied");
+        assert!(
+            result.all_satisfied(),
+            "All constraints should be satisfied"
+        );
         assert_eq!(result.results.len(), 2);
         assert_eq!(result.satisfied_count(), 2);
     }

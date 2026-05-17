@@ -301,11 +301,7 @@ async fn test_swarm_consensus_audited() {
         agent_id: "swarm-coordinator".to_string(),
         action: "consensus_reached".to_string(),
         resource: "/swarm/proposal-001".to_string(),
-        decision: format!(
-            "approved_{}_of_{}",
-            approve_count,
-            agents.len()
-        ),
+        decision: format!("approved_{}_of_{}", approve_count, agents.len()),
         timestamp_ms: current_timestamp_ms(),
         subsystem: "swarm".to_string(),
     });
@@ -425,9 +421,7 @@ async fn test_error_propagation_across_subsystems() {
     // Verify denial was properly audited
     let audit_entries = session.get_audit_entries();
     assert!(
-        audit_entries
-            .iter()
-            .any(|e| e.decision == "denied"),
+        audit_entries.iter().any(|e| e.decision == "denied"),
         "Policy denial must be audited"
     );
 }
@@ -487,10 +481,7 @@ async fn test_max_concurrent_agents() {
     let mut sessions = Vec::new();
 
     for i in 0..max_agents {
-        let session = MockSession::new(
-            &format!("session-{}", i),
-            &format!("agent-{}", i),
-        );
+        let session = MockSession::new(&format!("session-{}", i), &format!("agent-{}", i));
         sessions.push(session);
     }
 
@@ -567,9 +558,7 @@ async fn test_interleaved_operation_hash_chain() {
     // Verify all subsystems are represented
     let mut subsystem_counts = HashMap::new();
     for entry in log.iter() {
-        *subsystem_counts
-            .entry(entry.subsystem.clone())
-            .or_insert(0) += 1;
+        *subsystem_counts.entry(entry.subsystem.clone()).or_insert(0) += 1;
     }
     assert_eq!(subsystem_counts.len(), 5, "All 5 subsystems should appear");
     for (subsystem, count) in &subsystem_counts {
@@ -723,13 +712,11 @@ impl MockSession {
     }
 
     fn is_active(&self) -> bool {
-        self.active
-            .load(std::sync::atomic::Ordering::Relaxed)
+        self.active.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn step_count(&self) -> u32 {
-        self.steps
-            .load(std::sync::atomic::Ordering::Relaxed)
+        self.steps.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn tool_execution_count(&self) -> u32 {

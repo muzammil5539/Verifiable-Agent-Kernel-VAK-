@@ -79,9 +79,24 @@ async fn test_audit_logging_captures_decisions() {
     let mut logger = AuditLogger::new();
 
     // Log multiple entries
-    logger.log("agent-001", "read", "/data/file1.txt", AuditDecision::Allowed);
-    logger.log("agent-001", "write", "/data/file1.txt", AuditDecision::Denied);
-    logger.log("agent-002", "read", "/data/file2.txt", AuditDecision::Allowed);
+    logger.log(
+        "agent-001",
+        "read",
+        "/data/file1.txt",
+        AuditDecision::Allowed,
+    );
+    logger.log(
+        "agent-001",
+        "write",
+        "/data/file1.txt",
+        AuditDecision::Denied,
+    );
+    logger.log(
+        "agent-002",
+        "read",
+        "/data/file2.txt",
+        AuditDecision::Allowed,
+    );
 
     // Verify: All entries are logged
     let entries = logger.load_all_entries().unwrap();
@@ -125,8 +140,16 @@ async fn test_rate_limiting_prevents_dos() {
     }
 
     // Verify: Some requests were rate limited
-    assert!(allowed_count <= 5, "Too many requests allowed: {}", allowed_count);
-    assert!(denied_count >= 5, "Not enough requests denied: {}", denied_count);
+    assert!(
+        allowed_count <= 5,
+        "Too many requests allowed: {}",
+        allowed_count
+    );
+    assert!(
+        denied_count >= 5,
+        "Not enough requests denied: {}",
+        denied_count
+    );
 }
 
 /// Test: Multiple agents can operate concurrently
@@ -238,7 +261,10 @@ async fn test_audit_chain_integrity_under_load() {
 
     // Verify: Chain integrity is maintained
     assert_eq!(logger.load_all_entries().unwrap().len(), 1000);
-    assert!(logger.verify_chain().is_ok(), "Audit chain integrity violated");
+    assert!(
+        logger.verify_chain().is_ok(),
+        "Audit chain integrity violated"
+    );
 }
 
 /// Test: Error recovery - policy engine handles malformed input gracefully

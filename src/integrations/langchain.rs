@@ -680,9 +680,10 @@ impl LangChainAdapter {
         let risky_actions = ["delete", "write", "execute", "modify", "remove"];
         let action_lower = action.to_lowercase();
         if risky_actions.iter().any(|r| action_lower.contains(r))
-            && (ctx.reasoning_steps.len() < 3 || !ctx.has_plan) {
-                score -= 0.2;
-            }
+            && (ctx.reasoning_steps.len() < 3 || !ctx.has_plan)
+        {
+            score -= 0.2;
+        }
 
         score.clamp(0.0, 1.0)
     }
@@ -848,7 +849,7 @@ impl LlmCall {
         ActionContext::new(ActionType::LlmCall, &self.model, agent_id)
             .with_metadata("request_id", &self.request_id)
             .with_metadata("model", &self.model)
-            .with_metadata("message_count", &self.messages.len().to_string())
+            .with_metadata("message_count", self.messages.len().to_string())
     }
 }
 
@@ -1198,15 +1199,8 @@ impl LangChainAdapter {
         // Step 4: Record & notify
         match result {
             Ok(output) => {
-                self.record_tool_result(
-                    tool_call,
-                    agent_id,
-                    true,
-                    Some(output),
-                    None,
-                    duration_ms,
-                )
-                .await;
+                self.record_tool_result(tool_call, agent_id, true, Some(output), None, duration_ms)
+                    .await;
                 Ok(ToolExecutionRecord {
                     tool_call: tool_call.clone(),
                     agent_id: agent_id.to_string(),
@@ -1348,7 +1342,10 @@ mod tests {
     async fn test_llm_interception_blocked_model() {
         let mut config = LangChainConfig::default();
         config.intercept_llm = true;
-        config.base.blocked_actions.push("llm:dangerous-model".to_string());
+        config
+            .base
+            .blocked_actions
+            .push("llm:dangerous-model".to_string());
         let adapter = LangChainAdapter::new(config);
 
         let call = LlmCall::new("dangerous-model").with_message("user", "test");
@@ -1368,7 +1365,14 @@ mod tests {
 
         let call = ToolCall::new("test", "action");
         let _ = adapter
-            .record_tool_result(&call, "agent-1", true, Some(serde_json::json!(42)), None, 100)
+            .record_tool_result(
+                &call,
+                "agent-1",
+                true,
+                Some(serde_json::json!(42)),
+                None,
+                100,
+            )
             .await;
 
         assert_eq!(handler.record_count().await, 1);
@@ -1411,8 +1415,8 @@ mod tests {
 
     #[test]
     fn test_llm_token_estimation() {
-        let call = LlmCall::new("gpt-4")
-            .with_message("user", "Hello world, this is a test message");
+        let call =
+            LlmCall::new("gpt-4").with_message("user", "Hello world, this is a test message");
 
         assert!(call.estimated_tokens() > 0);
     }

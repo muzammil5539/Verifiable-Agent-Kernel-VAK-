@@ -712,11 +712,7 @@ impl ToolHandler for VerifyPlanToolHandler {
             .iter()
             .enumerate()
             .map(|(i, action)| {
-                let target = params
-                    .targets
-                    .get(i)
-                    .map(|s| s.as_str())
-                    .unwrap_or("*");
+                let target = params.targets.get(i).map(|s| s.as_str()).unwrap_or("*");
                 (action.as_str(), target)
             })
             .collect();
@@ -861,22 +857,17 @@ impl ToolHandler for ExecuteSkillToolHandler {
         // Attempt to load skill from registry
         let skills_dir = std::path::PathBuf::from("./skills");
         if skills_dir.exists() {
-            let mut registry =
-                crate::sandbox::SkillRegistry::new_permissive_dev(skills_dir);
+            let mut registry = crate::sandbox::SkillRegistry::new_permissive_dev(skills_dir);
             if let Ok(_ids) = registry.load_all_skills() {
                 if let Some(skill) = registry.get_skill_by_name(&params.skill_id) {
-                    let input_str = serde_json::to_string_pretty(&params.input)
-                        .unwrap_or_default();
+                    let input_str = serde_json::to_string_pretty(&params.input).unwrap_or_default();
                     return Ok(ToolCallResult {
                         content: vec![ContentItem::Text {
                             text: format!(
                                 "Skill '{}' (v{}) dispatched for execution.\n\
                                  Description: {}\n\
                                  Input: {}",
-                                skill.name,
-                                skill.version,
-                                skill.description,
-                                input_str,
+                                skill.name, skill.version, skill.description, input_str,
                             ),
                         }],
                         is_error: false,

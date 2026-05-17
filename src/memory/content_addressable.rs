@@ -118,7 +118,6 @@ pub enum HashAlgorithm {
     Sha512,
 }
 
-
 impl ContentId {
     /// Create a new ContentId from raw hash bytes
     pub fn new(algorithm: HashAlgorithm, hash: Vec<u8>) -> Self {

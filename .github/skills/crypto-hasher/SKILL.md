@@ -1,5 +1,5 @@
 ---
-name: crypto-hash
+name: crypto-hasher
 description: WASM skill providing cryptographic hashing operations for VAK agents.
 ---
 
@@ -18,7 +18,7 @@ This skill provides secure hashing operations for:
 
 ```bash
 # Build for WASM target
-cargo build -p crypto-hash --target wasm32-unknown-unknown --release
+cargo build -p crypto-hasher --target wasm32-unknown-unknown --release
 
 # Output location
 # target/wasm32-unknown-unknown/release/crypto_hash.wasm
@@ -44,7 +44,7 @@ This skill runs in the VAK WASM sandbox with:
 
 ```rust
 // From VAK kernel
-let hash = kernel.execute_skill("crypto-hash", "sha256_hex", &data).await?;
+let hash = kernel.execute_skill("crypto-hasher", "sha256_hex", &data).await?;
 ```
 
 ## Security Considerations

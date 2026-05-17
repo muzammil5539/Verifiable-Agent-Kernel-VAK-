@@ -1,5 +1,5 @@
 [package]
-name = "crypto-hash"
+name = "crypto-hasher"
 version = "0.1.0"
 edition = "2021"
 description = "Cryptographic hashing skill for VAK - supports SHA-256, SHA-512, and BLAKE3"
@@ -9,8 +9,10 @@ license = "MIT"
 crate-type = ["cdylib"]
 
 [dependencies]
+lol_alloc = "0.4.1"
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+sha2.workspace = true
 
 [features]
 default = []

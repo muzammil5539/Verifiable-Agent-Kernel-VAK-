@@ -40,7 +40,10 @@ fn test_audit_chain_hash_linking() {
     assert_eq!(entries.len(), 3);
 
     // First entry has prev_hash of zeros (genesis)
-    assert_eq!(&entries[0].prev_hash, "0000000000000000000000000000000000000000000000000000000000000000");
+    assert_eq!(
+        &entries[0].prev_hash,
+        "0000000000000000000000000000000000000000000000000000000000000000"
+    );
 
     // Second entry's prev_hash should match first entry's hash
     assert_eq!(entries[1].prev_hash, entries[0].hash);
@@ -74,8 +77,18 @@ fn test_audit_logging_with_signatures() {
     let mut logger = AuditLogger::new_with_signing();
 
     // Log entries with automatic signing
-    logger.log("agent-001", "read", "/data/file.txt", AuditDecision::Allowed);
-    logger.log("agent-001", "write", "/data/file.txt", AuditDecision::Denied);
+    logger.log(
+        "agent-001",
+        "read",
+        "/data/file.txt",
+        AuditDecision::Allowed,
+    );
+    logger.log(
+        "agent-001",
+        "write",
+        "/data/file.txt",
+        AuditDecision::Denied,
+    );
 
     // Verify signatures
     let pk = logger.public_key().unwrap().to_string();
@@ -90,7 +103,12 @@ fn test_audit_logging_with_signatures() {
 fn test_signature_verification_unsigned() {
     // Logger without signing
     let mut logger = AuditLogger::new();
-    logger.log("agent-001", "read", "/data/file.txt", AuditDecision::Allowed);
+    logger.log(
+        "agent-001",
+        "read",
+        "/data/file.txt",
+        AuditDecision::Allowed,
+    );
 
     // Entries should not have signatures
     let entries = logger.load_all_entries().unwrap();
@@ -105,7 +123,12 @@ fn test_audit_filtering_by_agent() {
     // Log entries from different agents
     for i in 0..30 {
         let agent = format!("agent-{:03}", i % 3);
-        logger.log(&agent, "action", format!("/resource/{}", i), AuditDecision::Allowed);
+        logger.log(
+            &agent,
+            "action",
+            format!("/resource/{}", i),
+            AuditDecision::Allowed,
+        );
     }
 
     // Get entries for a specific agent
@@ -125,7 +148,12 @@ fn test_audit_filtering_by_time() {
 
     // Log entries
     for i in 0..10 {
-        logger.log("agent-001", "action", format!("/resource/{}", i), AuditDecision::Allowed);
+        logger.log(
+            "agent-001",
+            "action",
+            format!("/resource/{}", i),
+            AuditDecision::Allowed,
+        );
     }
 
     // All entries should have timestamps

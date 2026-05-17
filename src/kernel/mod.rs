@@ -52,9 +52,9 @@ pub use self::rate_limiter::{LimitResult, RateLimitConfig, RateLimiter, Resource
 
 // Re-export Constitution Protocol types (FUT-002)
 pub use self::constitution::{
-    ConstitutionConfig, ConstitutionError, ConstitutionResult, ConstitutionStats,
-    ConstitutionalDecision, ConstitutionalEngine, ConstitutionalRule, Constitution,
-    ConstraintOp, EnforcementPoint, Principle, RuleViolation,
+    Constitution, ConstitutionConfig, ConstitutionError, ConstitutionResult, ConstitutionStats,
+    ConstitutionalDecision, ConstitutionalEngine, ConstitutionalRule, ConstraintOp,
+    EnforcementPoint, Principle, RuleViolation,
 };
 
 use std::path::PathBuf;
@@ -339,12 +339,8 @@ impl Kernel {
         }
 
         // Step 2: Log the request
-        let audit_entry = AuditEntry::new(
-            *agent_id,
-            *session_id,
-            request.tool_name.clone(),
-            decision,
-        );
+        let audit_entry =
+            AuditEntry::new(*agent_id, *session_id, request.tool_name.clone(), decision);
 
         {
             let mut log = self.audit_log.write().await;

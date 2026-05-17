@@ -94,9 +94,7 @@ mod kernel_type_properties {
 
 mod policy_properties {
     use super::*;
-    use vak::policy::{
-        PolicyContext, PolicyEffect, PolicyEngine, PolicyRule,
-    };
+    use vak::policy::{PolicyContext, PolicyEffect, PolicyEngine, PolicyRule};
 
     proptest! {
         /// Empty policy engine always denies (default-deny)
@@ -320,8 +318,8 @@ mod audit_properties {
 mod memory_properties {
     use super::*;
     use vak::memory::{
-        agent_key, InMemoryEphemeral, EphemeralStorage, NamespacedKey,
-        StateManager, StateManagerConfig, StateTier, StateValue,
+        agent_key, EphemeralStorage, InMemoryEphemeral, NamespacedKey, StateManager,
+        StateManagerConfig, StateTier, StateValue,
     };
 
     proptest! {
@@ -524,9 +522,8 @@ mod serialization_properties {
 mod integration_properties {
     use super::*;
     use vak::lib_integration::{
-        ToolDefinition, builtin_tool_definitions,
-        format_openai_tool_results,
-        format_anthropic_tool_results, ToolResult,
+        builtin_tool_definitions, format_anthropic_tool_results, format_openai_tool_results,
+        ToolDefinition, ToolResult,
     };
 
     proptest! {
@@ -632,7 +629,7 @@ mod integration_properties {
 
 mod secrets_properties {
     use super::*;
-    use vak::secrets::{MemorySecretsProvider, SecretsProvider, SecretsError};
+    use vak::secrets::{MemorySecretsProvider, SecretsError, SecretsProvider};
 
     proptest! {
         /// Set then get returns the same value

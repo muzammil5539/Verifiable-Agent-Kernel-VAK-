@@ -83,8 +83,8 @@ jobs:
       - name: Build calculator skill
         run: cargo build -p calculator --target wasm32-unknown-unknown --release
 
-      - name: Build crypto-hash skill
-        run: cargo build -p crypto-hash --target wasm32-unknown-unknown --release
+      - name: Build crypto-hasher skill
+        run: cargo build -p crypto-hasher --target wasm32-unknown-unknown --release
 
       - name: Build json-validator skill
         run: cargo build -p json-validator --target wasm32-unknown-unknown --release

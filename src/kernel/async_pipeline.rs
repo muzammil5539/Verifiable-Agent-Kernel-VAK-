@@ -218,8 +218,9 @@ impl PipelineConfig {
 // ============================================================================
 
 /// Priority level for requests
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default,
+)]
 pub enum RequestPriority {
     /// Low priority (background tasks)
     Low = 0,
@@ -231,7 +232,6 @@ pub enum RequestPriority {
     /// Critical priority (system operations)
     Critical = 3,
 }
-
 
 /// A request envelope containing the tool request and metadata
 #[derive(Debug)]

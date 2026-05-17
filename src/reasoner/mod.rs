@@ -157,12 +157,13 @@ pub use constrained_decoding::{
 
 // Re-export Zero-Knowledge Proof types (FUT-001)
 pub use zk_proof::{
-    ProofConfig, ProofData, ProofMetadata, ProofRegistry, StatementType, VerificationResult as ZkVerificationResult,
-    ZkError, ZkProof, ZkProver, ZkResult, ZkStatement, ZkVerifier,
+    ProofConfig, ProofData, ProofMetadata, ProofRegistry, StatementType,
+    VerificationResult as ZkVerificationResult, ZkError, ZkProof, ZkProver, ZkResult, ZkStatement,
+    ZkVerifier,
 };
 
 // Re-export PRM Fine-Tuning Toolkit types (FUT-003)
 pub use prm_toolkit::{
     CalibrationBin, ComparisonReport, EvaluationDataset, EvaluationMetrics, ModelResult,
-    PromptTemplate, PrmToolkit, ToolkitConfig, ToolkitError, ToolkitResult, TrainingExample,
+    PrmToolkit, PromptTemplate, ToolkitConfig, ToolkitError, ToolkitResult, TrainingExample,
 };

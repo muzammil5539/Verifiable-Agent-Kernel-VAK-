@@ -341,20 +341,16 @@ mod state_memory_tests {
 
         // Add items up to capacity
         for i in 0..5 {
-            let item = MemoryItem::new(
-                ItemType::Observation,
-                format!("Item {}", i),
-            ).with_priority(ItemPriority::Normal);
+            let item = MemoryItem::new(ItemType::Observation, format!("Item {}", i))
+                .with_priority(ItemPriority::Normal);
             wm.add_item(item);
         }
 
         assert_eq!(wm.len(), 5, "Should have 5 items");
 
         // Adding one more item
-        let extra = MemoryItem::new(
-            ItemType::Observation,
-            "Extra item".to_string(),
-        ).with_priority(ItemPriority::High);
+        let extra = MemoryItem::new(ItemType::Observation, "Extra item".to_string())
+            .with_priority(ItemPriority::High);
         wm.add_item(extra);
 
         // Working memory should track all added items

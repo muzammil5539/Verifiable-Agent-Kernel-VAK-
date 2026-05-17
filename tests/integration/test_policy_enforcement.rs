@@ -26,7 +26,7 @@ fn create_context_with_attrs(
 #[test]
 fn test_abac_multiple_conditions() {
     let mut engine = PolicyEngine::new_unlimited();
-    
+
     engine.add_rule(PolicyRule {
         id: "admin-full-access".to_string(),
         effect: PolicyEffect::Allow,
@@ -60,7 +60,10 @@ fn test_abac_multiple_conditions() {
     attrs2.insert("clearance".to_string(), serde_json::json!(3));
     let ctx2 = create_context_with_attrs("admin-002", "admin", attrs2);
     let decision2 = engine.evaluate("secret/data.txt", "delete", &ctx2);
-    assert!(!decision2.allowed, "Admin with low clearance should be denied");
+    assert!(
+        !decision2.allowed,
+        "Admin with low clearance should be denied"
+    );
 
     // Test: Non-admin with high clearance - denied
     let mut attrs3 = HashMap::new();
@@ -202,9 +205,9 @@ fn test_deny_on_error_security() {
         resource_pattern: "*".to_string(),
         action_pattern: "*".to_string(),
         conditions: vec![PolicyCondition {
-            attribute: "attr.name".to_string(), // String attribute
+            attribute: "attr.name".to_string(),       // String attribute
             operator: ConditionOperator::GreaterThan, // Numeric operator
-            value: serde_json::json!(10), // Numeric value
+            value: serde_json::json!(10),             // Numeric value
         }],
         priority: 1,
         description: None,
@@ -215,7 +218,7 @@ fn test_deny_on_error_security() {
     let ctx = create_context_with_attrs("test", "user", attrs);
 
     let decision = engine.evaluate("resource", "action", &ctx);
-    
+
     // Should be denied due to type mismatch error (deny on error)
     assert!(!decision.allowed);
     assert!(!decision.evaluation_errors.is_empty());

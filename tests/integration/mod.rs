@@ -6,11 +6,11 @@
 mod preemption_tests;
 mod test_audit_integrity;
 mod test_cedar_policy;
+mod test_cross_module;
 mod test_full_workflow;
 mod test_kernel_workflow;
 mod test_memory_containment;
 mod test_policy_enforcement;
 mod test_policy_verification;
 mod test_python_sdk;
-mod test_cross_module;
 mod test_stress;

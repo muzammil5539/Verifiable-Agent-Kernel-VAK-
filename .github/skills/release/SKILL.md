@@ -43,7 +43,7 @@ version = "0.1.0"
 
 All workspace members inherit this version:
 - Main crate (`vak`)
-- WASM skills (calculator, crypto-hash, json-validator, text-analyzer, regex-matcher)
+- WASM skills (calculator, crypto-hasher, json-validator, text-analyzer, regex-matcher)
 
 ## Instructions
 

@@ -178,7 +178,9 @@ impl std::fmt::Display for VerificationMethod {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::GithubOrg { org_name } => write!(f, "github_org:{}", org_name),
-            Self::GpgKey { key_fingerprint, .. } => write!(f, "gpg_key:{}", key_fingerprint),
+            Self::GpgKey {
+                key_fingerprint, ..
+            } => write!(f, "gpg_key:{}", key_fingerprint),
             Self::DomainOwnership { domain, .. } => write!(f, "domain:{}", domain),
             Self::Email { email, .. } => write!(f, "email:{}", email),
         }
@@ -580,10 +582,14 @@ impl PublisherRegistry {
     /// Register a new publisher
     pub fn register(&self, profile: PublisherProfile) -> PublisherResult<String> {
         if profile.id.is_empty() {
-            return Err(PublisherError::InvalidProfile("ID cannot be empty".to_string()));
+            return Err(PublisherError::InvalidProfile(
+                "ID cannot be empty".to_string(),
+            ));
         }
         if profile.name.is_empty() {
-            return Err(PublisherError::InvalidProfile("Name cannot be empty".to_string()));
+            return Err(PublisherError::InvalidProfile(
+                "Name cannot be empty".to_string(),
+            ));
         }
 
         let mut publishers = self
@@ -811,10 +817,7 @@ impl PublisherRegistry {
         if wasm_bytes.len() > 10 * 1024 * 1024 {
             issues.push(ScanIssue {
                 severity: IssueSeverity::Medium,
-                description: format!(
-                    "WASM binary is large ({} bytes)",
-                    wasm_bytes.len()
-                ),
+                description: format!("WASM binary is large ({} bytes)", wasm_bytes.len()),
                 recommendation: "Consider optimizing binary size".to_string(),
             });
         }
@@ -873,7 +876,10 @@ impl PublisherRegistry {
         let avg_rating = if publisher_skills.is_empty() {
             0.0
         } else {
-            publisher_skills.iter().map(|s| s.average_rating).sum::<f64>()
+            publisher_skills
+                .iter()
+                .map(|s| s.average_rating)
+                .sum::<f64>()
                 / publisher_skills.len() as f64
         };
 
@@ -891,11 +897,7 @@ impl PublisherRegistry {
     }
 
     /// Update publisher reputation score
-    pub fn update_reputation(
-        &self,
-        publisher_id: &str,
-        delta: f64,
-    ) -> PublisherResult<f64> {
+    pub fn update_reputation(&self, publisher_id: &str, delta: f64) -> PublisherResult<f64> {
         let mut publishers = self
             .publishers
             .write()
@@ -1001,7 +1003,7 @@ fn generate_challenge(publisher_id: &str, method: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(publisher_id.as_bytes());
     hasher.update(method.as_bytes());
-    hasher.update(&now().to_le_bytes());
+    hasher.update(now().to_le_bytes());
     hex::encode(hasher.finalize())[..32].to_string()
 }
 
@@ -1217,7 +1219,9 @@ mod tests {
         let all = registry.list_publishers(None).unwrap();
         assert_eq!(all.len(), 2);
 
-        let verified = registry.list_publishers(Some(TrustLevel::Verified)).unwrap();
+        let verified = registry
+            .list_publishers(Some(TrustLevel::Verified))
+            .unwrap();
         assert_eq!(verified.len(), 1);
     }
 
@@ -1289,13 +1293,19 @@ mod tests {
     #[test]
     fn test_verification_request_types() {
         let github = VerificationRequest::github_org("pub", "org");
-        assert!(matches!(github.method, VerificationMethod::GithubOrg { .. }));
+        assert!(matches!(
+            github.method,
+            VerificationMethod::GithubOrg { .. }
+        ));
 
         let gpg = VerificationRequest::gpg_key("pub", "ABCD1234");
         assert!(matches!(gpg.method, VerificationMethod::GpgKey { .. }));
 
         let domain = VerificationRequest::domain("pub", "example.com");
-        assert!(matches!(domain.method, VerificationMethod::DomainOwnership { .. }));
+        assert!(matches!(
+            domain.method,
+            VerificationMethod::DomainOwnership { .. }
+        ));
 
         let email = VerificationRequest::email("pub", "test@test.com");
         assert!(matches!(email.method, VerificationMethod::Email { .. }));

@@ -138,8 +138,7 @@ impl NodeStats {
 }
 
 /// State of a node in the search tree
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum NodeState {
     /// Node is unexplored
     #[default]
@@ -153,7 +152,6 @@ pub enum NodeState {
     /// Node leads to a dead end
     DeadEnd,
 }
-
 
 /// A node in the Monte Carlo Tree Search
 #[derive(Debug, Clone, Serialize, Deserialize)]

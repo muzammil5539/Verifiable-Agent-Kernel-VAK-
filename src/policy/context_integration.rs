@@ -230,8 +230,8 @@ impl std::fmt::Debug for IntegratedPolicyEngine {
 impl IntegratedPolicyEngine {
     /// Create a new integrated policy engine
     pub fn new(config: IntegrationConfig) -> IntegrationResult<Self> {
-        let enforcer = CedarEnforcer::new(config.enforcer.clone())
-            .map_err(IntegrationError::PolicyError)?;
+        let enforcer =
+            CedarEnforcer::new(config.enforcer.clone()).map_err(IntegrationError::PolicyError)?;
         let context_collector = DynamicContextCollector::new(config.context.clone());
 
         Ok(Self {
@@ -420,13 +420,15 @@ impl IntegratedPolicyEngine {
         }
 
         // Factor 3: Sensitive resource access
-        let sensitive_patterns = ["secret",
+        let sensitive_patterns = [
+            "secret",
             "password",
             "key",
             "credential",
             "private",
             "/etc/",
-            ".env"];
+            ".env",
+        ];
         if sensitive_patterns
             .iter()
             .any(|p| resource.to_lowercase().contains(p))

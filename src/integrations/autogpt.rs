@@ -427,7 +427,7 @@ impl AutoGPTAdapter {
 
         // Unwrap is safe here because we are escaping all inputs
         let blocked_commands_set =
-            regex::RegexSet::new(patterns).expect("Failed to compile blocked commands regex set");
+            regex::RegexSet::new(patterns).unwrap_or_else(|_| regex::RegexSet::empty());
 
         Self {
             config,
@@ -942,11 +942,12 @@ impl AutoGPTAdapter {
             sensitive_resources: Vec::new(),
         };
 
+        let path_pattern = regex::Regex::new(r"[/~][\w/.]+")
+            .unwrap_or_else(|_| regex::Regex::new(".^").unwrap_or_else(|_| unreachable!()));
+
         for step in &plan.steps {
             if let Some(ref cmd) = step.command {
                 // Extract file paths
-                let path_pattern = regex::Regex::new(r"[/~][\w/.]+")
-                    .unwrap_or_else(|_| regex::Regex::new(".^").unwrap());
                 for cap in path_pattern.find_iter(cmd) {
                     let path = cap.as_str().to_string();
                     if path.starts_with("/etc")
@@ -1125,8 +1126,7 @@ pub struct VerificationOptions {
 }
 
 /// Risk level for operations
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 pub enum RiskLevel {
     /// Low risk, no special action needed
     #[default]
@@ -1138,7 +1138,6 @@ pub enum RiskLevel {
     /// Critical risk, should be blocked or escalated
     Critical,
 }
-
 
 /// Full verification result (INT-004)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1937,8 +1936,7 @@ mod tests {
     #[tokio::test]
     async fn test_callback_handler() {
         let handler = Arc::new(AutoGPTAuditHandler::new());
-        let adapter =
-            AutoGPTAdapter::new(AutoGPTConfig::default()).with_callback(handler.clone());
+        let adapter = AutoGPTAdapter::new(AutoGPTConfig::default()).with_callback(handler.clone());
 
         assert_eq!(adapter.callback_count(), 1);
 
@@ -1969,9 +1967,7 @@ mod tests {
         let eval = adapter.evaluate_plan(&plan, "agent-1").await.unwrap();
         assert!(eval.approved);
 
-        adapter
-            .complete_plan_with_status(&plan.plan_id, true)
-            .await;
+        adapter.complete_plan_with_status(&plan.plan_id, true).await;
 
         // Plan should be removed after completion
         let progress = adapter.get_plan_progress(&plan.plan_id).await;

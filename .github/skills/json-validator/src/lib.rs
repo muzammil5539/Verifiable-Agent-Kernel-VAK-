@@ -22,6 +22,17 @@ use alloc::vec::Vec;
 use core::slice;
 use serde::{Deserialize, Serialize};
 
+#[cfg(not(test))]
+#[global_allocator]
+static ALLOC: lol_alloc::AssumeSingleThreaded<lol_alloc::FreeListAllocator> =
+    unsafe { lol_alloc::AssumeSingleThreaded::new(lol_alloc::FreeListAllocator::new()) };
+
+#[cfg(not(test))]
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    core::arch::wasm32::unreachable()
+}
+
 // =============================================================================
 // Memory Allocation Helpers
 // =============================================================================

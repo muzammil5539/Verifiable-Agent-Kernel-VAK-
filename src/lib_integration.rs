@@ -468,7 +468,9 @@ impl VakAgent {
                     .map(|v| serde_json::to_string_pretty(&v).unwrap_or_default())
                     .unwrap_or_default()
             } else {
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string())
             },
             execution_time_ms: response.execution_time_ms,
             audit_hash: None,
@@ -724,7 +726,9 @@ impl VakRuntime {
                     .map(|v| serde_json::to_string_pretty(&v).unwrap_or_default())
                     .unwrap_or_default()
             } else {
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string())
             },
             execution_time_ms: response.execution_time_ms,
             audit_hash: None,
@@ -1176,13 +1180,9 @@ mod tests {
 
     #[test]
     fn test_tool_definition_serialization() {
-        let tool = ToolDefinition::new(
-            "test",
-            "desc",
-            serde_json::json!({"type": "object"}),
-        )
-        .with_risk_level(RiskLevel::High)
-        .with_categories(vec!["math".to_string()]);
+        let tool = ToolDefinition::new("test", "desc", serde_json::json!({"type": "object"}))
+            .with_risk_level(RiskLevel::High)
+            .with_categories(vec!["math".to_string()]);
 
         let json = serde_json::to_string(&tool).unwrap();
         assert!(json.contains("\"risk_level\":\"high\""));

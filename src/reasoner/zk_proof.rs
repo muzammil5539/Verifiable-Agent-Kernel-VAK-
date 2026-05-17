@@ -232,11 +232,7 @@ impl ZkStatement {
     }
 
     /// Create a policy compliance statement
-    pub fn policy_compliance(
-        agent_id: &str,
-        resource: &str,
-        action: &str,
-    ) -> Self {
+    pub fn policy_compliance(agent_id: &str, resource: &str, action: &str) -> Self {
         let mut inputs = HashMap::new();
         inputs.insert("agent_id".to_string(), serde_json::json!(agent_id));
         inputs.insert("resource".to_string(), serde_json::json!(resource));
@@ -245,10 +241,7 @@ impl ZkStatement {
     }
 
     /// Create an audit integrity statement
-    pub fn audit_integrity(
-        chain_root: &str,
-        entry_count: u64,
-    ) -> Self {
+    pub fn audit_integrity(chain_root: &str, entry_count: u64) -> Self {
         let mut inputs = HashMap::new();
         inputs.insert("chain_root".to_string(), serde_json::json!(chain_root));
         inputs.insert("entry_count".to_string(), serde_json::json!(entry_count));
@@ -256,15 +249,14 @@ impl ZkStatement {
     }
 
     /// Create a state transition statement
-    pub fn state_transition(
-        prev_root: &str,
-        new_root: &str,
-        transition_type: &str,
-    ) -> Self {
+    pub fn state_transition(prev_root: &str, new_root: &str, transition_type: &str) -> Self {
         let mut inputs = HashMap::new();
         inputs.insert("prev_root".to_string(), serde_json::json!(prev_root));
         inputs.insert("new_root".to_string(), serde_json::json!(new_root));
-        inputs.insert("transition_type".to_string(), serde_json::json!(transition_type));
+        inputs.insert(
+            "transition_type".to_string(),
+            serde_json::json!(transition_type),
+        );
         Self::new(StatementType::StateTransition, inputs)
     }
 
@@ -276,7 +268,10 @@ impl ZkStatement {
     ) -> Self {
         let mut inputs = HashMap::new();
         inputs.insert("agent_id".to_string(), serde_json::json!(agent_id));
-        inputs.insert("attribute_name".to_string(), serde_json::json!(attribute_name));
+        inputs.insert(
+            "attribute_name".to_string(),
+            serde_json::json!(attribute_name),
+        );
         inputs.insert(
             "attribute_commitment".to_string(),
             serde_json::json!(attribute_commitment),
@@ -285,11 +280,7 @@ impl ZkStatement {
     }
 
     /// Create a range proof statement
-    pub fn range_proof(
-        commitment: &str,
-        min: i64,
-        max: i64,
-    ) -> Self {
+    pub fn range_proof(commitment: &str, min: i64, max: i64) -> Self {
         let mut inputs = HashMap::new();
         inputs.insert("commitment".to_string(), serde_json::json!(commitment));
         inputs.insert("min".to_string(), serde_json::json!(min));
@@ -298,10 +289,7 @@ impl ZkStatement {
     }
 
     /// Create a set membership statement
-    pub fn set_membership(
-        element_commitment: &str,
-        set_root: &str,
-    ) -> Self {
+    pub fn set_membership(element_commitment: &str, set_root: &str) -> Self {
         let mut inputs = HashMap::new();
         inputs.insert(
             "element_commitment".to_string(),
@@ -503,7 +491,7 @@ impl ZkProver {
         let mut hash = hasher.finalize();
         for _ in 1..self.config.hash_rounds {
             let mut h = Sha256::new();
-            h.update(&hash);
+            h.update(hash);
             h.update(self.config.domain_tag.as_bytes());
             hash = h.finalize();
         }
@@ -533,11 +521,7 @@ impl ZkProver {
     }
 
     /// Generate auxiliary commitments based on statement type
-    fn generate_aux_commitments(
-        &self,
-        statement: &ZkStatement,
-        witness: &[u8],
-    ) -> Vec<String> {
+    fn generate_aux_commitments(&self, statement: &ZkStatement, witness: &[u8]) -> Vec<String> {
         match statement.statement_type {
             StatementType::PolicyCompliance => {
                 // Commit to individual policy fields
@@ -573,18 +557,17 @@ impl ZkProver {
                 after.update(b"state_after");
                 after.update(witness);
 
-                vec![hex::encode(before.finalize()), hex::encode(after.finalize())]
+                vec![
+                    hex::encode(before.finalize()),
+                    hex::encode(after.finalize()),
+                ]
             }
             _ => Vec::new(),
         }
     }
 
     /// Generate Merkle proof path for applicable statement types
-    fn generate_merkle_path(
-        &self,
-        statement: &ZkStatement,
-        witness: &[u8],
-    ) -> Vec<String> {
+    fn generate_merkle_path(&self, statement: &ZkStatement, witness: &[u8]) -> Vec<String> {
         match statement.statement_type {
             StatementType::SetMembership | StatementType::AuditIntegrity => {
                 // Generate path elements from witness chunks
@@ -689,10 +672,8 @@ impl ZkVerifier {
         };
 
         // Verify the challenge is correctly derived from the commitment
-        let expected_challenge = self.recompute_challenge(
-            &proof.proof_data.commitment,
-            &statement.commitment,
-        );
+        let expected_challenge =
+            self.recompute_challenge(&proof.proof_data.commitment, &statement.commitment);
 
         if proof.proof_data.challenge != expected_challenge {
             return Ok(VerificationResult {
@@ -907,9 +888,9 @@ pub fn compute_set_root(elements: &[&[u8]], domain: &str) -> String {
         for chunk in hashes.chunks(2) {
             let mut hasher = Sha256::new();
             hasher.update(domain.as_bytes());
-            hasher.update(&chunk[0]);
+            hasher.update(chunk[0]);
             if chunk.len() > 1 {
-                hasher.update(&chunk[1]);
+                hasher.update(chunk[1]);
             }
             let result = hasher.finalize();
             let mut arr = [0u8; 32];
@@ -1100,10 +1081,14 @@ mod tests {
         let s3 = ZkStatement::state_transition("r1", "r2", "write");
 
         let p1 = prover.prove(&s1, b"w1").unwrap();
-        let p2 = prover.prove(&s2, b"w2_witness_data_for_audit_chain").unwrap();
+        let p2 = prover
+            .prove(&s2, b"w2_witness_data_for_audit_chain")
+            .unwrap();
         let p3 = prover.prove(&s3, b"w3").unwrap();
 
-        let results = verifier.verify_batch(&[(&s1, &p1), (&s2, &p2), (&s3, &p3)]).unwrap();
+        let results = verifier
+            .verify_batch(&[(&s1, &p1), (&s2, &p2), (&s3, &p3)])
+            .unwrap();
         assert!(results.iter().all(|r| r.is_valid()));
     }
 

@@ -5,9 +5,7 @@
 
 #[cfg(test)]
 mod cedar_policy_tests {
-    use vak::policy::{
-        CedarEnforcer, EnforcerConfig, Principal, Action, Resource,
-    };
+    use vak::policy::{Action, CedarEnforcer, EnforcerConfig, Principal, Resource};
 
     #[test]
     fn test_cedar_enforcer_creation() {
@@ -27,10 +25,17 @@ mod cedar_policy_tests {
         let action = Action::new("File", "read");
         let resource = Resource::file("/etc/passwd");
 
-        let decision = enforcer.authorize(&principal, &action, &resource, None).await.unwrap();
+        let decision = enforcer
+            .authorize(&principal, &action, &resource, None)
+            .await
+            .unwrap();
 
         assert!(!decision.allowed);
-        assert!(decision.reason.contains("denied") || decision.reason.contains("fail-closed") || decision.reason.contains("No valid policies"));
+        assert!(
+            decision.reason.contains("denied")
+                || decision.reason.contains("fail-closed")
+                || decision.reason.contains("No valid policies")
+        );
     }
 
     #[tokio::test]
@@ -74,12 +79,18 @@ rules:
 
         // Should allow reading from /tmp
         let resource1 = Resource::file("/tmp/data.txt");
-        let decision1 = enforcer.authorize(&principal, &action, &resource1, None).await.unwrap();
+        let decision1 = enforcer
+            .authorize(&principal, &action, &resource1, None)
+            .await
+            .unwrap();
         assert!(decision1.allowed, "Should allow read in /tmp");
 
         // Should deny reading from elsewhere
         let resource2 = Resource::file("/etc/passwd");
-        let decision2 = enforcer.authorize(&principal, &action, &resource2, None).await.unwrap();
+        let decision2 = enforcer
+            .authorize(&principal, &action, &resource2, None)
+            .await
+            .unwrap();
         assert!(!decision2.allowed, "Should deny read outside /tmp");
     }
 
@@ -109,12 +120,18 @@ rules:
 
         // Regular file should be allowed
         let resource1 = Resource::file("/data/config.json");
-        let decision1 = enforcer.authorize(&principal, &action, &resource1, None).await.unwrap();
+        let decision1 = enforcer
+            .authorize(&principal, &action, &resource1, None)
+            .await
+            .unwrap();
         assert!(decision1.allowed);
 
         // Secret file should be denied
         let resource2 = Resource::file("/data/api.secret");
-        let decision2 = enforcer.authorize(&principal, &action, &resource2, None).await.unwrap();
+        let decision2 = enforcer
+            .authorize(&principal, &action, &resource2, None)
+            .await
+            .unwrap();
         assert!(!decision2.allowed, "Forbid should override permit");
     }
 
@@ -163,7 +180,10 @@ rules:
         let action = Action::new("File", "read");
         let resource = Resource::file("/allowed/file.txt");
 
-        let decision = enforcer.authorize(&principal, &action, &resource, None).await.unwrap();
+        let decision = enforcer
+            .authorize(&principal, &action, &resource, None)
+            .await
+            .unwrap();
 
         assert!(decision.allowed);
         assert!(decision.matched_policy.is_some());
@@ -172,16 +192,16 @@ rules:
 
 #[cfg(test)]
 mod hot_reload_tests {
-    use vak::policy::{
-        HotReloadConfig, HotReloadablePolicyEngine,
-    };
     use tempfile::TempDir;
+    use vak::policy::{HotReloadConfig, HotReloadablePolicyEngine};
 
     #[tokio::test]
     async fn test_hot_reload_manager_creation() {
         let temp_dir = TempDir::new().unwrap();
         let config = HotReloadConfig::new(temp_dir.path());
-        let engine = HotReloadablePolicyEngine::new(config).await.expect("Engine creation failed");
+        let engine = HotReloadablePolicyEngine::new(config)
+            .await
+            .expect("Engine creation failed");
 
         assert_eq!(engine.current_version(), 1);
     }
@@ -203,7 +223,8 @@ mod hot_reload_tests {
         tokio::fs::write(&policy_path, yaml).await.unwrap();
 
         let config = HotReloadConfig::new(temp_dir.path());
-        let engine = HotReloadablePolicyEngine::new(config).await
+        let engine = HotReloadablePolicyEngine::new(config)
+            .await
             .expect("Policy load failed");
 
         assert_eq!(engine.current_version(), 1);
@@ -307,14 +328,17 @@ mod hot_reload_tests {
 
         // Load multiple versions via reload
         for i in 1..5 {
-            let yaml = format!(r#"
+            let yaml = format!(
+                r#"
 - id: "rule-{}"
   effect: allow
   resource_pattern: "*"
   action_pattern: "*"
   conditions: []
   priority: 0
-"#, i);
+"#,
+                i
+            );
             tokio::fs::write(&policy_path, &yaml).await.unwrap();
             engine.reload().await.unwrap();
         }
@@ -326,7 +350,10 @@ mod hot_reload_tests {
         assert!(!history.is_empty());
 
         // Merkle root should be non-empty
-        assert!(!engine.merkle_root().is_empty(), "Merkle root should be valid");
+        assert!(
+            !engine.merkle_root().is_empty(),
+            "Merkle root should be valid"
+        );
     }
 
     #[tokio::test]
@@ -390,8 +417,7 @@ mod hot_reload_tests {
 #[cfg(test)]
 mod policy_analyzer_tests {
     use vak::policy::{
-        AnalyzerConfig, PolicyAnalyzer, PolicySet, SafetyInvariant,
-        InvariantSeverity,
+        AnalyzerConfig, InvariantSeverity, PolicyAnalyzer, PolicySet, SafetyInvariant,
     };
 
     #[tokio::test]
@@ -425,7 +451,8 @@ mod policy_analyzer_tests {
             "no-delete-root",
             "No agent can delete root directory",
             "forbid delete on resource /",
-        ).with_severity(InvariantSeverity::Critical);
+        )
+        .with_severity(InvariantSeverity::Critical);
 
         analyzer.add_invariant(invariant).await;
 
@@ -480,9 +507,7 @@ mod policy_analyzer_tests {
 
 #[cfg(test)]
 mod context_integration_tests {
-    use vak::policy::{
-        IntegratedPolicyEngine, IntegrationConfig, RiskAssessment,
-    };
+    use vak::policy::{IntegratedPolicyEngine, IntegrationConfig, RiskAssessment};
 
     #[tokio::test]
     async fn test_integrated_engine_creation() {
