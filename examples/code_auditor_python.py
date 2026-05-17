@@ -601,7 +601,7 @@ def incomplete_feature(data):
 def ignore_error():
     try:
         risky_operation()
-    except:  # Bare except!
+    except Exception:  # Catching Exception
         pass
 '''
 
