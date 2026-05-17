@@ -437,7 +437,7 @@ class CodeAuditor:
             self.record_thought(f"Low confidence reasoning (score: {score['score']}), skipping")
             return
         
-        for line_num, line in enumerate(content.split('\n'), 1):
+        for line_num, line in enumerate(lines, 1):
             for pattern, desc in self.config.sql_injection_patterns:
                 if re.search(pattern, line, re.IGNORECASE):
                     finding = CodeFinding(
@@ -470,7 +470,7 @@ class CodeAuditor:
             "Secret detection analysis"
         )
         
-        for line_num, line in enumerate(content.split('\n'), 1):
+        for line_num, line in enumerate(lines, 1):
             line_lower = line.lower()
             
             for pattern, desc in self.config.secret_patterns:
@@ -500,7 +500,7 @@ class CodeAuditor:
             "Input validation analysis"
         )
         
-        for line_num, line in enumerate(content.split('\n'), 1):
+        for line_num, line in enumerate(lines, 1):
             for pattern, desc, severity in self.config.input_validation_patterns:
                 if re.search(pattern, line):
                     finding = CodeFinding(
@@ -526,7 +526,7 @@ class CodeAuditor:
             "Error handling analysis"
         )
         
-        for line_num, line in enumerate(content.split('\n'), 1):
+        for line_num, line in enumerate(lines, 1):
             for pattern, desc, severity in self.config.error_handling_patterns:
                 if re.search(pattern, line):
                     finding = CodeFinding(
@@ -594,9 +594,9 @@ def process_input(data):
     result = eval(data)  # Dangerous eval!
     return result
 
-def incomplete_feature():
-    # TODO: implement this
-    pass
+def incomplete_feature(data):
+    # Dangerous: executing arbitrary code
+    exec(data)
 
 def ignore_error():
     try:
