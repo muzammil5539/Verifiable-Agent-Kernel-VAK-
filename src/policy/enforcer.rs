@@ -604,10 +604,77 @@ impl CedarEnforcer {
         }
     }
 
+    /// Create an enforcer that denies everything.
+    ///
+    /// Used as the fail-closed result when policies were configured but could
+    /// not be loaded. Distinct from [`Self::new_permissive`], which is its
+    /// opposite and is for tests only.
+    pub fn new_denying() -> Self {
+        Self {
+            config: EnforcerConfig::default(),
+            policies: Arc::new(RwLock::new(PolicySet::new())),
+            stats: EnforcerStats::default(),
+            // Deliberately false: `authorize` short-circuits to deny when no
+            // valid policies are loaded and `default_deny` is set.
+            policy_loaded: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
     /// Check if valid policies have been loaded
     pub fn has_policies_loaded(&self) -> bool {
         self.policy_loaded
             .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Loads a policy file, appending its rules to the existing set.
+    ///
+    /// [`Self::load_policies`] replaces the rule set outright, so calling it
+    /// once per file would keep only the last file's rules. Returns the number
+    /// of rules added.
+    pub async fn merge_policies<P: AsRef<Path>>(&self, path: P) -> EnforcerResult<usize> {
+        let path = path.as_ref();
+
+        if !path.exists() {
+            error!(path = %path.display(), "Policy file not found");
+            return Err(EnforcerError::PolicyNotFound(path.display().to_string()));
+        }
+
+        let content = tokio::fs::read_to_string(path).await.map_err(|e| {
+            error!(path = %path.display(), error = %e, "Failed to read policy file");
+            EnforcerError::IoError(format!("{}: {}", path.display(), e))
+        })?;
+
+        let policy_set: PolicySet = serde_yaml::from_str(&content).map_err(|e| {
+            error!(path = %path.display(), error = %e, "Invalid policy format");
+            EnforcerError::InvalidPolicy(e.to_string())
+        })?;
+
+        let added = policy_set.rules.len();
+
+        let mut policies = self.policies.write().await;
+
+        // Before any real load, `policies` holds the bootstrap default-deny
+        // set from `new()` — a forbid-everything rule. Since forbid rules are
+        // evaluated first, leaving it in place would make every merged rule
+        // unreachable. Drop it on the first real load; `authorize` still fails
+        // closed via the `policy_loaded` check if nothing loads.
+        if !self
+            .policy_loaded
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            policies.rules.clear();
+        }
+
+        policies.rules.extend(policy_set.rules);
+        if policy_set.version.is_some() {
+            policies.version = policy_set.version;
+        }
+        drop(policies);
+
+        self.policy_loaded
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+
+        Ok(added)
     }
 
     /// Load policies from a YAML file with proper error handling (POL-007)
@@ -776,7 +843,7 @@ impl CedarEnforcer {
         principal: &Principal,
         action: &Action,
         resource: &Resource,
-        _context: Option<&PolicyContext>,
+        context: Option<&PolicyContext>,
     ) -> EnforcerResult<Decision> {
         let principal_uid = principal.to_entity_uid();
         let action_uid = action.to_action_uid();
@@ -784,27 +851,63 @@ impl CedarEnforcer {
 
         // Check for explicit forbid rules first (forbid overrides permit)
         for rule in &policies.rules {
-            if rule.effect == "forbid"
-                && self.rule_matches(rule, &principal_uid, &action_uid, &resource_uid)
+            if rule.effect != "forbid"
+                || !self.rule_matches(rule, &principal_uid, &action_uid, &resource_uid)
             {
-                return Ok(Decision::deny(format!(
-                    "Forbidden by rule: {}",
-                    rule.description.as_deref().unwrap_or(&rule.id)
-                ))
-                .with_policy(rule.id.clone()));
+                continue;
+            }
+            match self.conditions_hold(rule, principal, resource, context) {
+                Ok(true) => {
+                    return Ok(Decision::deny(format!(
+                        "Forbidden by rule: {}",
+                        rule.description.as_deref().unwrap_or(&rule.id)
+                    ))
+                    .with_policy(rule.id.clone()));
+                }
+                Ok(false) => continue,
+                Err(e) => {
+                    // A forbid rule we cannot evaluate is treated as firing:
+                    // an unreadable prohibition must not become permission.
+                    warn!(
+                        rule = %rule.id,
+                        error = %e,
+                        "Unevaluable condition on forbid rule - denying"
+                    );
+                    return Ok(Decision::deny(format!(
+                        "Unevaluable condition on forbid rule '{}': {}",
+                        rule.id, e
+                    ))
+                    .with_policy(rule.id.clone()));
+                }
             }
         }
 
         // Check for permit rules
         for rule in &policies.rules {
-            if rule.effect == "permit"
-                && self.rule_matches(rule, &principal_uid, &action_uid, &resource_uid)
+            if rule.effect != "permit"
+                || !self.rule_matches(rule, &principal_uid, &action_uid, &resource_uid)
             {
-                return Ok(Decision::allow(format!(
-                    "Permitted by rule: {}",
-                    rule.description.as_deref().unwrap_or(&rule.id)
-                ))
-                .with_policy(rule.id.clone()));
+                continue;
+            }
+            match self.conditions_hold(rule, principal, resource, context) {
+                Ok(true) => {
+                    return Ok(Decision::allow(format!(
+                        "Permitted by rule: {}",
+                        rule.description.as_deref().unwrap_or(&rule.id)
+                    ))
+                    .with_policy(rule.id.clone()));
+                }
+                // A permit rule whose conditions fail (or cannot be read) simply
+                // does not grant. Evaluation falls through to default-deny.
+                Ok(false) => continue,
+                Err(e) => {
+                    warn!(
+                        rule = %rule.id,
+                        error = %e,
+                        "Unevaluable condition on permit rule - rule does not grant"
+                    );
+                    continue;
+                }
             }
         }
 
@@ -814,6 +917,30 @@ impl CedarEnforcer {
         } else {
             Ok(Decision::allow("No matching forbid rule (default-allow)"))
         }
+    }
+
+    /// Evaluates every condition attached to a rule. Conditions are ANDed.
+    ///
+    /// Conditions were previously parsed from YAML and then never read, which
+    /// made every `conditions:` block in `policies/` decorative. They are now
+    /// enforced.
+    ///
+    /// Returns `Err` when a condition cannot be parsed or its operands cannot
+    /// be resolved. Callers decide what that means for their effect: an
+    /// unevaluable `forbid` denies, an unevaluable `permit` does not grant.
+    fn conditions_hold(
+        &self,
+        rule: &CedarRule,
+        principal: &Principal,
+        resource: &Resource,
+        context: Option<&PolicyContext>,
+    ) -> Result<bool, ConditionError> {
+        for condition in &rule.conditions {
+            if !evaluate_condition(condition, principal, resource, context)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Check if a rule matches the request
@@ -856,6 +983,211 @@ impl CedarEnforcer {
     /// Check if enforcement is enabled
     pub fn is_enabled(&self) -> bool {
         self.config.enabled
+    }
+}
+
+// ============================================================================
+// Condition Evaluation
+// ============================================================================
+
+/// Why a policy condition could not be evaluated.
+///
+/// Every variant means "we do not know whether this condition holds", which is
+/// deliberately distinct from "it does not hold" — the caller must fail closed
+/// rather than treat uncertainty as a passing check.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum ConditionError {
+    /// The condition is not a recognised `<operand> <op> <operand>` expression.
+    #[error("malformed condition '{0}' (expected: <operand> <op> <operand>)")]
+    Malformed(String),
+
+    /// The comparison operator is not supported.
+    #[error("unsupported operator '{0}'")]
+    UnsupportedOperator(String),
+
+    /// An operand referenced an attribute that the caller did not supply.
+    #[error("unknown attribute '{0}'")]
+    UnknownAttribute(String),
+
+    /// The two sides could not be compared (e.g. ordering a bool against a number).
+    #[error("cannot compare '{left}' and '{right}' with '{op}'")]
+    Incomparable {
+        /// Rendered left operand.
+        left: String,
+        /// Operator that was applied.
+        op: String,
+        /// Rendered right operand.
+        right: String,
+    },
+}
+
+/// Supported comparison operators, longest-first so `>=` is matched before `>`.
+const CONDITION_OPERATORS: &[&str] = &[">=", "<=", "==", "!=", ">", "<"];
+
+/// Evaluates a single condition expression such as
+/// `resource.restricted == false` or `resource.owner == principal`.
+///
+/// Operands are resolved as follows:
+/// - `resource.<attr>` / `principal.<attr>` — attribute maps on the entities
+/// - `context.<field>` — the dynamic [`PolicyContext`], when one is supplied
+/// - `principal` / `resource` — the bare entity UID, so ownership checks work
+/// - anything else — a literal (`true`, `false`, a number, or a quoted string)
+///
+/// An unresolvable operand is an error rather than a `false`, so that a typo in
+/// a policy file cannot quietly widen access.
+fn evaluate_condition(
+    condition: &str,
+    principal: &Principal,
+    resource: &Resource,
+    context: Option<&PolicyContext>,
+) -> Result<bool, ConditionError> {
+    let expr = condition.trim();
+
+    let (raw_left, op, raw_right) = split_condition(expr)?;
+
+    let left = resolve_operand(raw_left, principal, resource, context)?;
+    let right = resolve_operand(raw_right, principal, resource, context)?;
+
+    compare(&left, op, &right)
+}
+
+/// Splits `a == b` into its three parts, preferring the longest operator so
+/// that `>=` is not mistaken for `>`.
+fn split_condition(expr: &str) -> Result<(&str, &str, &str), ConditionError> {
+    for op in CONDITION_OPERATORS {
+        if let Some(idx) = expr.find(op) {
+            let left = expr[..idx].trim();
+            let right = expr[idx + op.len()..].trim();
+            if left.is_empty() || right.is_empty() {
+                return Err(ConditionError::Malformed(expr.to_string()));
+            }
+            return Ok((left, op, right));
+        }
+    }
+    Err(ConditionError::Malformed(expr.to_string()))
+}
+
+/// Resolves one side of a comparison to a JSON value.
+fn resolve_operand(
+    token: &str,
+    principal: &Principal,
+    resource: &Resource,
+    context: Option<&PolicyContext>,
+) -> Result<serde_json::Value, ConditionError> {
+    // Bare entity references compare by UID, which is what makes
+    // `resource.owner == principal` express ownership.
+    match token {
+        "principal" => return Ok(serde_json::Value::String(principal.to_entity_uid())),
+        "resource" => return Ok(serde_json::Value::String(resource.to_entity_uid())),
+        _ => {}
+    }
+
+    if let Some(attr) = token.strip_prefix("principal.") {
+        return principal
+            .attributes
+            .get(attr)
+            .cloned()
+            .ok_or_else(|| ConditionError::UnknownAttribute(token.to_string()));
+    }
+
+    if let Some(attr) = token.strip_prefix("resource.") {
+        return resource
+            .attributes
+            .get(attr)
+            .cloned()
+            .ok_or_else(|| ConditionError::UnknownAttribute(token.to_string()));
+    }
+
+    if let Some(field) = token.strip_prefix("context.") {
+        let ctx = context.ok_or_else(|| ConditionError::UnknownAttribute(token.to_string()))?;
+        return context_field(ctx, field)
+            .ok_or_else(|| ConditionError::UnknownAttribute(token.to_string()));
+    }
+
+    parse_literal(token).ok_or_else(|| ConditionError::UnknownAttribute(token.to_string()))
+}
+
+/// Reads a named field out of the dynamic policy context.
+fn context_field(ctx: &PolicyContext, field: &str) -> Option<serde_json::Value> {
+    match field {
+        "timestamp" => ctx.timestamp.map(Into::into),
+        "source_ip" => ctx.source_ip.clone().map(Into::into),
+        "trust_score" => ctx.trust_score.map(Into::into),
+        "system_load" => ctx.system_load.map(Into::into),
+        "alert_mode" => ctx.alert_mode.map(Into::into),
+        other => ctx.custom.get(other).cloned(),
+    }
+}
+
+/// Parses a literal operand. Unquoted bare words are rejected so that a
+/// misspelled attribute path surfaces as an error instead of a string.
+fn parse_literal(token: &str) -> Option<serde_json::Value> {
+    match token {
+        "true" => return Some(serde_json::Value::Bool(true)),
+        "false" => return Some(serde_json::Value::Bool(false)),
+        "null" => return Some(serde_json::Value::Null),
+        _ => {}
+    }
+
+    if let Ok(n) = token.parse::<i64>() {
+        return Some(n.into());
+    }
+    if let Ok(f) = token.parse::<f64>() {
+        return serde_json::Number::from_f64(f).map(serde_json::Value::Number);
+    }
+
+    // Quoted string, single or double.
+    let bytes = token.as_bytes();
+    if bytes.len() >= 2 {
+        let first = bytes[0];
+        let last = bytes[bytes.len() - 1];
+        if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
+            return Some(serde_json::Value::String(
+                token[1..token.len() - 1].to_string(),
+            ));
+        }
+    }
+
+    None
+}
+
+/// Applies a comparison operator to two resolved values.
+fn compare(
+    left: &serde_json::Value,
+    op: &str,
+    right: &serde_json::Value,
+) -> Result<bool, ConditionError> {
+    match op {
+        "==" => return Ok(left == right),
+        "!=" => return Ok(left != right),
+        _ => {}
+    }
+
+    // Ordering comparisons are defined for numbers and strings only.
+    let ordering = match (left, right) {
+        (serde_json::Value::Number(a), serde_json::Value::Number(b)) => {
+            let (a, b) = (a.as_f64(), b.as_f64());
+            match (a, b) {
+                (Some(a), Some(b)) => a.partial_cmp(&b),
+                _ => None,
+            }
+        }
+        (serde_json::Value::String(a), serde_json::Value::String(b)) => Some(a.cmp(b)),
+        _ => None,
+    };
+
+    let ordering = ordering.ok_or_else(|| ConditionError::Incomparable {
+        left: left.to_string(),
+        op: op.to_string(),
+        right: right.to_string(),
+    })?;
+
+    match op {
+        ">" => Ok(ordering.is_gt()),
+        ">=" => Ok(ordering.is_ge()),
+        "<" => Ok(ordering.is_lt()),
+        "<=" => Ok(ordering.is_le()),
+        other => Err(ConditionError::UnsupportedOperator(other.to_string())),
     }
 }
 

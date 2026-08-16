@@ -439,7 +439,14 @@ impl Default for SecurityConfig {
         Self {
             enable_sandboxing: true,
             require_signed_requests: false,
-            allowed_tools: Vec::new(),
+            // Deny-by-default means an empty allowlist would reject every
+            // request, including the kernel's own built-ins. Seed the
+            // built-ins so the default config is usable; anything else
+            // (notably WASM skills) must be allowed explicitly.
+            allowed_tools: crate::kernel::BUILTIN_TOOLS
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
             blocked_tools: Vec::new(),
             enable_rate_limiting: true,
             max_requests_per_minute: default_rate_limit(),
@@ -663,7 +670,14 @@ mod tests {
         let security = SecurityConfig::default();
         assert!(security.enable_sandboxing);
         assert!(!security.require_signed_requests);
-        assert!(security.allowed_tools.is_empty());
+        // Under deny-by-default an empty allowlist would reject everything,
+        // so the built-ins are seeded and nothing else is.
+        assert_eq!(
+            security.allowed_tools.len(),
+            crate::kernel::BUILTIN_TOOLS.len()
+        );
+        assert!(security.allowed_tools.iter().any(|t| t == "echo"));
+        assert!(!security.allowed_tools.iter().any(|t| t == "arbitrary_tool"));
     }
 
     #[test]

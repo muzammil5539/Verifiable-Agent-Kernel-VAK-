@@ -1203,7 +1203,7 @@ mod tests {
     fn test_property_value_conversions() {
         assert_eq!(PropertyValue::from("hello").as_str(), Some("hello"));
         assert_eq!(PropertyValue::from(42i64).as_int(), Some(42));
-        assert_eq!(PropertyValue::from(3.14f64).as_float(), Some(3.14));
+        assert_eq!(PropertyValue::from(2.5f64).as_float(), Some(2.5));
         assert_eq!(PropertyValue::from(true).as_bool(), Some(true));
     }
 

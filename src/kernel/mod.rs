@@ -39,7 +39,7 @@ pub mod traits;
 pub mod types;
 
 // Re-export commonly used types at the module level
-pub use self::config::KernelConfig;
+pub use self::config::{DefaultPolicyDecision, KernelConfig};
 pub use self::custom_handlers::{
     CustomHandlerRegistry, FunctionHandler, HandlerError, HandlerMetadata, HandlerResult,
     ToolHandler,
@@ -57,6 +57,10 @@ pub use self::constitution::{
     EnforcementPoint, Principle, RuleViolation,
 };
 
+/// Tools handled directly by the kernel, without going through the WASM
+/// sandbox. Any other tool name is dispatched to the skill registry.
+pub const BUILTIN_TOOLS: &[&str] = &["echo", "calculator", "data_processor", "system_info"];
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -69,6 +73,11 @@ use self::types::{
 
 // Import sandbox and skill registry for WASM execution (Issue #6)
 use crate::sandbox::{SandboxConfig, SkillRegistry, WasmSandbox};
+
+// Policy decision point (docs/adr/0001)
+use crate::policy::enforcer::{
+    Action as PolicyAction, CedarEnforcer, EnforcerConfig, Principal, Resource,
+};
 
 /// The main kernel instance that manages agent execution and policy enforcement.
 ///
@@ -113,6 +122,11 @@ pub struct Kernel {
 
     /// Sandbox configuration for WASM execution
     sandbox_config: SandboxConfig,
+
+    /// Policy decision point. Present only when `policy.policy_paths` names at
+    /// least one file; otherwise the kernel falls back to the allowlist and
+    /// `policy.default_decision`. See docs/adr/0001.
+    enforcer: Option<CedarEnforcer>,
 }
 
 impl Kernel {
@@ -146,8 +160,12 @@ impl Kernel {
             "Initializing VAK kernel"
         );
 
-        // Initialize skill registry (Issue #6)
-        let skills_dir = PathBuf::from("skills");
+        // Initialize skill registry (Issue #6).
+        //
+        // The path was previously hardcoded to "skills", which does not exist
+        // in this repo (the skill crates live under .github/skills), so the
+        // registry silently loaded nothing and every non-builtin tool failed.
+        let skills_dir = Self::resolve_skills_dir();
         let mut skill_registry = SkillRegistry::new(skills_dir.clone());
 
         // Try to load skills from directory
@@ -165,19 +183,170 @@ impl Kernel {
             timeout: config.max_execution_time,
         };
 
+        let enforcer = Self::build_enforcer(&config).await;
+
         Ok(Self {
             config,
             audit_log: Arc::new(RwLock::new(Vec::new())),
             sessions: Arc::new(RwLock::new(std::collections::HashMap::new())),
             skill_registry: Arc::new(RwLock::new(skill_registry)),
             sandbox_config,
+            enforcer,
         })
+    }
+
+    /// Builds the policy decision point from `policy.policy_paths`.
+    ///
+    /// Returns `None` when no policy files are configured, in which case the
+    /// kernel falls back to the allowlist plus `policy.default_decision`. That
+    /// fallback is stricter than any loaded policy set would be, so skipping
+    /// the enforcer never widens access.
+    ///
+    /// If policy files *are* configured but cannot be loaded, an enforcer with
+    /// no policies is returned. That enforcer denies every request, which is
+    /// the intended behaviour: a misconfigured policy path must not silently
+    /// downgrade to the permissive fallback.
+    async fn build_enforcer(config: &KernelConfig) -> Option<CedarEnforcer> {
+        if !config.policy.enabled || config.policy.policy_paths.is_empty() {
+            return None;
+        }
+
+        let enforcer = match CedarEnforcer::new(EnforcerConfig::default()) {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to construct policy enforcer");
+                // A permissive fallback here would be a fail-open. Deny instead.
+                return Some(CedarEnforcer::new_denying());
+            }
+        };
+
+        // `load_policies` replaces the whole rule set, so loading several files
+        // through it would silently keep only the last. Merge instead.
+        let mut loaded_any = false;
+        for path in &config.policy.policy_paths {
+            match enforcer.merge_policies(path).await {
+                Ok(count) => {
+                    info!(path = %path.display(), rules = count, "Loaded policy file");
+                    loaded_any = true;
+                }
+                Err(e) => {
+                    tracing::error!(
+                        path = %path.display(),
+                        error = %e,
+                        "Failed to load policy file - kernel will deny all requests"
+                    );
+                    return Some(CedarEnforcer::new_denying());
+                }
+            }
+        }
+
+        if !loaded_any {
+            tracing::error!("No policy rules loaded - kernel will deny all requests");
+            return Some(CedarEnforcer::new_denying());
+        }
+
+        Some(enforcer)
     }
 
     /// Returns a reference to the kernel configuration.
     #[must_use]
     pub fn config(&self) -> &KernelConfig {
         &self.config
+    }
+
+    /// Asks the policy enforcer whether a request is authorized.
+    ///
+    /// The kernel supplies the entity attributes that policy conditions read.
+    /// Nothing else populates them, so without this the shipped
+    /// `default_policies.yaml` — whose only tool-permit rule is guarded by
+    /// `resource.restricted == false` — could never grant anything.
+    async fn evaluate_via_enforcer(
+        &self,
+        enforcer: &CedarEnforcer,
+        agent_id: &AgentId,
+        request: &ToolRequest,
+    ) -> PolicyDecision {
+        let tool = &request.tool_name;
+
+        let principal = Principal::agent(agent_id.to_string())
+            .with_attribute("internal", true)
+            .with_attribute("id", agent_id.to_string());
+
+        let resource = Resource::tool(tool.clone())
+            .with_attribute(
+                "restricted",
+                self.config.security.blocked_tools.contains(tool),
+            )
+            .with_attribute("internal", BUILTIN_TOOLS.contains(&tool.as_str()))
+            .with_attribute("owner", principal.to_entity_uid());
+
+        let action = PolicyAction::tool_execute();
+
+        let context = crate::policy::enforcer::PolicyContext::new().with_current_time();
+
+        match enforcer
+            .authorize(&principal, &action, &resource, Some(&context))
+            .await
+        {
+            Ok(decision) if decision.is_allowed() => PolicyDecision::Allow {
+                reason: decision.reason.clone(),
+                constraints: self.execution_constraints(),
+            },
+            Ok(decision) => PolicyDecision::Deny {
+                reason: decision.reason.clone(),
+                violated_policies: decision.matched_policy.map(|p| vec![p]),
+            },
+            Err(e) => {
+                // An evaluation failure is not permission.
+                tracing::error!(error = %e, tool = %tool, "Policy evaluation failed - denying");
+                PolicyDecision::Deny {
+                    reason: format!("Policy evaluation failed: {e}"),
+                    violated_policies: None,
+                }
+            }
+        }
+    }
+
+    /// Constraints attached to an allowed request, derived from config.
+    fn execution_constraints(&self) -> Option<Vec<String>> {
+        let mut constraints = Vec::new();
+
+        if self.config.max_execution_time.as_millis() > 0 {
+            constraints.push(format!(
+                "max_execution_time_ms:{}",
+                self.config.max_execution_time.as_millis()
+            ));
+        }
+        if self.config.resources.max_memory_mb > 0 {
+            constraints.push(format!(
+                "max_memory_mb:{}",
+                self.config.resources.max_memory_mb
+            ));
+        }
+        if self.config.security.enable_sandboxing {
+            constraints.push("sandboxed:true".to_string());
+        }
+
+        if constraints.is_empty() {
+            None
+        } else {
+            Some(constraints)
+        }
+    }
+
+    /// Resolves the directory to load WASM skill manifests from.
+    ///
+    /// `VAK_SKILLS_PATH` wins if set (containers mount skills elsewhere);
+    /// otherwise the first location that exists is used.
+    fn resolve_skills_dir() -> PathBuf {
+        if let Ok(path) = std::env::var("VAK_SKILLS_PATH") {
+            return PathBuf::from(path);
+        }
+        [".github/skills", "skills"]
+            .iter()
+            .map(PathBuf::from)
+            .find(|p| p.is_dir())
+            .unwrap_or_else(|| PathBuf::from("skills"))
     }
 
     /// Evaluates a policy decision for a given tool request.
@@ -193,10 +362,14 @@ impl Kernel {
     ///
     /// # Policy Evaluation Logic
     ///
+    /// When `policy.policy_paths` names at least one file, the decision is made
+    /// by the [`CedarEnforcer`] against those files (see docs/adr/0001).
+    ///
+    /// Otherwise the kernel falls back to its own configuration:
+    ///
     /// 1. Checks if the tool is in the blocked tools list
     /// 2. Checks if allowed_tools is non-empty and tool is not in it
-    /// 3. Validates agent session exists (if sessions are active)
-    /// 4. Returns Allow with any applicable constraints
+    /// 3. Falls through to `policy.default_decision`, which defaults to deny
     #[instrument(skip(self, request), fields(agent_id = %agent_id, tool = %request.tool_name))]
     pub async fn evaluate_policy(
         &self,
@@ -208,6 +381,12 @@ impl Kernel {
             tool = %request.tool_name,
             "Evaluating policy for tool request"
         );
+
+        if let Some(enforcer) = &self.enforcer {
+            return self
+                .evaluate_via_enforcer(enforcer, agent_id, request)
+                .await;
+        }
 
         // Check if the tool is explicitly blocked
         if self
@@ -255,28 +434,42 @@ impl Kernel {
             };
         }
 
-        // Build constraints based on configuration
-        let mut constraints = Vec::new();
+        let constraints = self.execution_constraints();
 
-        // Add timeout constraint if configured
-        if self.config.max_execution_time.as_millis() > 0 {
-            constraints.push(format!(
-                "max_execution_time_ms:{}",
-                self.config.max_execution_time.as_millis()
-            ));
-        }
+        // No rule matched. Fall back to the configured default decision rather
+        // than allowing: `deny` is the documented default, and a kernel whose
+        // whole premise is "no policy = no access" must not fail open.
+        //
+        // An explicit allowlist entry counts as a matching allow rule; anything
+        // else reaching this point is unmatched.
+        let explicitly_allowed = self
+            .config
+            .security
+            .allowed_tools
+            .contains(&request.tool_name);
 
-        // Add memory limit constraint
-        if self.config.resources.max_memory_mb > 0 {
-            constraints.push(format!(
-                "max_memory_mb:{}",
-                self.config.resources.max_memory_mb
-            ));
-        }
-
-        // Add sandboxing requirement if enabled
-        if self.config.security.enable_sandboxing {
-            constraints.push("sandboxed:true".to_string());
+        if !explicitly_allowed {
+            match self.config.policy.default_decision {
+                DefaultPolicyDecision::Deny => {
+                    tracing::warn!(
+                        tool = %request.tool_name,
+                        "No policy rule matched; denying by default"
+                    );
+                    return PolicyDecision::Deny {
+                        reason: format!(
+                            "No policy rule permits tool '{}' (default decision is deny)",
+                            request.tool_name
+                        ),
+                        violated_policies: Some(vec!["policy.default_decision".to_string()]),
+                    };
+                }
+                DefaultPolicyDecision::Allow => {
+                    tracing::warn!(
+                        tool = %request.tool_name,
+                        "No policy rule matched; allowing because default decision is allow"
+                    );
+                }
+            }
         }
 
         PolicyDecision::Allow {
@@ -284,11 +477,7 @@ impl Kernel {
                 "Agent {} authorized to execute tool '{}'",
                 agent_id, request.tool_name
             ),
-            constraints: if constraints.is_empty() {
-                None
-            } else {
-                Some(constraints)
-            },
+            constraints,
         }
     }
 
@@ -320,31 +509,24 @@ impl Kernel {
         // Step 1: Evaluate policy
         let decision = self.evaluate_policy(agent_id, &request).await;
 
-        match &decision {
-            PolicyDecision::Deny { reason, .. } => {
-                return Err(KernelError::PolicyViolation {
-                    policy_id: "default".to_string(),
-                    reason: reason.clone(),
-                });
+        // Step 2: Record the decision *before* acting on it. Denials are
+        // audited too — a rejected action is exactly the event an auditor
+        // most needs to see.
+        let rejection = match &decision {
+            PolicyDecision::Deny { reason, .. } | PolicyDecision::Inadmissible { reason } => {
+                Some(reason.clone())
             }
-            PolicyDecision::Inadmissible { reason } => {
-                return Err(KernelError::PolicyViolation {
-                    policy_id: "default".to_string(),
-                    reason: reason.clone(),
-                });
-            }
-            PolicyDecision::Allow { .. } => {
-                // Continue with execution
-            }
-        }
+            PolicyDecision::Allow { .. } => None,
+        };
 
-        // Step 2: Log the request
-        let audit_entry =
-            AuditEntry::new(*agent_id, *session_id, request.tool_name.clone(), decision);
+        self.append_audit(*agent_id, *session_id, request.tool_name.clone(), decision)
+            .await;
 
-        {
-            let mut log = self.audit_log.write().await;
-            log.push(audit_entry);
+        if let Some(reason) = rejection {
+            return Err(KernelError::PolicyViolation {
+                policy_id: "default".to_string(),
+                reason,
+            });
         }
 
         // Step 3: Execute the tool
@@ -666,11 +848,40 @@ impl Kernel {
         }
     }
 
+    /// Appends an entry to the audit log, linking it to the current chain head.
+    ///
+    /// Holds the write lock across read-tail-and-push so that concurrent
+    /// requests cannot interleave and produce two entries claiming the same
+    /// predecessor.
+    async fn append_audit(
+        &self,
+        agent_id: AgentId,
+        session_id: SessionId,
+        action: String,
+        decision: PolicyDecision,
+    ) {
+        let mut log = self.audit_log.write().await;
+        let entry = AuditEntry::new(agent_id, session_id, action, decision);
+        let entry = match log.last() {
+            Some(prev) => entry.with_previous(prev.hash.clone()),
+            None => entry,
+        };
+        log.push(entry);
+    }
+
     /// Retrieves the audit log entries.
     ///
     /// In production, this would support pagination and filtering.
     pub async fn get_audit_log(&self) -> Vec<AuditEntry> {
         self.audit_log.read().await.clone()
+    }
+
+    /// Verifies the integrity of the kernel's audit chain.
+    ///
+    /// Returns `Err(index)` identifying the first entry that has been altered,
+    /// reordered, or spliced in.
+    pub async fn verify_audit_chain(&self) -> Result<(), usize> {
+        AuditEntry::verify_chain(&self.audit_log.read().await)
     }
 
     /// Returns the number of active sessions.
@@ -681,6 +892,7 @@ impl Kernel {
 
 #[cfg(test)]
 mod tests {
+    use self::config::{PolicyConfig, SecurityConfig};
     use super::*;
 
     #[tokio::test]
@@ -690,18 +902,87 @@ mod tests {
         assert!(kernel.is_ok());
     }
 
-    #[tokio::test]
-    async fn test_policy_evaluation() {
-        let kernel = Kernel::new(KernelConfig::default()).await.unwrap();
-        let agent_id = AgentId::new();
-        let request = ToolRequest {
+    fn request_for(tool: &str) -> ToolRequest {
+        ToolRequest {
             request_id: uuid::Uuid::new_v4(),
-            tool_name: "test_tool".to_string(),
+            tool_name: tool.to_string(),
             parameters: serde_json::json!({}),
             timeout_ms: Some(5000),
-        };
+        }
+    }
 
-        let decision = kernel.evaluate_policy(&agent_id, &request).await;
+    #[tokio::test]
+    async fn test_policy_allows_builtin_tools() {
+        let kernel = Kernel::new(KernelConfig::default()).await.unwrap();
+        let agent_id = AgentId::new();
+
+        let decision = kernel
+            .evaluate_policy(&agent_id, &request_for("echo"))
+            .await;
         assert!(matches!(decision, PolicyDecision::Allow { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_policy_denies_unmatched_tool_by_default() {
+        let kernel = Kernel::new(KernelConfig::default()).await.unwrap();
+        let agent_id = AgentId::new();
+
+        // No rule permits "test_tool", and the default decision is Deny.
+        // A kernel whose premise is "no policy = no access" must not fail open.
+        let decision = kernel
+            .evaluate_policy(&agent_id, &request_for("test_tool"))
+            .await;
+        assert!(
+            matches!(decision, PolicyDecision::Deny { .. }),
+            "unmatched tool must be denied, got {decision:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_policy_default_decision_allow_is_honoured() {
+        // `default_decision` governs the case where no allowlist constrains
+        // the request. A non-empty allowlist is itself a policy and stays
+        // authoritative, so clear it to reach the fallback.
+        let config = KernelConfig {
+            security: SecurityConfig {
+                allowed_tools: Vec::new(),
+                ..Default::default()
+            },
+            policy: PolicyConfig {
+                default_decision: DefaultPolicyDecision::Allow,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let kernel = Kernel::new(config).await.unwrap();
+        let agent_id = AgentId::new();
+
+        let decision = kernel
+            .evaluate_policy(&agent_id, &request_for("test_tool"))
+            .await;
+        assert!(matches!(decision, PolicyDecision::Allow { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_empty_allowlist_still_denies_by_default() {
+        // The dangerous combination: no allowlist configured at all. This must
+        // deny, not fall through to allow.
+        let config = KernelConfig {
+            security: SecurityConfig {
+                allowed_tools: Vec::new(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let kernel = Kernel::new(config).await.unwrap();
+        let agent_id = AgentId::new();
+
+        let decision = kernel
+            .evaluate_policy(&agent_id, &request_for("test_tool"))
+            .await;
+        assert!(
+            matches!(decision, PolicyDecision::Deny { .. }),
+            "empty allowlist must not mean 'allow everything'"
+        );
     }
 }

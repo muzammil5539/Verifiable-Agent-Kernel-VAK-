@@ -149,6 +149,8 @@ python = ["pyo3"]
 proptest.workspace = true
 criterion.workspace = true
 tokio-test = "0.4"
+# Integration tests link dev-dependencies, not [dependencies].
+tempfile.workspace = true
 
 [[bench]]
 name = "kernel_benchmarks"

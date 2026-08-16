@@ -1067,7 +1067,7 @@ mod tests {
         let i: AttributeValue = 42i64.into();
         assert!(matches!(i, AttributeValue::Int(42)));
 
-        let f: AttributeValue = 3.14f64.into();
+        let f: AttributeValue = 2.5f64.into();
         assert!(matches!(f, AttributeValue::Float(_)));
 
         let b: AttributeValue = true.into();

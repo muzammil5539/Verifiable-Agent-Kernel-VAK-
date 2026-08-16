@@ -1012,7 +1012,7 @@ mod tests {
             let empty_dict = PyDict::new(py);
 
             kernel
-                .register_agent("test-agent", "Test Agent", empty_dict.bind(py).clone())
+                .register_agent("test-agent", "Test Agent", empty_dict.clone())
                 .unwrap();
             assert!(kernel.agents.contains_key("test-agent"));
 

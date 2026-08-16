@@ -800,8 +800,8 @@ mod tests {
             "42"
         );
         assert_eq!(
-            Z3FormalVerifier::translate_value(&ConstraintValue::Float(3.14)),
-            "3.14"
+            Z3FormalVerifier::translate_value(&ConstraintValue::Float(2.5)),
+            "2.5"
         );
         assert_eq!(
             Z3FormalVerifier::translate_value(&ConstraintValue::Boolean(true)),

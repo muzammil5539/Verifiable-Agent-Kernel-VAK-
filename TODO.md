@@ -1,261 +1,172 @@
-# VAK Implementation TODO & Roadmap
+# VAK Implementation TODO
 
-> **Project:** Verifiable Agent Kernel (VAK) / Exo-Cortex 1.0
-> **Target:** Autonomous Code Auditor MVP
-> **Generated:** January 30, 2026
-> **Last Refined:** February 13, 2026 - Sprint 13 Completed (v1.0 Milestone)
+> **Project:** Verifiable Agent Kernel (VAK) / Exo-Cortex
+> **Rewritten:** 2026-08-16, replacing a tracker that marked 90/90 items "complete"
+> while `tests/integration_root.rs` did not compile and the kernel's request path
+> called none of the policy engine, reasoner, memory fabric, or swarm modules.
 
----
+## How this list is scoped
 
-## Critical Path Analysis
+Every item below was verified by reading the call path, not by confirming a file
+exists. The completion bar is:
 
-**Status:** Production Ready — 100% Complete (90/90 tracked items)
+**A feature is not done until a test drives it through `Kernel::execute`.**
 
-All critical path items for MVP are **COMPLETE**:
-- [x] LLM Abstraction Layer
-- [x] PRM Integration
-- [x] Z3 Formal Verifier
-- [x] WASM Sandbox with Fuel Metering
-- [x] Ed25519 Skill Signing
-- [x] Merkle Memory
-- [x] Policy Hot-Reloading
-- [x] Python SDK
-- [x] Docker Deployment (INF-003)
-- [x] API Documentation (DOC-001)
-- [x] CONTRIBUTING.md (DOC-003)
-- [x] Audit Log Rotation (Issue #20)
-- [x] Policy Evaluation Caching (Issue #40)
-- [x] Token Estimation Improvement (Issue #15)
-- [x] Input Sanitization Guide (Issue #14)
-- [x] MSRV Specification (Issue #35)
-- [x] CHANGELOG.md (Release checklist)
-- [x] Secrets Management (Issue #37)
-- [x] LLM Library Integration (Issue #24)
-- [x] Property-Based Testing (Issue #33)
-- [x] Benchmark Suite Expansion (TST-005)
-- [x] Database Schema Migrations (INF-002)
-- [x] LangChain Adapter Completion (INT-003)
-- [x] AutoGPT Adapter Completion (INT-004)
-- [x] AgentCard Discovery (SWM-002)
-- [x] Kubernetes Operator Manifests (INF-001)
-- [x] Docker Images - Multi-stage Build (INF-002)
-- [x] Helm Charts (INF-003)
-- [x] Cryptographic Replay Capability (OBS-002)
-
-**v0.3 Additions:**
-- [x] Code Coverage Infrastructure (tarpaulin.toml, 80%+ threshold)
-- [x] CI/CD Pipeline (ci.yml: build, test, coverage, WASM skills, Python SDK, benchmarks, property tests)
-- [x] Cross-Module Integration Tests (TST-007)
-- [x] Stress & Load Testing Suite (TST-008)
-- [x] Performance Profiling Tooling (INF-006: scripts/perf-profile.sh)
-- [x] Makefile for Development Automation (INF-005)
-- [x] Enhanced Security Scanning (SEC-006: dependency freshness, SEC-007: WASM integrity)
-- [x] Security Audit Summary Job
-
-**v1.0 Additions:**
-- [x] Production Deployment Guide (docs/production-deployment.md)
-- [x] Security Hardening Guide (docs/security-hardening.md)
-- [x] Performance Tuning Guide (docs/performance-tuning.md)
-- [x] Troubleshooting Guide (docs/troubleshooting.md)
-- [x] Migration Guide (docs/migration-guide.md)
+Applying that bar retroactively reclassified most of the previous roadmap. See the
+audit report (linked from project memory) for the full finding-by-finding evidence.
+Do not restore "100% complete" language until every item in this file is closed —
+that language is exactly how the gap went unnoticed for thirteen sprints.
 
 ---
 
-## Quick Status Overview
+## Done (verified, not just present)
 
-| Phase | Status | Completion |
-|-------|--------|------------|
-| Phase 1: Core Infrastructure | Complete | 100% |
-| Phase 2: Reasoning | Complete | 100% |
-| Phase 3: Memory & SDK | Complete | 100% |
-| Phase 4: Swarm & Integrations | Complete | 100% |
-| Phase 5: Security | Complete | 100% |
-| Phase 6: Production Hardening | Complete | 100% |
-| Phase 7: Test Coverage & Tooling (v0.3) | Complete | 100% |
-| Phase 8: Production Documentation (v1.0) | Complete | 100% |
-
----
-
-## Next Actions
-
-### Immediate
-1. [x] ~~INF-003: Docker deployment configuration~~ **DONE**
-2. [x] ~~DOC-001: Generate API documentation~~ **DONE**
-3. [x] ~~DOC-003: CONTRIBUTING.md~~ **DONE**
-4. [x] ~~INF-002: Database schema and migrations~~ **DONE**
-
-### Short-term
-1. [x] ~~DOC-002: Architecture diagrams~~ **DONE** (ARCHITECTURE.md + API.md)
-2. [x] ~~TST-005: Benchmark suite expansion~~ **DONE** (25 benchmark groups)
-3. [x] ~~TST-006: Property-based testing (Issue #33)~~ **DONE** (28 property tests)
-4. [x] ~~INF-001: Kubernetes operator manifests~~ **DONE** (Kustomize base)
-5. [x] ~~INF-002: Docker images (multi-stage build)~~ **DONE** (4-stage Dockerfile)
-6. [x] ~~INF-003: Helm charts~~ **DONE** (full chart with templates)
-7. [x] ~~OBS-002: Cryptographic replay~~ **DONE** (ReplaySession + ReplayVerifier)
-
-### Medium-term
-1. [x] ~~Performance optimization pass~~ **DONE** (profiling tooling, benchmark baselines)
-2. [x] ~~Security audit finalization~~ **DONE** (enhanced CI, dependency freshness, WASM integrity)
-3. [x] ~~Skill marketplace prototype (Issue #27)~~ **DONE** (FUT-004: Verified publishers, trust levels, reputation system)
-
-### v0.3 - Test Coverage & Infrastructure: COMPLETED
-
-| Task | Status |
-|------|--------|
-| **TST-007**: Cross-module integration tests (policy+audit, memory+audit, reasoner+policy, swarm+audit) | Done |
-| **TST-008**: Stress & load testing suite (throughput, concurrency, latency, resource exhaustion) | Done |
-| **TST-009**: Code coverage infrastructure (tarpaulin config, 80%+ threshold enforcement) | Done |
-| **INF-004**: CI/CD pipeline (build, test, coverage, WASM skills, Python SDK) | Done |
-| **INF-005**: Makefile for development automation | Done |
-| **INF-006**: Performance profiling tooling (benchmarks, flamegraph, compile timing) | Done |
-| **SEC-006**: Dependency freshness monitoring | Done |
-| **SEC-007**: WASM skill integrity verification | Done |
-
-### P3 - Future (Post-MVP): COMPLETED
-
-| Task | Status |
-|------|--------|
-| **FUT-001**: Zero-Knowledge Proof integration | Done |
-| **FUT-002**: Constitution Protocol | Done |
-| **FUT-003**: Enhanced PRM fine-tuning toolkit | Done |
-| **FUT-004**: Skill marketplace with verified publishers | Done |
+- [x] Audit entries commit to the decision and the predecessor hash; tampering,
+      reordering and deletion are all now detected — `AuditEntry::verify_chain`
+      (`src/kernel/types.rs`, `tests/audit_chain_integrity.rs`)
+- [x] `Kernel::execute` denies by default when no rule matches, instead of
+      always returning `Allow` (`src/kernel/mod.rs`)
+- [x] Denied requests are audited, not just successful ones
+- [x] WASM skill registry resolves `.github/skills/` (was hardcoded to a
+      nonexistent `skills/` directory)
+- [x] `CedarEnforcer` is wired into `Kernel::execute` via `policy.policy_paths`;
+      a `ToolRequest` becomes a real `Principal`/`Action`/`Resource` triple
+      checked against policy files — see `docs/adr/0001` (`src/kernel/mod.rs`,
+      `tests/policy_enforcement.rs`)
+- [x] Policy rule `conditions` are evaluated instead of parsed-and-discarded;
+      the kernel supplies the attributes conditions read (`src/policy/enforcer.rs`)
+- [x] `tests/integration_root.rs` compiles and its 143 tests actually run
+      (was broken by a `JoinHandle<u32>`/`JoinHandle<()>` mismatch, silently
+      making the whole target un-buildable)
+- [x] `cargo clippy --all-targets` and `cargo test --doc` pass with zero errors
+      (five pre-existing failures fixed: a bad doctest, a stale PyO3 API call,
+      three `3.14`-as-π lint hits)
+- [x] Dead, never-compiled `src/kernel/kernel.rs` (427 lines, not a declared
+      module) removed
+- [x] `CONTEXT.md` and `docs/adr/` established as the place decisions get
+      recorded, so the next drift is visible in a diff instead of silent
 
 ---
 
-### Test Coverage Summary (Updated February 13, 2026)
-- **Rust Unit Tests**: 867 passing
-- **Rust Doc Tests**: 63 passing (4 ignored)
-- **Property Tests**: 28 passing (proptest)
-- **Python Tests**: 126 passing (94 SDK + 32 Code Auditor)
-- **Integration Tests**: 45+ passing (+cross-module, +stress tests)
-- **Benchmarks**: 25 benchmark groups (kernel, policy, audit, memory, knowledge graph, secrets, signed audit, tool definitions, migrations)
-- **Total Tests**: 1,150+ passing
+## P0 — Security: still fails open
 
-#### Breakdown by Module:
-- **Kernel**: 45 tests
-- **Policy Engine**: 63 tests (+11 cache/rate-limit tests)
-- **Audit Logging**: 85 tests (+5 rotation tests)
-- **Memory System**: 41 tests (+improved token estimation tests)
-- **WASM Sandbox**: 28 tests
-- **Reasoner**: 67 tests
-- **Swarm**: 48 tests (A2A, Voting, Router, Sycophancy)
-- **Integrations**: 62 tests (LangChain, AutoGPT)
-- **Dashboard**: 25 tests (Metrics, Health, Server)
-- **Tools**: 15 tests (vak-skill-sign CLI)
-- **Python SDK**: 126 tests
-- **Cross-Module Integration**: 15 tests (v0.3)
-- **Stress & Load**: 12 tests (v0.3)
+- [ ] **`src/sandbox/async_host.rs:309`** — `CedarEnforcer::new(...).unwrap_or_else(|_|
+      CedarEnforcer::new_permissive())`. A misconfigured enforcer degrades to
+      *allow everything* on the sandbox host-function path. `CedarEnforcer::new_denying()`
+      already exists for exactly this (added while wiring the kernel path); swap it in
+      and add a regression test that construction failure denies rather than permits.
 
-#### Coverage Infrastructure (v0.3):
-- **tarpaulin.toml**: Coverage configuration with 80%+ threshold, branch coverage, HTML+XML output
-- **CI workflow**: Automated coverage checks on every push/PR
-- **Makefile targets**: `make coverage`, `make coverage-check`
+- [ ] **ZK proofs are not zero-knowledge.** `src/reasoner/zk_proof.rs::verify_response`
+      accepts any 64-character hex string as a valid proof of any statement — there is
+      no check binding the response to the witness. The module now carries an explicit
+      warning, but the public API still returns `valid: true` for forged proofs.
+      Decide: (a) implement a real backend (arkworks/bellman — a project, not a patch),
+      or (b) rename the module and gate it behind a feature flag that defaults off, with
+      the README/API docs updated to stop claiming this property. Do not ship both the
+      warning and the unqualified "Zero-Knowledge Proofs — Complete" claim at once.
 
 ---
 
-## Sprint Planning (Refined)
+## P1 — Wire the rest of the vision into the kernel
 
-### Sprint 1-7: COMPLETED (January-February 2026)
-All core functionality and production hardening phase 1 implemented.
+Each of these exists as a well-tested standalone module. None of them sit on the
+request path. In order of leverage:
 
-### Sprint 8: COMPLETED (February 2026)
+- [ ] **Delegate kernel auditing to `AuditLogger`, backed by `MerkleDag`.**
+      `Kernel` currently keeps its own `Vec<AuditEntry>` in parallel with
+      `src/audit/mod.rs`'s `AuditLogger` (9,211 lines, Ed25519 signing, rotation,
+      multiple backends — genuinely more capable, and unused). Collapsing to one
+      implementation, backed by `src/memory/merkle_dag.rs`, is what turns a hash
+      chain into the "cryptographic receipt" the vision describes: a session
+      should be able to produce a root hash and a Merkle inclusion proof for any
+      decision. This is the natural anchor point for Module 1 (Cryptographic
+      Memory Fabric), which is otherwise fully disconnected from any request.
 
-| Task | Status |
-|------|--------|
-| **INF-003**: Docker Deployment (Dockerfile + docker-compose.yml) | Done |
-| **DOC-001**: API Documentation (cargo doc) | Done |
-| **DOC-003**: CONTRIBUTING.md | Done |
-| **CHANGELOG.md**: Initial changelog | Done |
-| **Issue #35**: MSRV set to 1.75 | Done |
-| **Issue #20**: Audit log rotation with max_entries and archival | Done |
-| **Issue #15**: Content-aware token estimation (code, CJK, whitespace) | Done |
-| **Issue #40**: Policy evaluation caching with LRU and TTL | Done |
-| **Issue #14**: Input sanitization guide for WASM skill developers | Done |
+- [ ] **Gate high-risk actions on the neuro-symbolic reasoner.** PRM scoring,
+      the Datalog safety engine (`src/reasoner/datalog.rs`), and the Z3
+      verification gateway are implemented and unit-tested, but
+      `neurosymbolic_pipeline.rs` is an opt-in parallel path, not something
+      `Kernel::execute` calls by default. Define what "high-risk" means for a
+      `ToolRequest` (a policy attribute? an explicit tool tag?) and route those
+      through PRM → Datalog → Z3 before dispatch, matching the vision's
+      "neural proposal → symbolic verification → execution" sandwich. Note
+      `Z3Verifier` shells out to a `z3` binary via `std::process::Command` —
+      decide what happens when it's not installed (currently: verification is
+      silently unavailable).
 
-### Sprint 9: COMPLETED (February 2026)
+- [ ] **Ship the WASM skills for real.** No skill manifest (`skill.yaml`) exists
+      anywhere in the repo, and there's no build step compiling the five skill
+      crates under `.github/skills/` to `wasm32-unknown-unknown` and signing
+      them. The registry now points at the right directory (fixed) but has
+      nothing to load. Without this, "sandboxed execution" is untested outside
+      unit tests that construct a `WasmSandbox` directly.
 
-| Task | Status |
-|------|--------|
-| **INF-002**: Database schema migrations (SQLite + MigrationRunner) | Done |
-| **TST-005**: Benchmark suite expansion (25 groups, +knowledge graph, signed audit, secrets) | Done |
-| **Issue #33**: Property-based testing (28 proptest tests across 8 modules) | Done |
-| **Issue #37**: Secrets management (pluggable providers, caching, expiration) | Done |
-| **Issue #24**: LLM library integration (VakRuntime, VakAgent, OpenAI/Anthropic formats) | Done |
-| **Library export**: Prelude with LLM integration + secrets re-exports | Done |
-| **Crate config**: Fixed crate-type for library-first builds (rlib only) | Done |
-
-### Sprint 10: COMPLETED (February 2026)
-
-| Task | Status |
-|------|--------|
-| **INT-003**: LangChain Adapter Completion (LLM interception, callbacks, audit) | Done |
-| **INT-004**: AutoGPT Adapter Completion (PRM scoring, verification, progress) | Done |
-| **SWM-002**: AgentCard Discovery (well-known endpoint, HTTP fetch, validation, caching) | Done |
-| Phase 5: Ecosystem & Interoperability marked as COMPLETE | Done |
-
-### Sprint 11: COMPLETED (February 2026)
-
-| Task | Status |
-|------|--------|
-| **DOC-002**: Architecture documentation (ARCHITECTURE.md + API.md) | Done |
-| **INF-001**: Kubernetes operator manifests (Kustomize base) | Done |
-| **INF-002**: Docker images (multi-stage build, dev + production targets) | Done |
-| **INF-003**: Helm charts (Chart.yaml, values.yaml, 10 templates) | Done |
-| **OBS-002**: Cryptographic replay (ReplaySession, ReplayVerifier, ActiveReplay) | Done |
-
-### Sprint 12: COMPLETED (February 2026) - v0.3 Milestone
-
-| Task | Status |
-|------|--------|
-| **TST-007**: Cross-module integration tests | Done |
-| **TST-008**: Stress & load testing suite | Done |
-| **TST-009**: Code coverage infrastructure (tarpaulin.toml) | Done |
-| **INF-004**: CI/CD pipeline (ci.yml) | Done |
-| **INF-005**: Makefile for development automation | Done |
-| **INF-006**: Performance profiling tooling (perf-profile.sh) | Done |
-| **SEC-006**: Dependency freshness monitoring | Done |
-| **SEC-007**: WASM skill integrity verification | Done |
-| Performance optimization tooling | Done |
-| Security audit enhancement | Done |
-
-### Sprint 13: COMPLETED (February 2026) - v1.0 Milestone
-
-| Task | Status |
-|------|--------|
-| **DOC-004**: Production Deployment Guide | Done |
-| **DOC-005**: Security Hardening Guide | Done |
-| **DOC-006**: Performance Tuning Guide | Done |
-| **DOC-007**: Troubleshooting Guide | Done |
-| **DOC-008**: Migration Guide (v0.x to v1.0) | Done |
-| Version bump to 1.0.0 (Cargo.toml, Helm chart, Dockerfile) | Done |
-| Update all README and documentation files for v1.0 | Done |
+- [ ] **Swarm consensus is unreachable from the kernel.** Voting, consensus,
+      and sycophancy detection (`src/swarm/`) have no caller outside their own
+      tests or `src/integrations/`. Scope this only if multi-agent orchestration
+      through `Kernel` is actually a near-term use case — otherwise leave it
+      documented as a standalone library the way `lib_integration.rs` already
+      exposes other pieces.
 
 ---
 
-## Definition of Done
+## P2 — Fix the parts that mislead adopters
 
-### For Code Changes
-- [x] Unit tests with >80% coverage
-- [x] Documentation comments on all public APIs
-- [x] No clippy warnings
-- [x] Formatted with rustfmt
-- [x] Integration test for key workflows
-- [x] Python bindings updated (if applicable)
+- [ ] **Python SDK silently substitutes a fake kernel.** `VakKernel` falls back
+      to `_StubKernel` — a pure-Python in-memory imitation with no policy
+      enforcement and no real audit chain — whenever the PyO3 extension isn't
+      built, which is the default result of `pip install -e ./python`. Make the
+      fallback opt-in (`allow_stub=True` or an env var) and loud (a warning on
+      every call while active). A trust kernel must never quietly replace
+      itself with a mock.
 
-### For Features
-- [x] All acceptance criteria met
-- [x] Documentation updated
-- [x] Example code provided
-- [x] Performance benchmarked (if applicable)
+- [ ] **The flagship MVP demo doesn't use VAK.** `examples/code_auditor_python.py`
+      — the Autonomous Code Auditor named in the vision as *the* MVP — uses
+      `hashlib` and `re` directly and imports nothing from `vak`. Either rewrite
+      it against the real Python SDK once P1's reasoner gating exists, or retitle
+      it as a design sketch so it stops standing in as proof the kernel is usable
+      for real work.
 
-### For Releases
-- [x] All tests passing
-- [x] CHANGELOG updated
-- [x] Version bumped
-- [x] Documentation generated
-- [x] Release notes written
+- [ ] **README quick-start does not compile.** `Kernel::create_session()`,
+      `KernelConfig::with_policy_path()`, `kernel.audit_logger()`, and
+      `get_audit_trail()` are all called in the README's first example; none
+      exist. Rewrite the example against the current API (`policy.policy_paths`,
+      `get_audit_log()`), and consider adding the example as a doctest so this
+      can't drift silently again — it's the same failure mode as the
+      integration-test build break.
 
 ---
 
-*Last updated: February 13, 2026*
-*Current milestone: v1.0 (Production-ready with full documentation) — COMPLETE*
+## P3 — Process, so this doesn't happen again
+
+- [ ] **Wire `cargo test` and `cargo clippy --all-targets --all-features` into
+      a CI gate that actually blocks merges.** The integration-test build
+      break (P0-severity, now fixed) survived thirteen sprints of "complete"
+      status updates because nothing ran it. If CI already exists
+      (`.github/workflows/ci.yml` is referenced in prior notes), verify it
+      is *required* for merge, not merely present.
+- [ ] **Do not restore aggregate "N% complete" framing** in this file, the
+      README, or CHANGELOG until every P0/P1 item above is closed and verified
+      by a test that exercises `Kernel::execute`. Track items as done/open;
+      let the reader compute the percentage if they want one.
+- [ ] Reconcile `docs/gap-analysis-roadmap.md` and `docs/blue-ocean-opportunity.md`
+      against this file — they currently describe both a "~75% complete Beta"
+      and a "100% complete v1.0" for the same codebase. Pick one document as
+      the live status source (recommend: this file) and mark the others
+      historical/point-in-time.
+
+---
+
+## Definition of done (replaces the previous checklist)
+
+A change is done when:
+
+- [ ] A test exercises it through `Kernel::execute` (or the documented public
+      entry point, for non-kernel code) — not only through a unit test inside
+      the same module
+- [ ] `cargo test`, `cargo clippy --all-targets --all-features -- -D warnings`,
+      and `cargo fmt --all -- --check` all pass locally
+- [ ] Any new fail-open path is impossible by construction, or is explicitly
+      justified in an ADR under `docs/adr/`
+- [ ] Documentation (README, ARCHITECTURE.md, this file) is updated in the
+      same change, not deferred

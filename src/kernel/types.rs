@@ -437,7 +437,15 @@ impl AuditEntry {
         let timestamp = Utc::now();
         let action = action.into();
 
-        let hash = Self::compute_hash(&audit_id, &timestamp, &agent_id, &session_id, &action);
+        let hash = Self::compute_hash(
+            &audit_id,
+            &timestamp,
+            &agent_id,
+            &session_id,
+            &action,
+            &decision,
+            None,
+        );
 
         Self {
             audit_id,
@@ -454,36 +462,66 @@ impl AuditEntry {
     /// Creates a new audit entry with a reference to the previous entry.
     #[must_use]
     pub fn with_previous(mut self, previous_hash: String) -> Self {
-        self.previous_hash = Some(previous_hash);
-        // Recompute hash to include previous_hash
+        // Recompute hash so it commits to the predecessor. Without this the
+        // "chain" is inert: entries could be reordered or spliced freely.
         self.hash = Self::compute_hash(
             &self.audit_id,
             &self.timestamp,
             &self.agent_id,
             &self.session_id,
             &self.action,
+            &self.decision,
+            Some(previous_hash.as_str()),
         );
+        self.previous_hash = Some(previous_hash);
         self
     }
 
     /// Computes the SHA-256 hash for an audit entry.
+    ///
+    /// The digest commits to *every* field that carries meaning, including the
+    /// policy decision and the predecessor hash. Omitting either would let an
+    /// attacker rewrite a `Deny` into an `Allow`, or reorder history, while
+    /// [`Self::verify_integrity`] still reported success.
+    ///
+    /// Fields are length-prefixed so that no two distinct entries can produce
+    /// the same pre-image by shifting bytes across field boundaries.
     fn compute_hash(
         audit_id: &AuditId,
         timestamp: &DateTime<Utc>,
         agent_id: &AgentId,
         session_id: &SessionId,
         action: &str,
+        decision: &PolicyDecision,
+        previous_hash: Option<&str>,
     ) -> String {
+        fn absorb(hasher: &mut Sha256, field: &[u8]) {
+            hasher.update((field.len() as u64).to_be_bytes());
+            hasher.update(field);
+        }
+
         let mut hasher = Sha256::new();
-        hasher.update(audit_id.0.as_bytes());
-        hasher.update(timestamp.to_rfc3339().as_bytes());
-        hasher.update(agent_id.0.as_bytes());
-        hasher.update(session_id.0.as_bytes());
-        hasher.update(action.as_bytes());
+        absorb(&mut hasher, audit_id.0.as_bytes());
+        absorb(&mut hasher, timestamp.to_rfc3339().as_bytes());
+        absorb(&mut hasher, agent_id.0.as_bytes());
+        absorb(&mut hasher, session_id.0.as_bytes());
+        absorb(&mut hasher, action.as_bytes());
+
+        // Decision is canonicalised via serde so the digest tracks both the
+        // variant and its payload (reason, violated policies, constraints).
+        let decision_bytes = serde_json::to_vec(decision).unwrap_or_default();
+        absorb(&mut hasher, &decision_bytes);
+
+        absorb(&mut hasher, previous_hash.unwrap_or("").as_bytes());
+
         format!("{:x}", hasher.finalize())
     }
 
     /// Verifies the integrity of this audit entry by recomputing its hash.
+    ///
+    /// This checks a single entry in isolation. To detect deletion or
+    /// reordering you must also walk the chain and confirm each entry's
+    /// `previous_hash` equals its predecessor's `hash`.
     #[must_use]
     pub fn verify_integrity(&self) -> bool {
         let computed = Self::compute_hash(
@@ -492,8 +530,28 @@ impl AuditEntry {
             &self.agent_id,
             &self.session_id,
             &self.action,
+            &self.decision,
+            self.previous_hash.as_deref(),
         );
         computed == self.hash
+    }
+
+    /// Verifies a full audit chain: every entry's hash must be self-consistent
+    /// and must commit to its predecessor.
+    ///
+    /// Returns the index of the first entry that fails verification.
+    pub fn verify_chain(entries: &[Self]) -> Result<(), usize> {
+        let mut expected_prev: Option<&str> = None;
+        for (idx, entry) in entries.iter().enumerate() {
+            if entry.previous_hash.as_deref() != expected_prev {
+                return Err(idx);
+            }
+            if !entry.verify_integrity() {
+                return Err(idx);
+            }
+            expected_prev = Some(entry.hash.as_str());
+        }
+        Ok(())
     }
 }
 

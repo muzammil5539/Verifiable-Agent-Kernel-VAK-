@@ -37,11 +37,27 @@
 //! let proof = prover.prove(&statement, witness)?;
 //!
 //! // Verify the proof without knowing the witness
-//! let valid = verifier.verify(&statement, &proof)?;
-//! assert!(valid);
+//! let result = verifier.verify(&statement, &proof)?;
+//! assert!(result.valid);
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! # ⚠️ Not cryptographically sound
+//!
+//! This module does **not** currently provide a zero-knowledge proof system.
+//! [`ZkVerifier::verify`] checks only that a proof is well-formed — that its
+//! response is 64 characters of valid hex — and performs no check binding the
+//! response to the witness. Any 64-character hex string is therefore accepted
+//! as a proof of any statement.
+//!
+//! The underlying scheme is hash commitments with no algebraic structure, so
+//! the verifier fundamentally cannot check the prover's response without the
+//! witness. Making this sound requires a real proving backend (e.g. arkworks
+//! or bellman), not a patch to the checks below.
+//!
+//! Do not rely on these proofs for any security decision. See the project
+//! audit for details.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

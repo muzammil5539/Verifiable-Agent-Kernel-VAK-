@@ -212,7 +212,9 @@ async fn test_concurrent_read_write_memory() {
                 drop(guard);
                 tokio::time::sleep(Duration::from_micros(1)).await;
             }
-            reads
+            // Readers join the same handle vec as the writers, so the task
+            // must resolve to () rather than leaking the read count.
+            let _ = reads;
         });
         handles.push(handle);
     }
@@ -276,7 +278,17 @@ async fn test_large_audit_chain_handling() {
 
     let start = Instant::now();
     for i in 0..chain_size {
-        let hash = format!("hash-{}-{}", prev_hash, i);
+        // Chain each entry to its predecessor, but digest to a fixed width.
+        // Embedding the previous hash verbatim made every string carry the
+        // whole chain, so this loop was quadratic in time and memory.
+        let hash = {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            prev_hash.hash(&mut hasher);
+            i.hash(&mut hasher);
+            format!("{:016x}", hasher.finish())
+        };
         entries.push(StressAuditEntry {
             agent_id: format!("agent-{}", i % 100),
             action: format!("action-{}", i % 10),
