@@ -83,7 +83,9 @@ pub use verified_publisher::{
 };
 
 use std::time::{Duration, Instant};
-use wasmtime::{Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
+use wasmtime::{
+    Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder, UpdateDeadline,
+};
 
 /// Configuration for sandbox resource limits
 #[derive(Debug, Clone)]
@@ -154,12 +156,11 @@ pub enum SandboxError {
     GuestAllocation,
 }
 
-/// Store data holding resource limits and state
+/// Store data holding resource limits. Time limits are enforced by
+/// [`Watchdog`], not tracked here.
 #[derive(Debug)]
 pub struct SandboxState {
     limits: StoreLimits,
-    start_time: Option<Instant>,
-    timeout: Duration,
 }
 
 impl SandboxState {
@@ -168,21 +169,79 @@ impl SandboxState {
             .memory_size(config.memory_limit)
             .build();
 
-        Self {
-            limits,
-            start_time: None,
-            timeout: config.timeout,
+        Self { limits }
+    }
+}
+
+/// Enforces a store's wall-clock timeout via epoch interruption.
+///
+/// Epoch interruption needs two things, and the sandbox used to have
+/// neither: a deadline on the store (without one, Wasmtime's default deadline
+/// of 0 traps on the first check, so every skill failed on entry) and
+/// something advancing the engine's epoch.
+///
+/// The deadline is checked against the wall clock in the epoch callback
+/// rather than counted in ticks. Ticks are engine-wide, so with concurrent
+/// executions each watchdog's ticks would count against every store and cut
+/// the others short.
+///
+/// Dropping the watchdog stops its ticker thread. Phase 1 of
+/// docs/architecture-v2.md replaces the per-execution thread with one ticker
+/// per shared engine.
+struct Watchdog {
+    stop: Option<std::sync::mpsc::Sender<()>>,
+    ticker: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Watchdog {
+    /// Longest gap between deadline checks.
+    const MAX_TICK: Duration = Duration::from_millis(10);
+
+    fn arm(
+        engine: &Engine,
+        store: &mut Store<SandboxState>,
+        timeout: Duration,
+    ) -> Result<Self, SandboxError> {
+        let deadline = Instant::now() + timeout;
+        store.set_epoch_deadline(1);
+        store.epoch_deadline_callback(move |_| {
+            if Instant::now() >= deadline {
+                Ok(UpdateDeadline::Interrupt)
+            } else {
+                Ok(UpdateDeadline::Continue(1))
+            }
+        });
+
+        let tick = (timeout / 10).clamp(Duration::from_millis(1), Self::MAX_TICK);
+        let (stop, stopped) = std::sync::mpsc::channel::<()>();
+        let engine = engine.clone();
+        let ticker = std::thread::Builder::new()
+            .name("vak-wasm-watchdog".into())
+            .spawn(move || {
+                while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) =
+                    stopped.recv_timeout(tick)
+                {
+                    engine.increment_epoch();
+                }
+            })
+            // Without a ticker the deadline is never checked. Refuse to run
+            // rather than run without a time limit.
+            .map_err(|e| SandboxError::EngineCreation(format!("failed to start watchdog: {e}")))?;
+
+        Ok(Self {
+            stop: Some(stop),
+            ticker: Some(ticker),
+        })
+    }
+}
+
+impl Drop for Watchdog {
+    fn drop(&mut self) {
+        // Disconnecting the channel wakes the ticker immediately.
+        drop(self.stop.take());
+        if let Some(ticker) = self.ticker.take() {
+            let _ = ticker.join();
         }
-    }
-
-    fn start_execution(&mut self) {
-        self.start_time = Some(Instant::now());
-    }
-
-    fn check_timeout(&self) -> bool {
-        self.start_time
-            .map(|start| start.elapsed() > self.timeout)
-            .unwrap_or(false)
     }
 }
 
@@ -221,6 +280,20 @@ impl WasmSandbox {
             config,
             module: None,
         })
+    }
+
+    /// Maps a Wasmtime error to a sandbox error by its trap code, so a
+    /// deadline or fuel trap is reported as such whatever the timing.
+    fn classify(
+        &self,
+        error: wasmtime::Error,
+        otherwise: impl FnOnce(wasmtime::Error) -> SandboxError,
+    ) -> SandboxError {
+        match error.downcast_ref::<wasmtime::Trap>() {
+            Some(wasmtime::Trap::Interrupt) => SandboxError::Timeout(self.config.timeout),
+            Some(wasmtime::Trap::OutOfFuel) => SandboxError::FuelExhausted,
+            _ => otherwise(error),
+        }
     }
 
     /// Create a sandbox with default configuration
@@ -273,14 +346,14 @@ impl WasmSandbox {
             .set_fuel(self.config.fuel_limit)
             .map_err(|e| SandboxError::EngineCreation(format!("Failed to set fuel: {}", e)))?;
 
-        // Set up epoch deadline for timeout
-        store.epoch_deadline_trap();
+        // Enforce the wall-clock timeout, including during instantiation.
+        let _watchdog = Watchdog::arm(&self.engine, &mut store, self.config.timeout)?;
 
         // Create linker and instantiate module
         let linker = Linker::new(&self.engine);
         let instance = linker
             .instantiate(&mut store, module)
-            .map_err(|e| SandboxError::Instantiation(e.to_string()))?;
+            .map_err(|e| self.classify(e, |e| SandboxError::Instantiation(e.to_string())))?;
 
         // Serialize input to JSON string
         let input_json =
@@ -300,17 +373,9 @@ impl WasmSandbox {
         let input_bytes = input_json.as_bytes();
         let input_len = input_bytes.len() as i32;
 
-        store.data_mut().start_execution();
-
-        let input_ptr = alloc_fn.call(&mut store, input_len).map_err(|_e| {
-            if store.get_fuel().unwrap_or(0) == 0 {
-                SandboxError::FuelExhausted
-            } else if store.data().check_timeout() {
-                SandboxError::Timeout(self.config.timeout)
-            } else {
-                SandboxError::GuestAllocation
-            }
-        })?;
+        let input_ptr = alloc_fn
+            .call(&mut store, input_len)
+            .map_err(|e| self.classify(e, |_| SandboxError::GuestAllocation))?;
 
         // Write input to guest memory
         memory
@@ -325,15 +390,7 @@ impl WasmSandbox {
 
         let output_ptr = target_fn
             .call(&mut store, (input_ptr, input_len))
-            .map_err(|e| {
-                if store.get_fuel().unwrap_or(0) == 0 {
-                    SandboxError::FuelExhausted
-                } else if store.data().check_timeout() {
-                    SandboxError::Timeout(self.config.timeout)
-                } else {
-                    SandboxError::Execution(e.to_string())
-                }
-            })?;
+            .map_err(|e| self.classify(e, |e| SandboxError::Execution(e.to_string())))?;
 
         // Read output length (first 4 bytes at output_ptr)
         let mut len_bytes = [0u8; 4];
@@ -370,26 +427,19 @@ impl WasmSandbox {
             .set_fuel(self.config.fuel_limit)
             .map_err(|e| SandboxError::EngineCreation(format!("Failed to set fuel: {}", e)))?;
 
+        let _watchdog = Watchdog::arm(&self.engine, &mut store, self.config.timeout)?;
+
         let linker = Linker::new(&self.engine);
         let instance = linker
             .instantiate(&mut store, module)
-            .map_err(|e| SandboxError::Instantiation(e.to_string()))?;
+            .map_err(|e| self.classify(e, |e| SandboxError::Instantiation(e.to_string())))?;
 
         let func = instance
             .get_typed_func::<(), i32>(&mut store, func_name)
             .map_err(|_| SandboxError::FunctionNotFound(func_name.into()))?;
 
-        store.data_mut().start_execution();
-
-        func.call(&mut store, ()).map_err(|e| {
-            if store.get_fuel().unwrap_or(0) == 0 {
-                SandboxError::FuelExhausted
-            } else if store.data().check_timeout() {
-                SandboxError::Timeout(self.config.timeout)
-            } else {
-                SandboxError::Execution(e.to_string())
-            }
-        })
+        func.call(&mut store, ())
+            .map_err(|e| self.classify(e, |e| SandboxError::Execution(e.to_string())))
     }
 
     /// Get remaining fuel after execution
@@ -463,5 +513,109 @@ mod tests {
         let sandbox = WasmSandbox::with_defaults().unwrap();
         let result = sandbox.execute("test", &serde_json::json!({}));
         assert!(result.is_err());
+    }
+
+    /// A module implementing the skill ABI (`alloc`, then
+    /// `execute(ptr, len) -> out_ptr` with a little-endian length prefix at
+    /// `out_ptr`). `execute` echoes its input; `spin` never returns.
+    const ECHO_SKILL_WAT: &str = r#"
+        (module
+          (memory (export "memory") 1)
+          (global $next (mut i32) (i32.const 1024))
+          (func (export "alloc") (param $len i32) (result i32)
+            (local $p i32)
+            (local.set $p (global.get $next))
+            (global.set $next (i32.add (global.get $next) (local.get $len)))
+            (local.get $p))
+          (func (export "execute") (param $ptr i32) (param $len i32) (result i32)
+            (i32.store (i32.const 0) (local.get $len))
+            (memory.copy (i32.const 4) (local.get $ptr) (local.get $len))
+            (i32.const 0))
+          (func (export "answer") (result i32)
+            (i32.const 42))
+          (func (export "spin") (result i32)
+            (loop $l (br $l))
+            (i32.const 0)))
+    "#;
+
+    fn echo_sandbox(config: SandboxConfig) -> WasmSandbox {
+        let mut sandbox = WasmSandbox::new(config).unwrap();
+        sandbox.load_skill(ECHO_SKILL_WAT.as_bytes()).unwrap();
+        sandbox
+    }
+
+    #[test]
+    fn test_execute_runs_a_real_module() {
+        // Regression: epoch interruption was enabled with no deadline set, and
+        // Wasmtime's default deadline is 0, so every skill trapped on entry.
+        let sandbox = echo_sandbox(SandboxConfig::default());
+        let input = serde_json::json!({"operation": "add", "operands": [1, 2]});
+        assert_eq!(sandbox.execute("execute", &input).unwrap(), input);
+    }
+
+    #[test]
+    fn test_execute_simple_runs_a_real_module() {
+        let sandbox = echo_sandbox(SandboxConfig::default());
+        assert_eq!(sandbox.execute_simple("answer").unwrap(), 42);
+    }
+
+    #[test]
+    fn test_wall_clock_timeout_interrupts_infinite_loop() {
+        // Enough fuel that only the wall-clock deadline can stop the loop.
+        let sandbox = echo_sandbox(SandboxConfig {
+            fuel_limit: u64::MAX / 2,
+            timeout: Duration::from_millis(100),
+            ..SandboxConfig::default()
+        });
+        let started = Instant::now();
+        let result = sandbox.execute_simple("spin");
+        assert!(
+            matches!(result, Err(SandboxError::Timeout(_))),
+            "expected timeout, got {result:?}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn test_fuel_limit_interrupts_infinite_loop() {
+        let sandbox = echo_sandbox(SandboxConfig {
+            fuel_limit: 10_000,
+            timeout: Duration::from_secs(30),
+            ..SandboxConfig::default()
+        });
+        assert!(matches!(
+            sandbox.execute_simple("spin"),
+            Err(SandboxError::FuelExhausted)
+        ));
+    }
+
+    #[test]
+    fn test_concurrent_executions_do_not_cut_each_other_short() {
+        // Each execution's watchdog ticks the shared engine epoch. A deadline
+        // expressed in ticks would let one execution's ticker expire another;
+        // the deadline must be wall-clock per store.
+        let sandbox = std::sync::Arc::new(echo_sandbox(SandboxConfig {
+            fuel_limit: u64::MAX / 2,
+            timeout: Duration::from_millis(400),
+            ..SandboxConfig::default()
+        }));
+        let spinners: Vec<_> = (0..4)
+            .map(|_| {
+                let sandbox = std::sync::Arc::clone(&sandbox);
+                std::thread::spawn(move || {
+                    let started = Instant::now();
+                    let result = sandbox.execute_simple("spin");
+                    (result, started.elapsed())
+                })
+            })
+            .collect();
+        for spinner in spinners {
+            let (result, elapsed) = spinner.join().unwrap();
+            assert!(matches!(result, Err(SandboxError::Timeout(_))));
+            assert!(
+                elapsed >= Duration::from_millis(400),
+                "interrupted early after {elapsed:?}"
+            );
+        }
     }
 }
