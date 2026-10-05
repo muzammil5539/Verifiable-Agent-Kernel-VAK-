@@ -2,6 +2,10 @@
 
 > **Verifiable Agent Kernel (VAK)** -- Deterministic Control Plane for Autonomous AI Agents
 
+> **Read first:** [`docs/architecture-v2.md`](docs/architecture-v2.md) audits this
+> document's claims against the code, and gives the research-grounded target architecture
+> and migration plan. Where they disagree, the v2 document reflects what the code does.
+
 ---
 
 ## Table of Contents

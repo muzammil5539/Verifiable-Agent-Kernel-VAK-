@@ -8,6 +8,8 @@ VAK (Verifiable Agent Kernel) is a Rust crate that acts as an OS-like "kernel" f
 
 Full details: [ARCHITECTURE.md](ARCHITECTURE.md) (module reference, data flow, deployment) and [API.md](API.md) (API reference). Read these before making non-trivial changes — they are kept current and this file intentionally does not duplicate them.
 
+[docs/architecture-v2.md](docs/architecture-v2.md) records which modules are stubs, heuristics or unsound (with file:line evidence), the research each subsystem should rest on, and the phased migration plan. Check it before extending a module under `reasoner/`, `memory/`, `swarm/` or `integrations/`, and update its findings table when you fix one.
+
 ## Common commands
 
 ```bash
@@ -76,6 +78,8 @@ Any tool name not matching a built-in (`echo`, `calculator`, `data_processor`, `
 ## Key invariants (do not violate silently)
 
 - **Default deny**: no matching policy rule = inadmissible. Never make an action fall through to allow.
+- **No fake success**: a tool that doesn't exist or didn't run is an error (`ToolNotFound`, `ToolExecutionFailed`), never a success response.
+- **Policy is a port**: the kernel decides through `kernel::ports::PolicyDecisionPoint`; add policy logic in an implementation of it (see `kernel::pdp`), not inline in `Kernel`.
 - **Audit before execution**: the audit logger records the decision before the tool runs, not after.
 - **WASM isolation**: untrusted/skill code must run inside the sandbox, never inline in the kernel.
 - **Panic boundary**: host functions catch panics at the WASM/host boundary; the kernel must never crash from sandboxed code.
