@@ -33,6 +33,7 @@ pub mod otel;
 pub mod replay;
 pub mod s3_backend;
 pub mod streaming;
+pub mod transparency;
 
 // Re-export GraphQL/Query API types (OBS-004)
 pub use graphql::{
