@@ -32,6 +32,8 @@ pub mod time_travel;
 pub mod vector_store;
 pub mod working;
 
+use crate::audit::transparency::{leaf_hash, node_hash, Digest, MerkleLog};
+
 pub use content_addressable::{
     CASBackendType, CASConfig, CASError, CASResult, CASStats, ContentAddressableStore,
     ContentId as CASContentId, ContentMetadata, HashAlgorithm,
@@ -261,66 +263,69 @@ impl StateValue {
 // Merkle Proof
 // ============================================================================
 
-/// A Merkle proof for verifiable reads
+/// A Merkle proof for verifiable reads.
+///
+/// Leaves commit to `(key, value)` and are hashed with SHA-256 using the
+/// RFC 9162 tree shape and domain separation (see
+/// [`crate::audit::transparency`]). Before this, leaves were 64-bit
+/// `DefaultHasher` (SipHash, not collision-resistant) digests of the value
+/// alone, so two keys' values could be swapped without changing the root,
+/// and proofs carried no siblings at all.
 #[derive(Debug, Clone)]
 pub struct MerkleProof {
-    /// The leaf hash (hash of the value)
+    /// Canonical key (`namespace:key`) the proof is for
+    pub key: String,
+    /// The leaf hash, over the key and value
     pub leaf_hash: [u8; 32],
     /// Sibling hashes along the path to root
     pub siblings: Vec<[u8; 32]>,
-    /// Path indices (0 = left, 1 = right)
+    /// For each sibling, whether the running hash is the right child
     pub path: Vec<bool>,
     /// The root hash this proof validates against
     pub root: [u8; 32],
 }
 
 impl MerkleProof {
-    /// Verify the proof for a given value
+    /// Verifies that `value` is stored under this proof's key, in the tree
+    /// with root [`Self::root`].
+    ///
+    /// This trusts `self.key` and `self.root`. Callers must compare the root
+    /// with one they trust (as [`StateManager::verify_proof`] does) and use
+    /// [`Self::verify_for`] to bind the proof to the key they asked for.
     pub fn verify(&self, value: &[u8]) -> bool {
-        let computed_leaf = Self::hash_leaf(value);
-        if computed_leaf != self.leaf_hash {
+        if self.siblings.len() != self.path.len() {
+            return false;
+        }
+        if Self::hash_leaf(&self.key, value) != self.leaf_hash {
             return false;
         }
 
-        let mut current = self.leaf_hash;
+        let mut current = Digest(self.leaf_hash);
         for (sibling, is_right) in self.siblings.iter().zip(self.path.iter()) {
+            let sibling = Digest(*sibling);
             current = if *is_right {
-                Self::hash_nodes(sibling, &current)
+                node_hash(&sibling, &current)
             } else {
-                Self::hash_nodes(&current, sibling)
+                node_hash(&current, &sibling)
             };
         }
 
-        current == self.root
+        current.0 == self.root
     }
 
-    /// Hash a leaf value (simplified - use proper crypto in production)
-    fn hash_leaf(value: &[u8]) -> [u8; 32] {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        value.hash(&mut hasher);
-        let hash = hasher.finish();
-
-        let mut result = [0u8; 32];
-        result[..8].copy_from_slice(&hash.to_le_bytes());
-        result
+    /// Verifies that `value` is stored under `key`.
+    pub fn verify_for(&self, key: &NamespacedKey, value: &[u8]) -> bool {
+        self.key == key.to_canonical() && self.verify(value)
     }
 
-    /// Hash two nodes together
-    fn hash_nodes(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        left.hash(&mut hasher);
-        right.hash(&mut hasher);
-        let hash = hasher.finish();
-
-        let mut result = [0u8; 32];
-        result[..8].copy_from_slice(&hash.to_le_bytes());
-        result
+    /// `leaf_hash(len(key) || key || value)`, with the key length-prefixed so
+    /// no `(key, value)` pair can be re-split into another.
+    fn hash_leaf(key: &str, value: &[u8]) -> [u8; 32] {
+        let mut data = Vec::with_capacity(8 + key.len() + value.len());
+        data.extend_from_slice(&(key.len() as u64).to_be_bytes());
+        data.extend_from_slice(key.as_bytes());
+        data.extend_from_slice(value);
+        leaf_hash(&data).0
     }
 }
 
@@ -626,7 +631,8 @@ impl SemanticStorage for InMemorySemanticStorage {
 #[derive(Debug)]
 pub struct InMemoryMerkleStore {
     store: RwLock<HashMap<String, StateValue>>,
-    // Simplified: In production, use a proper Merkle tree structure
+    // The tree is rebuilt for each root or proof: O(n log n). An incremental
+    // sparse Merkle tree is Phase 2 of docs/architecture-v2.md (finding V4).
 }
 
 impl InMemoryMerkleStore {
@@ -637,68 +643,63 @@ impl InMemoryMerkleStore {
         }
     }
 
+    /// Builds the tree over all entries, in canonical-key order, and returns
+    /// it with the sorted keys.
+    fn build_tree(store: &HashMap<String, StateValue>) -> (MerkleLog, Vec<&String>) {
+        let mut keys: Vec<&String> = store.keys().collect();
+        keys.sort();
+        let mut log = MerkleLog::new();
+        for key in &keys {
+            log.append_leaf_hash(Digest(MerkleProof::hash_leaf(key, &store[*key].data)));
+        }
+        (log, keys)
+    }
+
     /// Compute the current Merkle root from all entries
     fn compute_root(&self, store: &HashMap<String, StateValue>) -> [u8; 32] {
-        if store.is_empty() {
-            return [0u8; 32];
-        }
-
-        // Simplified Merkle root computation
-        // In production, use a proper sparse Merkle tree
-        let mut hashes: Vec<[u8; 32]> = store
-            .values()
-            .map(|v| {
-                // Hash just the value data for the leaf
-                MerkleProof::hash_leaf(&v.data)
-            })
-            .collect();
-
-        // Sort hashes for deterministic ordering
-        hashes.sort();
-
-        while hashes.len() > 1 {
-            let mut new_hashes = Vec::new();
-            for chunk in hashes.chunks(2) {
-                let hash = if chunk.len() == 2 {
-                    MerkleProof::hash_nodes(&chunk[0], &chunk[1])
-                } else {
-                    chunk[0]
-                };
-                new_hashes.push(hash);
-            }
-            hashes = new_hashes;
-        }
-
-        hashes[0]
+        Self::build_tree(store).0.root().0
     }
 
     /// Generate a proof for a specific key
     fn generate_proof(
         &self,
         store: &HashMap<String, StateValue>,
-        _key: &str,
+        key: &str,
         value: &StateValue,
-    ) -> MerkleProof {
-        // Simplified proof generation
-        // In production, use a proper sparse Merkle tree with efficient proofs
+    ) -> StateResult<MerkleProof> {
+        let (log, keys) = Self::build_tree(store);
+        let index = keys
+            .binary_search_by(|k| k.as_str().cmp(key))
+            .map_err(|_| StateError::KeyNotFound(key.to_string()))? as u64;
+        let proof = log
+            .inclusion_proof(index, log.size())
+            .map_err(|e| StateError::BackendError(e.to_string()))?;
 
-        // Hash just the value data (consistent with verify)
-        let leaf_hash = MerkleProof::hash_leaf(&value.data);
-
-        let root = self.compute_root(store);
-
-        // For this simplified single-element implementation:
-        // If there's only one element, the root equals the leaf hash
-        // For multiple elements, we'd need to track the tree structure
-
-        // Since we're storing only one value in the test, root should equal leaf_hash
-        // For a proper implementation, we'd need to build actual sibling paths
-        MerkleProof {
-            leaf_hash,
-            siblings: vec![],
-            path: vec![],
-            root,
+        // Record, for each sibling, which side the running hash is on. This
+        // replays RFC 9162's verification walk, which skips levels where the
+        // node is the rightmost and has no sibling.
+        let mut path = Vec::with_capacity(proof.path.len());
+        let (mut node, mut last) = (index, log.size() - 1);
+        for _ in &proof.path {
+            let is_right = node & 1 == 1 || node == last;
+            path.push(is_right);
+            if is_right && node & 1 == 0 {
+                while node & 1 == 0 && node != 0 {
+                    node >>= 1;
+                    last >>= 1;
+                }
+            }
+            node >>= 1;
+            last >>= 1;
         }
+
+        Ok(MerkleProof {
+            key: key.to_string(),
+            leaf_hash: MerkleProof::hash_leaf(key, &value.data),
+            siblings: proof.path.iter().map(|d| d.0).collect(),
+            path,
+            root: log.root().0,
+        })
     }
 }
 
@@ -727,7 +728,7 @@ impl MerkleStorage for InMemoryMerkleStore {
         let canonical = key.to_canonical();
         match store.get(&canonical) {
             Some(value) => {
-                let proof = self.generate_proof(&store, &canonical, value);
+                let proof = self.generate_proof(&store, &canonical, value)?;
                 Ok(Some(VerifiableRead {
                     value: value.clone(),
                     proof,
@@ -1114,6 +1115,97 @@ mod tests {
         // Verify the proof
         let is_valid = manager.verify_proof(&read.proof, &read.value.data).unwrap();
         assert!(is_valid);
+    }
+
+    #[test]
+    fn test_merkle_proofs_verify_for_every_key() {
+        // Regression: proofs carried no siblings, so they only verified when
+        // the store held exactly one entry.
+        let manager = StateManager::new(StateManagerConfig::default());
+        let keys: Vec<_> = (0..13)
+            .map(|i| agent_key("agent1", &format!("k{i}")))
+            .collect();
+        for (i, key) in keys.iter().enumerate() {
+            manager
+                .set_state(key, format!("v{i}").into_bytes(), StateTier::Merkle)
+                .unwrap();
+        }
+        let root = manager.get_merkle_root().unwrap();
+        for key in &keys {
+            let read = manager.get_with_proof(key).unwrap().unwrap();
+            assert_eq!(read.proof.root, root);
+            assert!(manager.verify_proof(&read.proof, &read.value.data).unwrap());
+            assert!(read.proof.verify_for(key, &read.value.data));
+            assert!(!read.proof.verify(b"some other value"));
+        }
+    }
+
+    #[test]
+    fn test_merkle_root_commits_to_keys() {
+        // Regression: leaves hashed values only, so swapping two keys' values
+        // left the root unchanged.
+        let a = agent_key("agent1", "a");
+        let b = agent_key("agent1", "b");
+
+        let first = StateManager::new(StateManagerConfig::default());
+        first
+            .set_state(&a, b"1".to_vec(), StateTier::Merkle)
+            .unwrap();
+        first
+            .set_state(&b, b"2".to_vec(), StateTier::Merkle)
+            .unwrap();
+
+        let swapped = StateManager::new(StateManagerConfig::default());
+        swapped
+            .set_state(&a, b"2".to_vec(), StateTier::Merkle)
+            .unwrap();
+        swapped
+            .set_state(&b, b"1".to_vec(), StateTier::Merkle)
+            .unwrap();
+
+        assert_ne!(
+            first.get_merkle_root().unwrap(),
+            swapped.get_merkle_root().unwrap()
+        );
+
+        // A proof for `a` does not vouch for the same value under `b`.
+        let read = first.get_with_proof(&a).unwrap().unwrap();
+        assert!(read.proof.verify_for(&a, b"1"));
+        assert!(!read.proof.verify_for(&b, b"1"));
+    }
+
+    #[test]
+    fn test_merkle_proof_rejects_tampering() {
+        let manager = StateManager::new(StateManagerConfig::default());
+        for i in 0..5 {
+            manager
+                .set_state(
+                    &agent_key("a", &format!("k{i}")),
+                    vec![i],
+                    StateTier::Merkle,
+                )
+                .unwrap();
+        }
+        let key = agent_key("a", "k2");
+        let read = manager.get_with_proof(&key).unwrap().unwrap();
+
+        let mut sibling = read.proof.clone();
+        sibling.siblings[0][0] ^= 1;
+        assert!(!manager.verify_proof(&sibling, &read.value.data).unwrap());
+
+        let mut direction = read.proof.clone();
+        direction.path[0] = !direction.path[0];
+        assert!(!manager.verify_proof(&direction, &read.value.data).unwrap());
+
+        let mut truncated = read.proof.clone();
+        truncated.siblings.pop();
+        assert!(!manager.verify_proof(&truncated, &read.value.data).unwrap());
+
+        // A proof against an old root is rejected once state changes.
+        manager
+            .set_state(&agent_key("a", "k9"), vec![9], StateTier::Merkle)
+            .unwrap();
+        assert!(!manager.verify_proof(&read.proof, &read.value.data).unwrap());
     }
 
     #[test]
