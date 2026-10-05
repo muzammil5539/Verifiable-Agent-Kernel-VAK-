@@ -8,7 +8,7 @@
 //!
 //! - **Cryptographic Verification**: All operations are logged to an immutable audit trail
 //! - **Sandboxed Execution**: WASM-based isolation prevents unauthorized access
-//! - **Policy Enforcement**: Cedar-based ABAC policies control all actions
+//! - **Policy Enforcement**: Cedar-style ABAC policies, behind a pluggable decision point
 //! - **Neuro-Symbolic Reasoning**: Datalog rules verify agent behavior
 //!
 //! ## Architecture
@@ -76,23 +76,33 @@
 //! VAK provides several safety guarantees:
 //!
 //! 1. **Computational Safety**: WASM sandbox with epoch-based preemption
-//! 2. **Policy Safety**: All actions validated against Cedar policies
+//! 2. **Policy Safety**: All actions decided by the policy decision point, default deny
 //! 3. **Memory Safety**: Rust's ownership system + WASM isolation
-//! 4. **Audit Safety**: Tamper-evident Merkle-chained logs
+//! 4. **Audit Safety**: Tamper-evident RFC 9162 Merkle log with inclusion and consistency proofs
 //!
 //! ## Feature Flags
 //!
 //! - `python`: Enable Python bindings via PyO3
-//! - `full`: Enable all features
 //!
-//! ## Security Audit Status
+//! Further feature gates (to build the trusted core without the research
+//! modules) are planned in `docs/architecture-v2.md` §5.3.
 //!
-//! | Component | Status | Notes |
-//! |-----------|--------|-------|
-//! | Core Kernel | ✅ Audited | SEC-003 compliant |
-//! | WASM Sandbox | ✅ Audited | Documented unsafe blocks |
-//! | Policy Engine | ✅ Audited | Default-deny enforcement |
-//! | Audit Logger | ✅ Audited | Hash chain verification |
+//! ## Assurance Status
+//!
+//! No external security audit has been performed. The levels below follow
+//! `docs/architecture-v2.md` §6: *Enforced* means deterministic and
+//! fail-closed, *Heuristic* means a useful signal that must not be the only
+//! control on a dangerous action, *Experimental* means not sound.
+//!
+//! | Component | Level | Notes |
+//! |-----------|-------|-------|
+//! | Kernel mediation | Enforced | Default deny; unknown tools fail closed |
+//! | Policy (`CedarEnforcer`, YAML) | Enforced | Cedar-style, not the `cedar-policy` engine |
+//! | Kernel audit log | Enforced | RFC 9162 Merkle tree, signed tree heads; in memory |
+//! | WASM sandbox | Enforced | Fuel and wall-clock limits; skill signatures are not yet real signatures |
+//! | `reasoner` (PRM, ToT, Datalog, prompt-injection) | Heuristic | LLM judge, closures, regexes |
+//! | `reasoner::zk_proof` | Experimental | Not a sound proof system |
+//! | `swarm` consensus | Heuristic | Votes are unauthenticated |
 //!
 //! ## License
 //!
@@ -186,13 +196,6 @@ pub mod secrets;
 #[cfg(feature = "python")]
 pub mod python;
 
-/// Prelude module for convenient imports.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use vak::prelude::*;
-/// ```
 pub mod prelude {
     //! Convenient re-exports for common VAK usage patterns.
     //!
@@ -214,7 +217,14 @@ pub mod prelude {
         AgentId, AuditEntry, AuditId, KernelError, PolicyDecision, SessionId, ToolRequest,
         ToolResponse,
     };
-    pub use crate::kernel::Kernel;
+    pub use crate::kernel::{
+        FunctionHandler, Kernel, KernelBuilder, PolicyDecisionPoint, PolicyRequest, ToolHandler,
+    };
+
+    // Audit proofs
+    pub use crate::audit::transparency::{
+        verify_consistency, verify_inclusion, ConsistencyProof, InclusionProof, SignedTreeHead,
+    };
 
     // LLM integration types for library consumers
     pub use crate::lib_integration::{ToolCall, ToolDefinition, ToolResult, VakAgent, VakRuntime};

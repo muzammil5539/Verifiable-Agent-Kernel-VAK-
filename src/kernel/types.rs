@@ -639,6 +639,14 @@ pub enum KernelError {
         /// The requested value.
         requested: u64,
     },
+
+    /// An audit inclusion or consistency proof could not be produced, for
+    /// example because the requested index or tree size is out of range.
+    #[error("Audit proof error: {message}")]
+    AuditProof {
+        /// Why the proof could not be produced.
+        message: String,
+    },
 }
 
 impl KernelError {
@@ -665,6 +673,7 @@ impl KernelError {
             KernelError::SerializationError(_) => "E008",
             KernelError::Timeout { .. } => "E009",
             KernelError::ResourceLimitExceeded { .. } => "E010",
+            KernelError::AuditProof { .. } => "E011",
         }
     }
 }

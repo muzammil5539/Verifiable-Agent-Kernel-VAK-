@@ -805,13 +805,20 @@ impl RuntimeBuilder {
         self
     }
 
-    /// Enable or disable audit logging
+    /// Enable or disable audit logging (`KernelConfig::audit.enabled`).
+    ///
+    /// This controls the configured audit backends. The kernel's own record
+    /// of policy decisions is always kept: recording a decision before acting
+    /// on it is the reference monitor's job, not an option.
     pub fn with_audit_logging(mut self, enabled: bool) -> Self {
         self.audit_enabled = enabled;
         self
     }
 
-    /// Enable or disable policy enforcement
+    /// Enable or disable policy enforcement (`KernelConfig::policy.enabled`).
+    ///
+    /// With enforcement disabled, the tool blocklist and allowlist still
+    /// apply; only the policy engine and default decision are skipped.
     pub fn with_policy_enforcement(mut self, enabled: bool) -> Self {
         self.policy_enabled = enabled;
         self
@@ -851,11 +858,19 @@ impl RuntimeBuilder {
     pub async fn build(self) -> IntegrationResult<VakRuntime> {
         info!(name = %self.name, "Building VAK runtime");
 
+        // An explicit kernel config wins outright. Otherwise the builder's
+        // settings must reach the kernel; they used to be stored in
+        // RuntimeConfig and never applied.
         let kernel_config = self.kernel_config.unwrap_or_else(|| {
-            KernelConfig::builder()
+            let mut config = KernelConfig::builder()
                 .name(&self.name)
                 .max_concurrent_agents(self.max_agents as usize)
-                .build()
+                .max_execution_time(self.default_timeout)
+                .build();
+            config.audit.enabled = self.audit_enabled;
+            config.policy.enabled = self.policy_enabled;
+            config.security.enable_sandboxing = self.sandboxing_enabled;
+            config
         });
 
         let kernel = Arc::new(Kernel::new(kernel_config).await?);
@@ -1083,6 +1098,24 @@ mod tests {
         assert!(runtime.is_ok());
         let runtime = runtime.unwrap();
         assert_eq!(runtime.config().name, "test-runtime");
+    }
+
+    #[tokio::test]
+    async fn test_runtime_builder_settings_reach_kernel() {
+        // Regression: these were stored in RuntimeConfig and never applied.
+        let runtime = VakRuntime::builder()
+            .with_audit_logging(false)
+            .with_policy_enforcement(false)
+            .with_sandboxing(false)
+            .with_default_timeout(Duration::from_secs(7))
+            .build()
+            .await
+            .unwrap();
+        let config = runtime.kernel().config();
+        assert!(!config.audit.enabled);
+        assert!(!config.policy.enabled);
+        assert!(!config.security.enable_sandboxing);
+        assert_eq!(config.max_execution_time, Duration::from_secs(7));
     }
 
     #[tokio::test]

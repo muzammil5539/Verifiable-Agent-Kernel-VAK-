@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+See `docs/architecture-v2.md` for the audit and design behind these changes, and
+`docs/adr/0002-reference-monitor-core-with-ports-and-transparency-log.md` for the
+decision record.
+
+### Added
+- `audit::transparency`: RFC 9162 Merkle tree log with inclusion and consistency proofs,
+  stand-alone verifiers, and Ed25519-signed tree heads. Tested against the Certificate
+  Transparency reference vectors.
+- `kernel::ports::PolicyDecisionPoint` and `Kernel::builder`, so embedders can inject a
+  policy engine, host-side tool handlers (`with_tool`, `Kernel::register_tool`) and an
+  audit signing key.
+- `Kernel::audit_tree_head`, `prove_audit_inclusion`, `prove_audit_consistency` and
+  `audit_leaf_hash`: any decision can be proven to a third party.
+- `KernelError::AuditProof`, `HandlerError::AlreadyRegistered`,
+  `CustomHandlerRegistry::{register_arc, register_new}`.
+
+### Changed
+- **Breaking:** `Kernel::execute` on a permitted tool that doesn't exist now returns
+  `Err(KernelError::ToolNotFound)`. It used to return `success: true` from a "default
+  handler" that executed nothing.
+- The allowlist and `CedarEnforcer` logic moved out of `Kernel` into `kernel::pdp`
+  (`ConfigPolicy`, `EnforcerPolicy`). Behaviour is unchanged.
+- `VakRuntime::builder()` settings (`with_audit_logging`, `with_policy_enforcement`,
+  `with_sandboxing`, `with_default_timeout`) now reach `KernelConfig`.
+- Memory Merkle tier hashes with SHA-256 over `(key, value)`, using the RFC 9162 tree
+  shape. Proofs carry real sibling paths. `MerkleProof` gained `key` and `verify_for`.
+- Z3 verifier: `Matches`, `Forbidden` and list values are rejected instead of being
+  translated incorrectly.
+- `lib.rs` status table states assurance levels instead of claiming an external audit.
+
+### Fixed
+- WASM skills trapped on entry: epoch interruption was enabled with no deadline, and
+  Wasmtime's default deadline is 0. A per-execution watchdog now enforces the wall-clock
+  timeout, and traps are classified by trap code.
+- SMT-LIB injection in the Z3 verifier: field names and string values were spliced into
+  the solver script unescaped. Negative numbers were emitted as invalid `-n` literals.
+- A panicking host tool handler no longer unwinds through `Kernel::execute`.
+
+### Removed
+- `src/prelude.rs`, which was never compiled (`lib.rs` defines `prelude` inline) and
+  referenced types that don't exist.
+
 ## [1.0.0] - 2026-02-13
 
 ### Added
