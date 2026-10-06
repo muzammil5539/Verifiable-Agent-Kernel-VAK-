@@ -36,25 +36,30 @@ python:
 # Test Targets
 # ===========================================================================
 
-## Run all tests
+## Run all tests (every feature but the Python bindings; see docs/adr/0006)
 test:
-	cargo test --verbose
+	cargo test --features full --verbose
+
+## Build and test the trusted core alone
+test-core:
+	cargo build --no-default-features
+	cargo test --no-default-features --verbose
 
 ## Run unit tests only
 test-unit:
-	cargo test --lib --verbose
+	cargo test --lib --features full --verbose
 
 ## Run integration tests only
 test-integration:
-	cargo test --test '*' --verbose
+	cargo test --test '*' --features full --verbose
 
 ## Run doc tests only
 test-doc:
-	cargo test --doc --verbose
+	cargo test --doc --features full --verbose
 
 ## Run property-based tests with extended cases
 test-property:
-	PROPTEST_CASES=512 cargo test --test property_tests --verbose
+	PROPTEST_CASES=512 cargo test --test property_tests --features full --verbose
 
 ## Run Python SDK tests
 test-python:
@@ -62,7 +67,7 @@ test-python:
 
 ## Run stress tests
 test-stress:
-	cargo test --test integration_root test_stress --verbose -- --test-threads=1
+	cargo test --test integration_root test_stress --features full --verbose -- --test-threads=1
 
 ## Run all tests including Python
 test-all: test test-python

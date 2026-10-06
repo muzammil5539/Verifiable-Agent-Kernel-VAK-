@@ -48,6 +48,10 @@ that language is exactly how the gap went unnoticed for thirteen sprints.
 - [x] `sandbox::async_host` denies when its enforcer can't be built, instead of
       falling back to `CedarEnforcer::new_permissive()`
       (`test_enforcer_construction_failure_denies`)
+- [x] Feature gates (`docs/adr/0006`): the trusted core builds and tests alone with
+      `--no-default-features` (no Wasmtime); `reasoner`, `experimental-zk`, `swarm`,
+      `integrations`, `dashboard`, `legacy-tools` and `python` are off by default;
+      `--features full` is what CI tests, plus a core-only job
 - [x] Signed skills (`docs/adr/0005`): Ed25519 over the module digest and manifest,
       verified against `security.trusted_skill_keys`, unsigned skills refused by default,
       each skill pinned to the module it was verified with, the module digest recorded in

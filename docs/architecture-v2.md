@@ -424,21 +424,34 @@ flowchart TB
 ### 5.3 Packaging: from one crate to a workspace with feature flags
 
 Phase 1 keeps one crate but gates heavy and experimental modules behind features, so
-`vak = { default-features = false }` builds only the core:
+`vak = { default-features = false }` builds only the core. As built in slice 1d
+(ADR 0006):
 
-| Feature | Modules | Heavy deps | Default |
+| Feature | Modules | Optional deps | Default |
 |---|---|---|---|
-| *(core)* | `kernel`, `policy` (YAML), `audit` (memory, file), `secrets` | none beyond serde, tokio, sha2, ed25519 | yes |
-| `wasm` | `sandbox` | wasmtime | yes |
-| `sqlite` | SQLite audit and memory backends | rusqlite | yes |
-| `memory` | `memory` (all tiers) | petgraph, rs_merkle | yes |
-| `reasoner` | `reasoner` (except zk) | — | no (Experimental) |
-| `experimental-zk` | `reasoner::zk_proof` | — | no |
-| `swarm` | `swarm`, `api::a2a` | — | no |
-| `integrations` | `integrations` (MCP, LangChain, AutoGPT) | reqwest | yes |
-| `dashboard` | `dashboard` | — | no |
+| *(core)* | `kernel` (minus skills and the neuro-symbolic pipeline), `policy`, `audit`, `secrets`, `lib_integration` | none | always |
+| `wasm` | `sandbox`, `kernel::skills` | wasmtime | yes |
+| `llm` | `llm` | tokio-stream | via `memory` |
+| `memory` | `memory` (all tiers) | petgraph | yes |
+| `reasoner` | `reasoner` (except zk), `sandbox::reasoning_host`, `kernel::neurosymbolic_pipeline` | none | no (Heuristic) |
+| `experimental-zk` | `reasoner::zk_proof` | none | no |
+| `swarm` | `swarm` | none | no |
+| `integrations` | `integrations` (MCP, LangChain, AutoGPT); implies `reasoner`, `wasm` | none | no |
+| `dashboard` | `dashboard`, `api`; implies `swarm` | none | no |
+| `legacy-tools` | `tools::skill_sign` (superseded by `sandbox::signing`) | base64 | no |
 | `python` | `python` | pyo3 | no |
+| `full` | everything except `python` | | no |
 | `cedar` | `policy::cedar` adapter over `cedar-policy` | cedar-policy | no (Phase 2) |
+
+Departures from the plan above, with reasons:
+
+- `integrations` is off by default: all three adapters embed the `reasoner` (the MCP server
+  uses the Datalog engine; LangChain and AutoGPT use the PRM), and the MCP server carries
+  finding I3.
+- There is no `sqlite` feature yet. The SQLite backends live in `audit` and `memory`, and
+  untangling `audit::AuditLogger` from the core is slice 1e.
+- `rs_merkle` was a dependency no module used. It is removed.
+- The core build depends on 210 packages instead of 301 (normal and build dependencies), and Wasmtime and petgraph are absent.
 
 Phase 3 splits along the same lines into `vak-core`, `vak-audit`, `vak-sandbox`,
 `vak-policy-cedar`, `vak-memory`, `vak-reasoner`, `vak-swarm`, `vak-mcp`, `vak-a2a` and
@@ -529,11 +542,13 @@ phase's exit criterion.
       `Budget` port and the Budget stage from `security.*` (K5); `AuditLog` port with
       memory and JSONL file adapters; outcome leaves; receipts on `ToolResponse`; the
       async-host enforcer denies when it can't be built.
-- Feature-gate modules per §5.3. `default-features = false` builds the core alone.
 - SQLite adapter for the `AuditLog` port, replacing or absorbing `audit::AuditLogger`.
 - [x] Slice 1b (ADR 0004): shared `SandboxRuntime` (engine, module cache keyed by
       SHA-256, one epoch ticker that parks while idle); `spawn_blocking` execution;
       untrusted skill output bounds-checked. Pooling allocator available, opt-in.
+- [x] Slice 1d (ADR 0006): feature gates per §5.3. `default-features = false` builds the
+      core alone (210 packages instead of 301, no Wasmtime) and its tests pass; `full` builds everything
+      but the Python bindings, and CI tests with it plus a core-only job.
 - [x] Slice 1c (ADR 0005): Ed25519 skill signatures over the module digest and every
       manifest field but `wasm_path`, verified against `security.trusted_skill_keys`;
       unsigned skills refused unless `security.allow_unsigned_skills`; each skill pinned

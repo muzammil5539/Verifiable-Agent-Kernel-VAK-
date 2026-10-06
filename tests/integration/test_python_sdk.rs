@@ -175,6 +175,7 @@ mod python_sdk_type_tests {
 
     /// TST-006: Test reasoning verification for Python SDK.
     #[test]
+    #[cfg(feature = "reasoner")]
     fn test_reasoning_python_workflow() {
         use vak::sandbox::reasoning_host::{PlanVerification, ReasoningConfig, ReasoningHost};
 
@@ -222,6 +223,7 @@ mod python_sdk_type_tests {
 
     /// TST-006: Test JSON serialization workflows (critical for Python interop).
     #[test]
+    #[cfg(feature = "reasoner")]
     fn test_json_serialization_python_interop() {
         use vak::sandbox::reasoning_host::{VerificationResult, ViolationInfo};
 

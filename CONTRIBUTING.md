@@ -25,7 +25,7 @@ Thank you for your interest in contributing to the Verifiable Agent Kernel (VAK)
    ```
 4. Run tests:
    ```bash
-   cargo test
+   cargo test --features full
    ```
 
 ## Development Workflow
@@ -46,7 +46,7 @@ Thank you for your interest in contributing to the Verifiable Agent Kernel (VAK)
    # Or manually:
    cargo fmt --all
    cargo clippy --all-targets --all-features -- -D warnings
-   cargo test
+   cargo test --features full
    cargo tarpaulin --config tarpaulin.toml --fail-under 80
    ```
 5. Commit with a descriptive message (see commit conventions below).
@@ -98,16 +98,16 @@ chore(deps): update wasmtime to 41.0.3
 
 ```bash
 # All Rust tests
-cargo test
+cargo test --features full
 
 # Unit tests only (fast)
-cargo test --lib
+cargo test --lib --features full
 
 # Integration tests only
-cargo test --test '*'
+cargo test --test '*' --features full
 
 # Doc tests only
-cargo test --doc
+cargo test --doc --features full
 
 # Python tests
 pytest python/tests/

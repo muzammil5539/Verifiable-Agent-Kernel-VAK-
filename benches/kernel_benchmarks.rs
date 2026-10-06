@@ -452,65 +452,70 @@ fn bench_policy_validation(c: &mut Criterion) {
 /// Measures set/get performance for ephemeral and merkle tiers,
 /// as well as cascading lookups that search multiple tiers.
 fn bench_memory_state_operations(c: &mut Criterion) {
-    use vak::memory::{agent_key, StateManager, StateManagerConfig, StateTier};
+    #[cfg(not(feature = "memory"))]
+    let _ = c;
+    #[cfg(feature = "memory")]
+    {
+        use vak::memory::{agent_key, StateManager, StateManagerConfig, StateTier};
 
-    let manager = StateManager::new(StateManagerConfig::default());
+        let manager = StateManager::new(StateManagerConfig::default());
 
-    let mut group = c.benchmark_group("memory_operations");
+        let mut group = c.benchmark_group("memory_operations");
 
-    group.bench_function("ephemeral_set", |b| {
-        let mut i = 0u64;
-        b.iter(|| {
-            let key = agent_key("bench-agent", &format!("key_{}", i));
+        group.bench_function("ephemeral_set", |b| {
+            let mut i = 0u64;
+            b.iter(|| {
+                let key = agent_key("bench-agent", &format!("key_{}", i));
+                manager
+                    .set_state(
+                        &key,
+                        black_box(b"benchmark_value".to_vec()),
+                        StateTier::Ephemeral,
+                    )
+                    .unwrap();
+                i += 1;
+            })
+        });
+
+        group.bench_function("ephemeral_get", |b| {
+            let key = agent_key("bench-agent", "bench_key");
             manager
-                .set_state(
-                    &key,
-                    black_box(b"benchmark_value".to_vec()),
-                    StateTier::Ephemeral,
-                )
+                .set_state(&key, b"benchmark_value".to_vec(), StateTier::Ephemeral)
                 .unwrap();
-            i += 1;
-        })
-    });
 
-    group.bench_function("ephemeral_get", |b| {
-        let key = agent_key("bench-agent", "bench_key");
-        manager
-            .set_state(&key, b"benchmark_value".to_vec(), StateTier::Ephemeral)
-            .unwrap();
+            b.iter(|| {
+                black_box(manager.get_state(&key, StateTier::Ephemeral).unwrap());
+            })
+        });
 
-        b.iter(|| {
-            black_box(manager.get_state(&key, StateTier::Ephemeral).unwrap());
-        })
-    });
+        group.bench_function("merkle_set", |b| {
+            let mut i = 0u64;
+            b.iter(|| {
+                let key = agent_key("bench-agent", &format!("merkle_key_{}", i));
+                manager
+                    .set_state(
+                        &key,
+                        black_box(b"verified_value".to_vec()),
+                        StateTier::Merkle,
+                    )
+                    .unwrap();
+                i += 1;
+            })
+        });
 
-    group.bench_function("merkle_set", |b| {
-        let mut i = 0u64;
-        b.iter(|| {
-            let key = agent_key("bench-agent", &format!("merkle_key_{}", i));
+        group.bench_function("cascading_get", |b| {
+            let key = agent_key("bench-agent", "cascade_key");
             manager
-                .set_state(
-                    &key,
-                    black_box(b"verified_value".to_vec()),
-                    StateTier::Merkle,
-                )
+                .set_state(&key, b"cascade_value".to_vec(), StateTier::Merkle)
                 .unwrap();
-            i += 1;
-        })
-    });
 
-    group.bench_function("cascading_get", |b| {
-        let key = agent_key("bench-agent", "cascade_key");
-        manager
-            .set_state(&key, b"cascade_value".to_vec(), StateTier::Merkle)
-            .unwrap();
+            b.iter(|| {
+                black_box(manager.get_state_cascading(&key).unwrap());
+            })
+        });
 
-        b.iter(|| {
-            black_box(manager.get_state_cascading(&key).unwrap());
-        })
-    });
-
-    group.finish();
+        group.finish();
+    }
 }
 
 /// Benchmark audit logging with grouped sub-benchmarks (TST-005).
@@ -611,29 +616,34 @@ fn bench_tool_definitions(c: &mut Criterion) {
 /// Measures the time to run all migrations on a fresh in-memory
 /// database and check migration status.
 fn bench_migrations(c: &mut Criterion) {
-    use vak::memory::migrations::MigrationRunner;
+    #[cfg(not(feature = "memory"))]
+    let _ = c;
+    #[cfg(feature = "memory")]
+    {
+        use vak::memory::migrations::MigrationRunner;
 
-    let mut group = c.benchmark_group("migrations");
+        let mut group = c.benchmark_group("migrations");
 
-    group.bench_function("run_all_migrations", |b| {
-        b.iter(|| {
+        group.bench_function("run_all_migrations", |b| {
+            b.iter(|| {
+                let conn = Connection::open_in_memory().unwrap();
+                let runner = MigrationRunner::new(&conn).unwrap();
+                black_box(runner.run_all().unwrap());
+            })
+        });
+
+        group.bench_function("migration_status_check", |b| {
             let conn = Connection::open_in_memory().unwrap();
             let runner = MigrationRunner::new(&conn).unwrap();
-            black_box(runner.run_all().unwrap());
-        })
-    });
+            runner.run_all().unwrap();
 
-    group.bench_function("migration_status_check", |b| {
-        let conn = Connection::open_in_memory().unwrap();
-        let runner = MigrationRunner::new(&conn).unwrap();
-        runner.run_all().unwrap();
+            b.iter(|| {
+                black_box(runner.status().unwrap());
+            })
+        });
 
-        b.iter(|| {
-            black_box(runner.status().unwrap());
-        })
-    });
-
-    group.finish();
+        group.finish();
+    }
 }
 
 /// Benchmark knowledge graph operations (TST-005).
@@ -641,92 +651,97 @@ fn bench_migrations(c: &mut Criterion) {
 /// Measures entity insertion, relationship creation, traversal,
 /// and search performance on graphs of varying sizes.
 fn bench_knowledge_graph(c: &mut Criterion) {
-    use vak::memory::knowledge_graph::{Entity, KnowledgeGraph, RelationType, Relationship};
+    #[cfg(not(feature = "memory"))]
+    let _ = c;
+    #[cfg(feature = "memory")]
+    {
+        use vak::memory::knowledge_graph::{Entity, KnowledgeGraph, RelationType, Relationship};
 
-    let mut group = c.benchmark_group("knowledge_graph");
+        let mut group = c.benchmark_group("knowledge_graph");
 
-    // Entity insertion
-    group.bench_function("add_entity", |b| {
-        let mut kg = KnowledgeGraph::new("bench");
-        let mut i = 0u64;
-        b.iter(|| {
-            let entity = Entity::new(format!("entity_{}", i), "Server")
-                .with_property("ip", format!("10.0.0.{}", i % 255));
-            black_box(kg.add_entity(entity).unwrap());
-            i += 1;
-        })
-    });
+        // Entity insertion
+        group.bench_function("add_entity", |b| {
+            let mut kg = KnowledgeGraph::new("bench");
+            let mut i = 0u64;
+            b.iter(|| {
+                let entity = Entity::new(format!("entity_{}", i), "Server")
+                    .with_property("ip", format!("10.0.0.{}", i % 255));
+                black_box(kg.add_entity(entity).unwrap());
+                i += 1;
+            })
+        });
 
-    // Relationship creation
-    group.bench_function("add_relationship", |b| {
-        let mut kg = KnowledgeGraph::new("bench");
-        let mut entities = Vec::new();
-        for i in 0..200 {
-            let entity = Entity::new(format!("node_{}", i), "Node");
-            entities.push(kg.add_entity(entity).unwrap());
-        }
+        // Relationship creation
+        group.bench_function("add_relationship", |b| {
+            let mut kg = KnowledgeGraph::new("bench");
+            let mut entities = Vec::new();
+            for i in 0..200 {
+                let entity = Entity::new(format!("node_{}", i), "Node");
+                entities.push(kg.add_entity(entity).unwrap());
+            }
 
-        let mut i = 0u64;
-        b.iter(|| {
-            let src = entities[(i as usize) % entities.len()].clone();
-            let tgt = entities[((i as usize) + 1) % entities.len()].clone();
-            let _ = black_box(kg.add_relationship(Relationship::new(
-                src,
-                tgt,
-                RelationType::DependsOn,
-            )));
-            i += 1;
-        })
-    });
+            let mut i = 0u64;
+            b.iter(|| {
+                let src = entities[(i as usize) % entities.len()].clone();
+                let tgt = entities[((i as usize) + 1) % entities.len()].clone();
+                let _ = black_box(kg.add_relationship(Relationship::new(
+                    src,
+                    tgt,
+                    RelationType::DependsOn,
+                )));
+                i += 1;
+            })
+        });
 
-    // Entity lookup by name
-    group.bench_function("get_entity_by_name_100", |b| {
-        let mut kg = KnowledgeGraph::new("bench");
-        for i in 0..100 {
-            let entity = Entity::new(format!("server_{}", i), "Server");
-            kg.add_entity(entity).unwrap();
-        }
+        // Entity lookup by name
+        group.bench_function("get_entity_by_name_100", |b| {
+            let mut kg = KnowledgeGraph::new("bench");
+            for i in 0..100 {
+                let entity = Entity::new(format!("server_{}", i), "Server");
+                kg.add_entity(entity).unwrap();
+            }
 
-        b.iter(|| {
-            black_box(kg.get_entity_by_name("server_50"));
-        })
-    });
+            b.iter(|| {
+                black_box(kg.get_entity_by_name("server_50"));
+            })
+        });
 
-    // Graph traversal (get_related)
-    group.bench_function("get_related", |b| {
-        let mut kg = KnowledgeGraph::new("bench");
-        let root = kg.add_entity(Entity::new("root", "Root")).unwrap();
-        for i in 0..50 {
-            let child = kg
-                .add_entity(Entity::new(format!("child_{}", i), "Child"))
-                .unwrap();
-            let _ = kg.add_relationship(Relationship::new(
-                root.clone(),
-                child,
-                RelationType::HostsService,
-            ));
-        }
+        // Graph traversal (get_related)
+        group.bench_function("get_related", |b| {
+            let mut kg = KnowledgeGraph::new("bench");
+            let root = kg.add_entity(Entity::new("root", "Root")).unwrap();
+            for i in 0..50 {
+                let child = kg
+                    .add_entity(Entity::new(format!("child_{}", i), "Child"))
+                    .unwrap();
+                let _ = kg.add_relationship(Relationship::new(
+                    root.clone(),
+                    child,
+                    RelationType::HostsService,
+                ));
+            }
 
-        b.iter(|| {
-            black_box(kg.get_related(root.clone(), Some(RelationType::HostsService)));
-        })
-    });
+            b.iter(|| {
+                black_box(kg.get_related(root.clone(), Some(RelationType::HostsService)));
+            })
+        });
 
-    // Graph hash computation
-    group.bench_function("compute_hash", |b| {
-        let mut kg = KnowledgeGraph::new("bench");
-        for i in 0..50 {
-            let entity =
-                Entity::new(format!("e_{}", i), "Type").with_property("key", format!("val_{}", i));
-            kg.add_entity(entity).unwrap();
-        }
+        // Graph hash computation
+        group.bench_function("compute_hash", |b| {
+            let mut kg = KnowledgeGraph::new("bench");
+            for i in 0..50 {
+                let entity = Entity::new(format!("e_{}", i), "Type")
+                    .with_property("key", format!("val_{}", i));
+                kg.add_entity(entity).unwrap();
+            }
 
-        b.iter(|| {
-            black_box(kg.compute_hash());
-        })
-    });
+            b.iter(|| {
+                black_box(kg.compute_hash());
+            })
+        });
 
-    group.finish();
+        group.finish();
+    }
 }
 
 /// Benchmark signed audit entries (TST-005, Issue #51).
@@ -796,340 +811,375 @@ fn bench_signed_audit(c: &mut Criterion) {
 ///
 /// Measures quadratic voting cost calculations and session management.
 fn bench_swarm_voting(c: &mut Criterion) {
-    use vak::swarm::{Proposal, QuadraticVoting, VoteDirection, VotingConfig, VotingSession};
+    #[cfg(not(feature = "swarm"))]
+    let _ = c;
+    #[cfg(feature = "swarm")]
+    {
+        use vak::swarm::{Proposal, QuadraticVoting, VoteDirection, VotingConfig, VotingSession};
 
-    let mut group = c.benchmark_group("swarm_voting");
+        let mut group = c.benchmark_group("swarm_voting");
 
-    // Quadratic voting cost calculation
-    group.bench_function("quadratic_cost", |b| {
-        let qv = QuadraticVoting::new(100);
-        b.iter(|| {
-            black_box(qv.calculate_cost(5));
-            black_box(qv.calculate_cost(10));
-            black_box(qv.calculate_cost(1));
-        })
-    });
+        // Quadratic voting cost calculation
+        group.bench_function("quadratic_cost", |b| {
+            let qv = QuadraticVoting::new(100);
+            b.iter(|| {
+                black_box(qv.calculate_cost(5));
+                black_box(qv.calculate_cost(10));
+                black_box(qv.calculate_cost(1));
+            })
+        });
 
-    // Session creation
-    group.bench_function("session_creation", |b| {
-        b.iter(|| {
-            let proposal =
-                Proposal::new("Test proposal").with_description("A test proposal for benchmarking");
-            let config = VotingConfig::default();
-            black_box(VotingSession::new(
-                "bench-session".to_string(),
-                proposal,
-                config,
-            ));
-        })
-    });
+        // Session creation
+        group.bench_function("session_creation", |b| {
+            b.iter(|| {
+                let proposal = Proposal::new("Test proposal")
+                    .with_description("A test proposal for benchmarking");
+                let config = VotingConfig::default();
+                black_box(VotingSession::new(
+                    "bench-session".to_string(),
+                    proposal,
+                    config,
+                ));
+            })
+        });
 
-    group.finish();
+        group.finish();
+    }
 }
 
 /// Benchmark sycophancy detection (TST-005).
 ///
 /// Measures vote recording and session analysis performance.
 fn bench_sycophancy_detection(c: &mut Criterion) {
-    use vak::swarm::{DetectorConfig, SycophancyDetector};
+    #[cfg(not(feature = "swarm"))]
+    let _ = c;
+    #[cfg(feature = "swarm")]
+    {
+        use vak::swarm::{DetectorConfig, SycophancyDetector};
 
-    let rt = Runtime::new().unwrap();
-    let mut group = c.benchmark_group("sycophancy_detection");
+        let rt = Runtime::new().unwrap();
+        let mut group = c.benchmark_group("sycophancy_detection");
 
-    // Record vote performance
-    group.bench_function("record_vote", |b| {
-        let detector = SycophancyDetector::with_defaults();
-        let mut i = 0u64;
-        b.iter(|| {
-            rt.block_on(async {
-                detector
-                    .record_vote(
-                        "session-1",
-                        &format!("agent-{}", i % 10),
-                        "option-a",
-                        black_box(3),
-                    )
-                    .await;
-            });
-            i += 1;
-        })
-    });
-
-    // Session analysis
-    group.bench_function("analyze_session_50_votes", |b| {
-        let detector = SycophancyDetector::with_defaults();
-        rt.block_on(async {
-            for i in 0..50 {
-                detector
-                    .record_vote(
-                        "analysis-session",
-                        &format!("agent-{}", i % 10),
-                        if i % 3 == 0 { "option-a" } else { "option-b" },
-                        (i % 5 + 1) as u64,
-                    )
-                    .await;
-            }
-        });
-        b.iter(|| {
-            rt.block_on(async {
-                black_box(detector.analyze_session("analysis-session").await);
+        // Record vote performance
+        group.bench_function("record_vote", |b| {
+            let detector = SycophancyDetector::with_defaults();
+            let mut i = 0u64;
+            b.iter(|| {
+                rt.block_on(async {
+                    detector
+                        .record_vote(
+                            "session-1",
+                            &format!("agent-{}", i % 10),
+                            "option-a",
+                            black_box(3),
+                        )
+                        .await;
+                });
+                i += 1;
             })
-        })
-    });
+        });
 
-    group.finish();
+        // Session analysis
+        group.bench_function("analyze_session_50_votes", |b| {
+            let detector = SycophancyDetector::with_defaults();
+            rt.block_on(async {
+                for i in 0..50 {
+                    detector
+                        .record_vote(
+                            "analysis-session",
+                            &format!("agent-{}", i % 10),
+                            if i % 3 == 0 { "option-a" } else { "option-b" },
+                            (i % 5 + 1) as u64,
+                        )
+                        .await;
+                }
+            });
+            b.iter(|| {
+                rt.block_on(async {
+                    black_box(detector.analyze_session("analysis-session").await);
+                })
+            })
+        });
+
+        group.finish();
+    }
 }
 
 /// Benchmark constraint verification (TST-005).
 ///
 /// Measures formal constraint checking performance.
 fn bench_constraint_verification(c: &mut Criterion) {
-    use vak::reasoner::{Constraint, ConstraintKind, ConstraintVerifier, FormalVerifier};
+    #[cfg(not(feature = "reasoner"))]
+    let _ = c;
+    #[cfg(feature = "reasoner")]
+    {
+        use vak::reasoner::{Constraint, ConstraintKind, ConstraintVerifier, FormalVerifier};
 
-    let mut group = c.benchmark_group("constraint_verification");
+        let mut group = c.benchmark_group("constraint_verification");
 
-    // Single constraint verification
-    group.bench_function("verify_single", |b| {
-        let verifier = ConstraintVerifier::new();
-        let constraint = Constraint::new(
-            "max_amount",
-            ConstraintKind::LessThan {
-                field: "amount".to_string(),
-                value: 1000.into(),
-            },
-        );
-        let mut ctx = HashMap::new();
-        ctx.insert("amount".to_string(), 500.into());
+        // Single constraint verification
+        group.bench_function("verify_single", |b| {
+            let verifier = ConstraintVerifier::new();
+            let constraint = Constraint::new(
+                "max_amount",
+                ConstraintKind::LessThan {
+                    field: "amount".to_string(),
+                    value: 1000.into(),
+                },
+            );
+            let mut ctx = HashMap::new();
+            ctx.insert("amount".to_string(), 500.into());
 
-        b.iter(|| black_box(verifier.verify(&constraint, &ctx).unwrap()))
-    });
+            b.iter(|| black_box(verifier.verify(&constraint, &ctx).unwrap()))
+        });
 
-    // Multiple constraints verification
-    group.bench_function("verify_batch_10", |b| {
-        let verifier = ConstraintVerifier::new();
-        let constraints: Vec<_> = (0..10)
-            .map(|i| {
-                Constraint::new(
-                    format!("constraint_{}", i),
-                    ConstraintKind::LessThan {
-                        field: format!("field_{}", i),
-                        value: (1000 + i).into(),
-                    },
-                )
-            })
-            .collect();
-        let mut ctx = HashMap::new();
-        for i in 0..10 {
-            ctx.insert(format!("field_{}", i), (500i64).into());
-        }
+        // Multiple constraints verification
+        group.bench_function("verify_batch_10", |b| {
+            let verifier = ConstraintVerifier::new();
+            let constraints: Vec<_> = (0..10)
+                .map(|i| {
+                    Constraint::new(
+                        format!("constraint_{}", i),
+                        ConstraintKind::LessThan {
+                            field: format!("field_{}", i),
+                            value: (1000 + i).into(),
+                        },
+                    )
+                })
+                .collect();
+            let mut ctx = HashMap::new();
+            for i in 0..10 {
+                ctx.insert(format!("field_{}", i), (500i64).into());
+            }
 
-        b.iter(|| black_box(verifier.verify_all(&constraints, &ctx).unwrap()))
-    });
+            b.iter(|| black_box(verifier.verify_all(&constraints, &ctx).unwrap()))
+        });
 
-    group.finish();
+        group.finish();
+    }
 }
 
 /// Benchmark episodic memory operations (TST-005).
 ///
 /// Measures episode recording, retrieval, and chain verification.
 fn bench_episodic_memory(c: &mut Criterion) {
-    use vak::memory::EpisodicMemory;
+    #[cfg(not(feature = "memory"))]
+    let _ = c;
+    #[cfg(feature = "memory")]
+    {
+        use vak::memory::EpisodicMemory;
 
-    let mut group = c.benchmark_group("episodic_memory");
+        let mut group = c.benchmark_group("episodic_memory");
 
-    // Episode recording
-    group.bench_function("record_episode", |b| {
-        let mut memory = EpisodicMemory::new();
-        let mut i = 0u64;
-        b.iter(|| {
-            memory.record_episode(
-                format!("action_{}", i),
-                format!("observation_{}", i),
-                Some(format!("thought_{}", i)),
-            );
-            i += 1;
-        })
-    });
+        // Episode recording
+        group.bench_function("record_episode", |b| {
+            let mut memory = EpisodicMemory::new();
+            let mut i = 0u64;
+            b.iter(|| {
+                memory.record_episode(
+                    format!("action_{}", i),
+                    format!("observation_{}", i),
+                    Some(format!("thought_{}", i)),
+                );
+                i += 1;
+            })
+        });
 
-    // Get recent episodes
-    group.bench_function("get_recent_100", |b| {
-        let mut memory = EpisodicMemory::new();
-        for i in 0..200 {
-            memory.record_episode(
-                format!("action_{}", i),
-                format!("observation_{}", i),
-                Some(format!("thought_{}", i)),
-            );
-        }
-        b.iter(|| black_box(memory.get_recent(100)))
-    });
+        // Get recent episodes
+        group.bench_function("get_recent_100", |b| {
+            let mut memory = EpisodicMemory::new();
+            for i in 0..200 {
+                memory.record_episode(
+                    format!("action_{}", i),
+                    format!("observation_{}", i),
+                    Some(format!("thought_{}", i)),
+                );
+            }
+            b.iter(|| black_box(memory.get_recent(100)))
+        });
 
-    // Chain verification
-    group.bench_function("verify_chain_100", |b| {
-        let mut memory = EpisodicMemory::new();
-        for i in 0..100 {
-            memory.record_episode(format!("action_{}", i), format!("observation_{}", i), None);
-        }
-        b.iter(|| black_box(memory.verify_chain().is_ok()))
-    });
+        // Chain verification
+        group.bench_function("verify_chain_100", |b| {
+            let mut memory = EpisodicMemory::new();
+            for i in 0..100 {
+                memory.record_episode(format!("action_{}", i), format!("observation_{}", i), None);
+            }
+            b.iter(|| black_box(memory.verify_chain().is_ok()))
+        });
 
-    // Content search
-    group.bench_function("search_by_content", |b| {
-        let mut memory = EpisodicMemory::new();
-        for i in 0..100 {
-            memory.record_episode(
-                format!("calculate sum of {}", i),
-                format!("result is {}", i * 2),
-                None,
-            );
-        }
-        b.iter(|| black_box(memory.search_by_content("calculate")))
-    });
+        // Content search
+        group.bench_function("search_by_content", |b| {
+            let mut memory = EpisodicMemory::new();
+            for i in 0..100 {
+                memory.record_episode(
+                    format!("calculate sum of {}", i),
+                    format!("result is {}", i * 2),
+                    None,
+                );
+            }
+            b.iter(|| black_box(memory.search_by_content("calculate")))
+        });
 
-    group.finish();
+        group.finish();
+    }
 }
 
 /// Benchmark sparse Merkle tree operations (TST-005).
 ///
 /// Measures insert, lookup, and proof generation/verification.
 fn bench_sparse_merkle(c: &mut Criterion) {
-    use vak::memory::SparseMerkleTree;
+    #[cfg(not(feature = "memory"))]
+    let _ = c;
+    #[cfg(feature = "memory")]
+    {
+        use vak::memory::SparseMerkleTree;
 
-    let mut group = c.benchmark_group("sparse_merkle");
+        let mut group = c.benchmark_group("sparse_merkle");
 
-    // Insert
-    group.bench_function("insert", |b| {
-        let mut tree = SparseMerkleTree::new();
-        let mut i = 0u64;
-        b.iter(|| {
-            tree.insert(&format!("key_{}", i), format!("value_{}", i).as_bytes());
-            i += 1;
-        })
-    });
+        // Insert
+        group.bench_function("insert", |b| {
+            let mut tree = SparseMerkleTree::new();
+            let mut i = 0u64;
+            b.iter(|| {
+                tree.insert(&format!("key_{}", i), format!("value_{}", i).as_bytes());
+                i += 1;
+            })
+        });
 
-    // Lookup in tree with 1000 entries
-    group.bench_function("get_from_1000", |b| {
-        let mut tree = SparseMerkleTree::new();
-        for i in 0..1000 {
-            tree.insert(&format!("key_{}", i), format!("value_{}", i).as_bytes());
-        }
-        b.iter(|| black_box(tree.get("key_500")))
-    });
+        // Lookup in tree with 1000 entries
+        group.bench_function("get_from_1000", |b| {
+            let mut tree = SparseMerkleTree::new();
+            for i in 0..1000 {
+                tree.insert(&format!("key_{}", i), format!("value_{}", i).as_bytes());
+            }
+            b.iter(|| black_box(tree.get("key_500")))
+        });
 
-    // Proof generation
-    group.bench_function("generate_proof", |b| {
-        let mut tree = SparseMerkleTree::new();
-        for i in 0..100 {
-            tree.insert(&format!("key_{}", i), format!("value_{}", i).as_bytes());
-        }
-        b.iter(|| black_box(tree.generate_proof("key_50").unwrap()))
-    });
+        // Proof generation
+        group.bench_function("generate_proof", |b| {
+            let mut tree = SparseMerkleTree::new();
+            for i in 0..100 {
+                tree.insert(&format!("key_{}", i), format!("value_{}", i).as_bytes());
+            }
+            b.iter(|| black_box(tree.generate_proof("key_50").unwrap()))
+        });
 
-    // Proof verification
-    group.bench_function("verify_proof", |b| {
-        let mut tree = SparseMerkleTree::new();
-        for i in 0..100 {
-            tree.insert(&format!("key_{}", i), format!("value_{}", i).as_bytes());
-        }
-        let proof = tree.generate_proof("key_50").unwrap();
-        b.iter(|| black_box(tree.verify_proof(&proof)))
-    });
+        // Proof verification
+        group.bench_function("verify_proof", |b| {
+            let mut tree = SparseMerkleTree::new();
+            for i in 0..100 {
+                tree.insert(&format!("key_{}", i), format!("value_{}", i).as_bytes());
+            }
+            let proof = tree.generate_proof("key_50").unwrap();
+            b.iter(|| black_box(tree.verify_proof(&proof)))
+        });
 
-    group.finish();
+        group.finish();
+    }
 }
 
 /// Benchmark content-addressable storage (TST-005).
 ///
 /// Measures put, get, and existence checks.
 fn bench_content_addressable(c: &mut Criterion) {
-    use vak::memory::{CASConfig, ContentAddressableStore};
+    #[cfg(not(feature = "memory"))]
+    let _ = c;
+    #[cfg(feature = "memory")]
+    {
+        use vak::memory::{CASConfig, ContentAddressableStore};
 
-    let mut group = c.benchmark_group("content_addressable");
+        let mut group = c.benchmark_group("content_addressable");
 
-    // Put operation
-    group.bench_function("put", |b| {
-        let store = ContentAddressableStore::new(CASConfig::memory()).unwrap();
-        let mut i = 0u64;
-        b.iter(|| {
-            let data = format!("content data block {}", i).into_bytes();
-            black_box(store.put(&data).unwrap());
-            i += 1;
-        })
-    });
+        // Put operation
+        group.bench_function("put", |b| {
+            let store = ContentAddressableStore::new(CASConfig::memory()).unwrap();
+            let mut i = 0u64;
+            b.iter(|| {
+                let data = format!("content data block {}", i).into_bytes();
+                black_box(store.put(&data).unwrap());
+                i += 1;
+            })
+        });
 
-    // Get operation
-    group.bench_function("get", |b| {
-        let store = ContentAddressableStore::new(CASConfig::memory()).unwrap();
-        let cid = store.put(b"benchmark content data for retrieval").unwrap();
-        b.iter(|| black_box(store.get(&cid).unwrap()))
-    });
+        // Get operation
+        group.bench_function("get", |b| {
+            let store = ContentAddressableStore::new(CASConfig::memory()).unwrap();
+            let cid = store.put(b"benchmark content data for retrieval").unwrap();
+            b.iter(|| black_box(store.get(&cid).unwrap()))
+        });
 
-    // Existence check
-    group.bench_function("exists", |b| {
-        let store = ContentAddressableStore::new(CASConfig::memory()).unwrap();
-        let cid = store.put(b"benchmark content data").unwrap();
-        b.iter(|| black_box(store.exists(&cid).unwrap()))
-    });
+        // Existence check
+        group.bench_function("exists", |b| {
+            let store = ContentAddressableStore::new(CASConfig::memory()).unwrap();
+            let cid = store.put(b"benchmark content data").unwrap();
+            b.iter(|| black_box(store.exists(&cid).unwrap()))
+        });
 
-    group.finish();
+        group.finish();
+    }
 }
 
 /// Benchmark vector store operations (TST-005).
 ///
 /// Measures insert and search performance.
 fn bench_vector_store(c: &mut Criterion) {
-    use vak::memory::{InMemoryVectorStore, VectorEntry, VectorStore, VectorStoreConfig};
+    #[cfg(not(feature = "memory"))]
+    let _ = c;
+    #[cfg(feature = "memory")]
+    {
+        use vak::memory::{InMemoryVectorStore, VectorEntry, VectorStore, VectorStoreConfig};
 
-    let mut group = c.benchmark_group("vector_store");
+        let mut group = c.benchmark_group("vector_store");
 
-    let dim = 128;
+        let dim = 128;
 
-    // Generate a random-ish embedding
-    fn make_embedding(seed: usize, dim: usize) -> Vec<f32> {
-        (0..dim)
-            .map(|i| ((seed * 7 + i * 13) % 1000) as f32 / 1000.0)
-            .collect()
-    }
-
-    // Insert
-    group.bench_function("insert", |b| {
-        let config = VectorStoreConfig {
-            embedding_dimension: dim,
-            ..VectorStoreConfig::default()
-        };
-        let mut store = InMemoryVectorStore::new(config);
-        let mut i = 0usize;
-        b.iter(|| {
-            let entry = VectorEntry::new(
-                format!("doc_{}", i),
-                format!("content {}", i).into_bytes(),
-                make_embedding(i, dim),
-            );
-            let _ = black_box(store.insert(entry));
-            i += 1;
-        })
-    });
-
-    // Search in store with 500 entries
-    group.bench_function("search_top10_from_500", |b| {
-        let config = VectorStoreConfig {
-            embedding_dimension: dim,
-            ..VectorStoreConfig::default()
-        };
-        let mut store = InMemoryVectorStore::new(config);
-        for i in 0..500 {
-            let entry = VectorEntry::new(
-                format!("doc_{}", i),
-                format!("content {}", i).into_bytes(),
-                make_embedding(i, dim),
-            );
-            store.insert(entry).unwrap();
+        // Generate a random-ish embedding
+        fn make_embedding(seed: usize, dim: usize) -> Vec<f32> {
+            (0..dim)
+                .map(|i| ((seed * 7 + i * 13) % 1000) as f32 / 1000.0)
+                .collect()
         }
-        let query = make_embedding(250, dim);
-        b.iter(|| black_box(store.search(&query, 10, None).unwrap()))
-    });
 
-    group.finish();
+        // Insert
+        group.bench_function("insert", |b| {
+            let config = VectorStoreConfig {
+                embedding_dimension: dim,
+                ..VectorStoreConfig::default()
+            };
+            let mut store = InMemoryVectorStore::new(config);
+            let mut i = 0usize;
+            b.iter(|| {
+                let entry = VectorEntry::new(
+                    format!("doc_{}", i),
+                    format!("content {}", i).into_bytes(),
+                    make_embedding(i, dim),
+                );
+                let _ = black_box(store.insert(entry));
+                i += 1;
+            })
+        });
+
+        // Search in store with 500 entries
+        group.bench_function("search_top10_from_500", |b| {
+            let config = VectorStoreConfig {
+                embedding_dimension: dim,
+                ..VectorStoreConfig::default()
+            };
+            let mut store = InMemoryVectorStore::new(config);
+            for i in 0..500 {
+                let entry = VectorEntry::new(
+                    format!("doc_{}", i),
+                    format!("content {}", i).into_bytes(),
+                    make_embedding(i, dim),
+                );
+                store.insert(entry).unwrap();
+            }
+            let query = make_embedding(250, dim);
+            b.iter(|| black_box(store.search(&query, 10, None).unwrap()))
+        });
+
+        group.finish();
+    }
 }
 
 /// Benchmark secrets management operations (TST-005, Issue #37).

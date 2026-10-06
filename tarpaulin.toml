@@ -17,8 +17,10 @@ timeout = "300s"
 # Run in release mode for accurate coverage of optimized paths
 release = false
 
-# Include all workspace members
+# Measure every module: features outside the core are off by default
+# (docs/adr/0006), and `full` turns them all on except the Python bindings.
 all-features = false
+features = "full"
 
 # Output formats
 out = ["Html", "Xml"]

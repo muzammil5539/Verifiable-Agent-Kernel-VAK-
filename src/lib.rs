@@ -61,15 +61,16 @@
 //!
 //! ## Modules
 //!
+//! Always built (the trusted core):
+//!
 //! - [`kernel`]: Core kernel orchestration and execution
-//! - [`policy`]: Cedar-based policy enforcement
+//! - [`policy`]: Cedar-style policy enforcement
 //! - [`audit`]: Immutable audit logging and tracing
-//! - [`memory`]: Hierarchical memory with Merkle proofs
-//! - [`reasoner`]: Neuro-symbolic safety verification
-//! - [`sandbox`]: WASM execution sandbox
-//! - [`swarm`]: Multi-agent coordination
-//! - [`llm`]: LLM provider abstractions
-//! - [`integrations`]: External system integrations
+//! - [`secrets`]: Pluggable secrets providers
+//! - [`lib_integration`]: `VakRuntime` / `VakAgent` library API
+//!
+//! Behind features (see below): `sandbox`, `memory`, `llm`, `reasoner`,
+//! `swarm`, `integrations`, `dashboard`, `api`, `tools`, `python`.
 //!
 //! ## Safety Guarantees
 //!
@@ -82,10 +83,23 @@
 //!
 //! ## Feature Flags
 //!
-//! - `python`: Enable Python bindings via PyO3
+//! The trusted core is always built; `default-features = false` builds it
+//! alone, with no Wasmtime. Everything outside it is a feature
+//! (`docs/adr/0006`). The core never imports a feature-gated module.
 //!
-//! Further feature gates (to build the trusted core without the research
-//! modules) are planned in `docs/architecture-v2.md` §5.3.
+//! | Feature | Default | Enables |
+//! |---------|---------|---------|
+//! | `wasm` | yes | `sandbox`: WASM skills, skill registry and signatures (Wasmtime) |
+//! | `memory` | yes | `memory` tiers (implies `llm`) |
+//! | `llm` | via `memory` | `llm` provider adapters |
+//! | `reasoner` | no | `reasoner` (Heuristic) and `kernel::neurosymbolic_pipeline` |
+//! | `experimental-zk` | no | `reasoner::zk_proof` (not a sound proof system) |
+//! | `swarm` | no | `swarm` voting, consensus, A2A bus |
+//! | `integrations` | no | LangChain, AutoGPT and MCP adapters (implies `reasoner`, `wasm`) |
+//! | `dashboard` | no | `dashboard` and `api` (implies `swarm`) |
+//! | `legacy-tools` | no | `tools::skill_sign`, superseded by `sandbox::signing` |
+//! | `python` | no | PyO3 bindings, built by maturin |
+//! | `full` | no | everything except `python` |
 //!
 //! ## Assurance Status
 //!
@@ -98,8 +112,8 @@
 //! |-----------|-------|-------|
 //! | Kernel mediation | Enforced | Default deny; unknown tools fail closed |
 //! | Policy (`CedarEnforcer`, YAML) | Enforced | Cedar-style, not the `cedar-policy` engine |
-//! | Kernel audit log | Enforced | RFC 9162 Merkle tree, signed tree heads; in memory |
-//! | WASM sandbox | Enforced | Fuel and wall-clock limits; skill signatures are not yet real signatures |
+//! | Kernel audit log | Enforced | RFC 9162 Merkle tree, signed tree heads; in memory, or durable with `audit.log_path` |
+//! | WASM sandbox | Enforced | Fuel and wall-clock limits; Ed25519-signed skills pinned to their verified module |
 //! | `reasoner` (PRM, ToT, Datalog, prompt-injection) | Heuristic | LLM judge, closures, regexes |
 //! | `reasoner::zk_proof` | Experimental | Not a sound proof system |
 //! | `swarm` consensus | Heuristic | Votes are unauthenticated |
@@ -126,9 +140,11 @@ pub use kernel::config::KernelConfig;
 pub mod kernel;
 
 /// Multi-tier memory/state management with verifiable storage.
+#[cfg(feature = "memory")]
 pub mod memory;
 
 /// WASM sandbox module for isolated skill/tool execution.
+#[cfg(feature = "wasm")]
 pub mod sandbox;
 
 /// ABAC (Attribute-Based Access Control) policy engine.
@@ -138,41 +154,51 @@ pub mod policy;
 pub mod audit;
 
 /// LLM interface module for interacting with language models.
+#[cfg(feature = "llm")]
 pub mod llm;
 
 /// Reasoner module with Process Reward Model (PRM) integration.
 ///
 /// Provides step-by-step validation of reasoning chains using PRMs
 /// to detect errors early and enable backtracking when needed.
+///
+/// Outside the trusted core, and heuristic: feature `reasoner`.
+#[cfg(feature = "reasoner")]
 pub mod reasoner;
 
 /// Swarm consensus module for multi-agent coordination (SWM-001/002/003).
 ///
 /// Provides swarm coordination, quadratic voting, and protocol routing
-/// for multi-agent collaboration scenarios.
+/// for multi-agent collaboration scenarios. Feature `swarm`.
+#[cfg(feature = "swarm")]
 pub mod swarm;
 
 /// External framework integrations (Issue #45).
 ///
 /// Provides middleware adapters for LangChain, AutoGPT, and other
-/// agent frameworks to use VAK as a verification layer.
+/// agent frameworks to use VAK as a verification layer. Feature
+/// `integrations`.
+#[cfg(feature = "integrations")]
 pub mod integrations;
 
 /// API module.
 ///
-/// Provides HTTP API endpoints for VAK features.
+/// Provides HTTP API endpoints for VAK features. Feature `dashboard`.
+#[cfg(feature = "dashboard")]
 pub mod api;
 
-/// CLI tools module.
-///
-/// Provides command-line utilities for VAK operations including
-/// skill signing with vak-skill-sign.
+/// The superseded `vak-skill-sign` tool. Its signatures don't cover a
+/// skill's permissions and the skill registry can't read them; use
+/// `sandbox::signing` and `examples/sign_skill.rs` instead. Feature
+/// `legacy-tools`.
+#[cfg(feature = "legacy-tools")]
 pub mod tools;
 
 /// Dashboard and observability module (Issue #46).
 ///
 /// Provides metrics endpoints, health checks, and a web-based
-/// dashboard for monitoring VAK operations.
+/// dashboard for monitoring VAK operations. Feature `dashboard`.
+#[cfg(feature = "dashboard")]
 pub mod dashboard;
 
 /// LLM Integration Library (Issue #24).

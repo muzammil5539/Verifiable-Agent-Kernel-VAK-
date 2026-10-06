@@ -5,6 +5,8 @@
 //! spinning skill can stall the async runtime, if a skill's time limit stops
 //! being enforced, or if a skill's output can make the host misbehave.
 
+#![cfg(feature = "wasm")]
+
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

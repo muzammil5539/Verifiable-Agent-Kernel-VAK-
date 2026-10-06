@@ -22,6 +22,7 @@ pub mod epoch_ticker;
 pub mod host_funcs;
 pub mod marketplace;
 pub mod pooling;
+#[cfg(feature = "reasoner")]
 pub mod reasoning_host;
 pub mod registry;
 pub mod runtime;
@@ -68,6 +69,7 @@ pub use host_funcs::{
 };
 
 // Re-export reasoning host types (NSR-003)
+#[cfg(feature = "reasoner")]
 pub use reasoning_host::{
     register_reasoning_functions, PlanVerification, ReasoningConfig, ReasoningHost,
     ReasoningHostError, ReasoningHostState, VerificationResult, ViolationInfo,

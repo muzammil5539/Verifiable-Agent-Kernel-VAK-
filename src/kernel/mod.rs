@@ -62,10 +62,13 @@ pub mod constitution;
 pub mod custom_handlers;
 pub mod error;
 pub mod identity;
+#[cfg(feature = "reasoner")]
 pub mod neurosymbolic_pipeline;
 pub mod pdp;
 pub mod ports;
 pub mod rate_limiter;
+#[cfg(feature = "wasm")]
+mod skills;
 pub mod traits;
 pub mod types;
 
@@ -75,6 +78,7 @@ pub use self::custom_handlers::{
     CustomHandlerRegistry, FunctionHandler, HandlerError, HandlerMetadata, HandlerResult,
     ToolHandler,
 };
+#[cfg(feature = "reasoner")]
 pub use self::neurosymbolic_pipeline::{
     AgentPlan, ExecutionResult, NeuroSymbolicPipeline, PipelineConfig, PipelineError,
     ProposedAction,
@@ -99,7 +103,6 @@ pub use self::pdp::{ConfigPolicy, EnforcerPolicy};
 pub use self::ports::{AgentRegistry, AuditLog, Budget, PolicyDecisionPoint, PolicyRequest};
 
 use std::collections::hash_map::Entry;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use ed25519_dalek::{SigningKey, VerifyingKey};
@@ -115,10 +118,8 @@ use self::types::{
 };
 
 // Import sandbox and skill registry for WASM execution (Issue #6)
-use crate::sandbox::{
-    SandboxConfig, SandboxError, SandboxRuntime, SandboxRuntimeConfig, SignatureConfig,
-    SkillRegistry, SkillSignatureVerifier,
-};
+#[cfg(feature = "wasm")]
+use crate::sandbox::{SandboxRuntime, SkillRegistry};
 
 use crate::audit::transparency::{ConsistencyProof, Digest, InclusionProof, SignedTreeHead};
 
@@ -170,15 +171,9 @@ pub struct Kernel {
     sessions: Arc<RwLock<std::collections::HashMap<SessionId, AgentId>>>,
 
     /// Skill registry for WASM tools (Issue #6)
-    skill_registry: Arc<RwLock<SkillRegistry>>,
-
-    /// The engine, module cache and epoch ticker every skill call runs on.
-    /// Built on the first skill call unless injected, so kernels that never
-    /// run a skill don't pay for one.
-    sandbox: tokio::sync::OnceCell<Arc<SandboxRuntime>>,
-
-    /// Sandbox configuration for WASM execution
-    sandbox_config: SandboxConfig,
+    /// WASM skills: the registry, the runtime and their limits.
+    #[cfg(feature = "wasm")]
+    skills: skills::Skills,
 
     /// Decides every request. See [`pdp::policy_from_config`] for the default.
     policy: Arc<dyn PolicyDecisionPoint>,
@@ -257,7 +252,9 @@ pub struct KernelBuilder {
     audit_log: Option<Arc<dyn AuditLog>>,
     agents: Option<Arc<dyn AgentRegistry>>,
     budget: Option<Arc<dyn Budget>>,
+    #[cfg(feature = "wasm")]
     sandbox: Option<Arc<SandboxRuntime>>,
+    #[cfg(feature = "wasm")]
     skills: Option<SkillRegistry>,
 }
 
@@ -289,7 +286,9 @@ impl KernelBuilder {
             audit_log: None,
             agents: None,
             budget: None,
+            #[cfg(feature = "wasm")]
             sandbox: None,
+            #[cfg(feature = "wasm")]
             skills: None,
         }
     }
@@ -305,6 +304,7 @@ impl KernelBuilder {
     /// Runs WASM skills on `runtime`. Several kernels can share one, and
     /// with it one engine, module cache and epoch ticker. Without this the
     /// kernel builds its own on the first skill call.
+    #[cfg(feature = "wasm")]
     #[must_use]
     pub fn with_sandbox_runtime(mut self, runtime: Arc<SandboxRuntime>) -> Self {
         self.sandbox = Some(runtime);
@@ -313,6 +313,7 @@ impl KernelBuilder {
 
     /// Resolves WASM skills from `registry`, instead of loading manifests
     /// from `VAK_SKILLS_PATH` or `.github/skills`.
+    #[cfg(feature = "wasm")]
     #[must_use]
     pub fn with_skill_registry(mut self, registry: SkillRegistry) -> Self {
         self.skills = Some(registry);
@@ -379,48 +380,8 @@ impl KernelBuilder {
             "Initializing VAK kernel"
         );
 
-        // Initialize skill registry (Issue #6).
-        //
-        // The path was previously hardcoded to "skills", which does not exist
-        // in this repo (the skill crates live under .github/skills), so the
-        // registry silently loaded nothing and every non-builtin tool failed.
-        let skill_registry = match self.skills {
-            Some(registry) => registry,
-            None => {
-                let skills_dir = config
-                    .security
-                    .skills_path
-                    .clone()
-                    .unwrap_or_else(Kernel::resolve_skills_dir);
-                // Signed skills only, from the configured publishers, unless
-                // unsigned skills are explicitly allowed. A trusted key that
-                // doesn't parse is a configuration error, not a key to skip.
-                let verifier = SkillSignatureVerifier::try_new(SignatureConfig {
-                    require_signatures: true,
-                    trusted_keys: config.security.trusted_skill_keys.clone(),
-                    allow_unsigned_in_dev: config.security.allow_unsigned_skills,
-                })
-                .map_err(|e| KernelError::InvalidConfiguration {
-                    message: format!("security.trusted_skill_keys: {e}"),
-                })?;
-                let mut registry =
-                    SkillRegistry::with_signature_verification(skills_dir.clone(), verifier);
-                if skills_dir.exists() {
-                    match registry.load_all_skills() {
-                        Ok(ids) => info!(count = ids.len(), "Loaded skills from registry"),
-                        Err(e) => warn!(error = %e, "Failed to load skills from registry"),
-                    }
-                }
-                registry
-            }
-        };
-
-        // Configure sandbox based on kernel config
-        let sandbox_config = SandboxConfig {
-            memory_limit: (config.resources.max_memory_mb as usize) * 1024 * 1024, // Convert MB to bytes
-            fuel_limit: 10_000_000, // Default fuel limit
-            timeout: config.max_execution_time,
-        };
+        #[cfg(feature = "wasm")]
+        let skills = skills::Skills::new(&config, self.skills, self.sandbox)?;
 
         let policy = match self.policy {
             Some(policy) => policy,
@@ -479,12 +440,8 @@ impl KernelBuilder {
             agents,
             budget,
             sessions: Arc::new(RwLock::new(std::collections::HashMap::new())),
-            skill_registry: Arc::new(RwLock::new(skill_registry)),
-            sandbox: match self.sandbox {
-                Some(runtime) => tokio::sync::OnceCell::new_with(Some(runtime)),
-                None => tokio::sync::OnceCell::new(),
-            },
-            sandbox_config,
+            #[cfg(feature = "wasm")]
+            skills,
             policy,
             tools,
         })
@@ -575,21 +532,6 @@ impl Kernel {
             });
         }
         Ok(())
-    }
-
-    /// Resolves the directory to load WASM skill manifests from.
-    ///
-    /// `VAK_SKILLS_PATH` wins if set (containers mount skills elsewhere);
-    /// otherwise the first location that exists is used.
-    fn resolve_skills_dir() -> PathBuf {
-        if let Ok(path) = std::env::var("VAK_SKILLS_PATH") {
-            return PathBuf::from(path);
-        }
-        [".github/skills", "skills"]
-            .iter()
-            .map(PathBuf::from)
-            .find(|p| p.is_dir())
-            .unwrap_or_else(|| PathBuf::from("skills"))
     }
 
     /// The agent registry the Admit stage consults.
@@ -1022,106 +964,33 @@ impl Kernel {
     }
 
     /// The WASM runtime, if a skill has run or one was injected.
+    #[cfg(feature = "wasm")]
     #[must_use]
     pub fn sandbox_runtime(&self) -> Option<&Arc<SandboxRuntime>> {
-        self.sandbox.get()
+        self.skills.runtime()
     }
 
-    /// Executes a WASM skill in the sandbox (Issue #6)
-    ///
-    /// 1. Look the skill up in the registry by name, or fail with
-    ///    [`KernelError::ToolNotFound`].
-    /// 2. On a blocking-pool thread: prepare the module through the shared
-    ///    runtime (compiled once per content digest), then run it with the
-    ///    kernel's fuel, memory and wall-clock limits.
-    ///
-    /// The skill never runs on a Tokio worker, so a slow or spinning skill
-    /// can't stall other requests. A panic on the blocking thread fails this
-    /// call only.
+    /// Runs a WASM skill (see the `skills` module).
+    #[cfg(feature = "wasm")]
     async fn execute_wasm_skill(&self, request: &ToolRequest) -> Dispatched {
-        let failed = |reason: String| KernelError::ToolExecutionFailed {
-            tool_name: request.tool_name.clone(),
-            reason,
-        };
+        self.skills.execute(request).await
+    }
 
-        // Copy what's needed and release the registry lock before running.
-        // The digest is the module the skill was verified with at load; only
-        // those bytes may run under its name.
-        let found = {
-            let registry = self.skill_registry.read().await;
-            registry
-                .get_skill_by_name(&request.tool_name)
-                .cloned()
-                .zip(registry.module_digest(&request.tool_name))
-        };
-        let Some((manifest, pinned)) = found else {
-            // Fail closed. This used to return a success response from a
-            // "default handler" that executed nothing, so an agent could be
-            // told an action happened when it hadn't.
-            warn!(tool = %request.tool_name, "Tool not found");
-            return Dispatched {
-                result: Err(KernelError::ToolNotFound {
-                    tool_name: request.tool_name.clone(),
-                }),
-                module_sha256: None,
-            };
-        };
-        let module_sha256 = Some(hex::encode(pinned));
-        info!(
-            tool = %request.tool_name,
-            version = %manifest.version,
-            module_sha256 = ?module_sha256,
-            "Executing WASM skill"
-        );
-
-        let runtime = match self
-            .sandbox
-            .get_or_try_init(|| async {
-                SandboxRuntime::new(SandboxRuntimeConfig::default()).map(Arc::new)
-            })
-            .await
-        {
-            Ok(runtime) => runtime.clone(),
-            Err(e) => {
-                return Dispatched {
-                    result: Err(failed(format!("WASM runtime unavailable: {e}"))),
-                    module_sha256,
-                }
-            }
-        };
-        let limits = self.sandbox_config.clone();
-        let input = request.parameters.clone();
-
-        let joined = tokio::task::spawn_blocking(move || {
-            let skill = runtime.prepare_file_pinned(&manifest.wasm_path, &pinned)?;
-            runtime.execute_json(&skill, &limits, "execute", &input)
-        })
-        .await;
-
-        let result = match joined {
-            Ok(Ok(result)) => Ok(result),
-            Ok(Err(SandboxError::Timeout(limit))) => Err(KernelError::Timeout {
-                timeout_ms: u64::try_from(limit.as_millis()).unwrap_or(u64::MAX),
-            }),
-            Ok(Err(e @ SandboxError::ModuleChanged { .. })) => {
-                tracing::error!(tool = %request.tool_name, error = %e, "Refusing to run a module that changed since it was verified");
-                Err(failed(e.to_string()))
-            }
-            Ok(Err(e)) => Err(failed(format!("WASM execution failed: {e}"))),
-            Err(join_error) => {
-                tracing::error!(tool = %request.tool_name, error = %join_error, "WASM skill execution panicked");
-                Err(failed("skill execution panicked".to_string()))
-            }
-        };
+    /// Without the `wasm` feature there are no skills: any name that isn't a
+    /// built-in or a registered handler doesn't exist.
+    #[cfg(not(feature = "wasm"))]
+    async fn execute_wasm_skill(&self, request: &ToolRequest) -> Dispatched {
+        warn!(tool = %request.tool_name, "Tool not found (WASM skills are not compiled in)");
         Dispatched {
-            result,
-            module_sha256,
+            result: Err(KernelError::ToolNotFound {
+                tool_name: request.tool_name.clone(),
+            }),
+            module_sha256: None,
         }
     }
 
     /// List available tools/skills
     pub async fn list_tools(&self) -> Vec<String> {
-        let registry = self.skill_registry.read().await;
         let mut tools = vec![
             "echo".to_string(),
             "calculator".to_string(),
@@ -1135,9 +1004,8 @@ impl Kernel {
         }
 
         // Add registered WASM skills
-        for skill in registry.list_skills() {
-            tools.push(skill.name.clone());
-        }
+        #[cfg(feature = "wasm")]
+        tools.extend(self.skills.names().await);
 
         tools
     }

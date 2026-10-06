@@ -6,6 +6,8 @@
 //! decision and outcome leaves against a signed tree head over the log
 //! reloaded from disk.
 
+#![cfg(feature = "wasm")]
+
 use std::path::{Path, PathBuf};
 
 use ed25519_dalek::SigningKey;

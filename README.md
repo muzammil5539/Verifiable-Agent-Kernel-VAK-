@@ -371,7 +371,7 @@ cd Verifiable-Agent-Kernel-VAK-
 cargo build --release
 
 # Run tests
-cargo test
+cargo test --features full
 
 # Run benchmarks
 cargo bench
@@ -743,7 +743,7 @@ VAK uses specialized agents for development tasks. See [AGENTS_README.md](AGENTS
 
 ```bash
 # Run all tests
-cargo test
+cargo test --features full
 
 # Run specific test suite
 cargo test --package vak --lib policy
@@ -752,13 +752,13 @@ cargo test --package vak --lib policy
 cargo tarpaulin --config tarpaulin.toml --out Html
 
 # Run integration tests
-cargo test --test '*' --verbose
+cargo test --test '*' --features full --verbose
 
 # Run property-based tests (extended)
-PROPTEST_CASES=512 cargo test --test property_tests
+PROPTEST_CASES=512 cargo test --test property_tests --features full
 
 # Run stress tests
-cargo test --test integration_root test_stress
+cargo test --test integration_root test_stress --features full
 
 # Run Python SDK tests
 python -m pytest python/tests/ -v

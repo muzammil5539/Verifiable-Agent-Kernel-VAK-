@@ -46,17 +46,25 @@ jobs:
       - name: Run clippy lints
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      # Features outside the trusted core are off by default (docs/adr/0006).
+      # `full` is everything except the Python bindings, so no test is skipped.
       - name: Build
-        run: cargo build --all-targets
+        run: cargo build --all-targets --features full
 
       - name: Run unit tests
-        run: cargo test --lib --verbose
+        run: cargo test --lib --features full --verbose
 
       - name: Run doc tests
-        run: cargo test --doc --verbose
+        run: cargo test --doc --features full --verbose
 
       - name: Run integration tests
-        run: cargo test --test '*' --verbose
+        run: cargo test --test '*' --features full --verbose
+
+      # The trusted core must build and pass its tests with nothing else.
+      - name: Build and test the core alone
+        run: |
+          cargo build --no-default-features
+          cargo test --no-default-features --verbose
 
   # WASM skill builds
   wasm-skills:
@@ -211,4 +219,4 @@ jobs:
       - name: Run property tests with extended cases
         env:
           PROPTEST_CASES: 512
-        run: cargo test --test property_tests --verbose
+        run: cargo test --test property_tests --features full --verbose

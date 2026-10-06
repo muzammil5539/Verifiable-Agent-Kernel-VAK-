@@ -315,6 +315,7 @@ mod audit_properties {
 // Memory State Properties
 // ============================================================================
 
+#[cfg(feature = "memory")]
 mod memory_properties {
     use super::*;
     use vak::memory::{
@@ -477,6 +478,7 @@ mod calculator_properties {
 // Serialization Roundtrip Properties
 // ============================================================================
 
+#[cfg(feature = "llm")]
 mod serialization_properties {
     use super::*;
     use vak::llm::{Message, Role, Usage};

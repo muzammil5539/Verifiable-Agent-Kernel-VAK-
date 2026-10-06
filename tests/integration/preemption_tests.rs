@@ -493,7 +493,7 @@ mod panic_safety_tests {
 }
 
 /// Tests for neuro-symbolic reasoning (NSR-003)
-#[cfg(test)]
+#[cfg(all(test, feature = "reasoner"))]
 mod reasoning_tests {
     use super::*;
 

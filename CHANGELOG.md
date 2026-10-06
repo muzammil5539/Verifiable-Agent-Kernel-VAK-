@@ -12,6 +12,9 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 `docs/adr/0003-admit-budget-record-outcome-pipeline-stages.md` for the decision records.
 
 ### Added
+- Cargo features (ADR 0006): `wasm`, `llm`, `memory`, `reasoner`, `experimental-zk`,
+  `swarm`, `integrations`, `dashboard`, `legacy-tools`, `python`, and `full` (everything
+  but `python`). `default-features = false` builds the trusted core alone.
 - `sandbox::signing` (ADR 0005): Ed25519 skill signatures over the module's SHA-256 and
   every manifest field except `wasm_path`, verified against trusted publisher keys.
   `SkillManifest::signed_by`, `SkillRegistry::module_digest`,
@@ -47,6 +50,12 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
   `CustomHandlerRegistry::{register_arc, register_new}`.
 
 ### Changed
+- **Breaking:** default features are now `wasm` and `memory`. `reasoner`, `swarm`,
+  `integrations`, `dashboard`, `api` and `tools` need their features (or `full`), and
+  `reasoner::zk_proof` needs `experimental-zk`. `kernel::neurosymbolic_pipeline` and
+  `sandbox::reasoning_host` need `reasoner`.
+- `tools::skill_sign` is behind `legacy-tools`: its signatures don't cover permissions
+  and the skill registry can't read them. Use `sandbox::signing`.
 - **Breaking:** skill signatures are Ed25519 (`signed_by` + `signature`). The old unkeyed
   SHA-256 "signatures" no longer verify. `SkillSignatureVerifier::{compute_signature,
   sign_manifest}` and `SignatureVerificationResult` are removed; use
@@ -96,6 +105,7 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - A panicking host tool handler no longer unwinds through `Kernel::execute`.
 
 ### Removed
+- The unused `rs_merkle` dependency.
 - `src/prelude.rs`, which was never compiled (`lib.rs` defines `prelude` inline) and
   referenced types that don't exist.
 

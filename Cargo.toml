@@ -64,8 +64,6 @@ chrono = { version = "0.4", features = ["serde"] }
 # Lock-free atomic pointer for policy hot-reload (POL-006)
 arc-swap = "1.7"
 
-# Merkle tree implementation (MEM-001)
-rs_merkle = "1.5"
 
 # HTTP client (using rustls for TLS to avoid system OpenSSL dependency)
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
@@ -124,26 +122,61 @@ rusqlite.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 config.workspace = true
-wasmtime.workspace = true
 serde_yaml.workspace = true
 reqwest.workspace = true
 futures.workspace = true
-tokio-stream.workspace = true
 glob.workspace = true
 regex.workspace = true
-petgraph.workspace = true
 flate2.workspace = true
 tempfile.workspace = true
-base64.workspace = true
 arc-swap.workspace = true
-rs_merkle.workspace = true
 
-# Optional Python bindings
+# Optional: each pulled in only by the feature that needs it.
+wasmtime = { workspace = true, optional = true }
+tokio-stream = { workspace = true, optional = true }
+petgraph = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
 pyo3 = { workspace = true, optional = true }
 
+# The trusted core (kernel, policy, audit, secrets, lib_integration) is always
+# built; `default-features = false` builds it alone. Everything outside it is
+# a feature. See docs/adr/0006 and docs/architecture-v2.md §5.3.
 [features]
-default = []
-python = ["pyo3"]
+default = ["wasm", "memory"]
+# WASM skills: the sandbox, skill registry and skill signatures (Wasmtime).
+wasm = ["dep:wasmtime"]
+# LLM provider adapters.
+llm = ["dep:tokio-stream"]
+# Memory tiers: working, episodic, semantic.
+memory = ["llm", "dep:petgraph"]
+# Heuristic reasoning outside the trusted core: PRM scoring, Datalog safety
+# rules, the Z3 verifier, tree search, prompt-injection detection, and the
+# kernel's neuro-symbolic pipeline.
+reasoner = ["llm"]
+# Zero-knowledge proof prototypes. Not a sound proof system (finding V1).
+experimental-zk = ["reasoner"]
+# Multi-agent voting, consensus and the in-process A2A bus.
+swarm = []
+# LangChain and AutoGPT adapters and the MCP server. They embed the reasoner.
+integrations = ["reasoner", "wasm"]
+# HTTP dashboard, metrics and the A2A discovery API.
+dashboard = ["swarm"]
+# tools::skill_sign, superseded by sandbox::signing; its output doesn't load.
+legacy-tools = ["dep:base64"]
+# Python bindings (PyO3); built by maturin.
+python = ["dep:pyo3"]
+# Everything except the Python bindings. CI builds and tests with this.
+full = [
+    "wasm",
+    "llm",
+    "memory",
+    "reasoner",
+    "experimental-zk",
+    "swarm",
+    "integrations",
+    "dashboard",
+    "legacy-tools",
+]
 
 [dev-dependencies]
 proptest.workspace = true
@@ -151,6 +184,14 @@ criterion.workspace = true
 tokio-test = "0.4"
 # Integration tests link dev-dependencies, not [dependencies].
 tempfile.workspace = true
+
+[[example]]
+name = "sign_skill"
+required-features = ["wasm"]
+
+[[example]]
+name = "code_auditor_demo"
+required-features = ["reasoner", "memory", "wasm"]
 
 [[bench]]
 name = "kernel_benchmarks"

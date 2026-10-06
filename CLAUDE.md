@@ -14,18 +14,21 @@ Full details: [ARCHITECTURE.md](ARCHITECTURE.md) (module reference, data flow, d
 
 ```bash
 # Build
-cargo build --release              # release build
-cargo build                        # debug build
+cargo build --release              # release build (default features: core + wasm + memory)
+cargo build --features full        # everything except the Python bindings
+cargo build --no-default-features  # the trusted core alone (no Wasmtime)
 make skills                        # build all WASM skill crates (workspace members)
 
-# Test
-cargo test                                          # all Rust tests
-cargo test --lib                                     # unit tests only (fast)
-cargo test --test '*' --verbose                      # integration tests only
-cargo test <test_name>                                # run a single test by name (substring match)
-cargo test --package vak --lib policy                 # tests in one module
-cargo test --test integration_root test_stress -- --test-threads=1  # stress tests
-PROPTEST_CASES=512 cargo test --test property_tests   # property-based tests, extended cases
+# Test: modules outside the core are features (docs/adr/0006); use `full`
+# or their tests don't compile in.
+cargo test --features full                           # all Rust tests
+cargo test --no-default-features                     # the core alone (make test-core)
+cargo test --lib --features full                     # unit tests only (fast)
+cargo test --test '*' --features full --verbose      # integration tests only
+cargo test --features full <test_name>               # run a single test by name (substring match)
+cargo test --package vak --lib policy                # tests in one module
+cargo test --test integration_root test_stress --features full -- --test-threads=1  # stress tests
+PROPTEST_CASES=512 cargo test --test property_tests --features full   # property-based tests, extended cases
 python -m pytest python/tests/ -v                     # Python SDK tests
 cargo bench                                           # benchmarks (Criterion)
 
@@ -50,6 +53,8 @@ make lint / make test / make test-all / make coverage-check / make security / ma
 Building the Python SDK locally uses `maturin` (`pip install -e ./python` or `make python`), driven by `pyproject.toml`'s `[tool.maturin]` config (feature `python`, module `vak._vak_native`).
 
 ## Architecture (essentials)
+
+Features: the trusted core (`kernel`, `policy`, `audit`, `secrets`, `lib_integration`) is always built. `wasm` (sandbox, skills) and `memory` (with `llm`) are on by default; `reasoner`, `experimental-zk`, `swarm`, `integrations`, `dashboard`, `legacy-tools` and `python` are off. `full` is everything but `python`. Code in the core must not import a feature-gated module; gate the importing code instead.
 
 VAK is a Cargo workspace: the root crate (`vak`) plus WASM skill crates under `.github/skills/*` (`calculator`, `crypto-hasher`, `json-validator`, `text-analyzer`, `regex-matcher`) as workspace members. Build skills with `cargo build -p <skill> --target wasm32-unknown-unknown --release`.
 
