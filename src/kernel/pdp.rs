@@ -215,11 +215,19 @@ impl PolicyDecisionPoint for EnforcerPolicy {
     async fn decide(&self, req: &PolicyRequest<'_>) -> PolicyDecision {
         let tool = &req.request.tool_name;
 
-        // `internal` is not yet derived from the agent's identity; every
-        // agent is treated as internal. Tracked as K8 in
-        // docs/architecture-v2.md.
-        let principal = Principal::agent(req.agent_id.to_string())
-            .with_attribute("internal", true)
+        // Principal attributes come from the agent's record (docs/adr/0003).
+        // This used to be a constant `internal = true` for every agent (K8).
+        // Without a record nothing is known, so nothing is assumed.
+        let mut principal = Principal::agent(req.agent_id.to_string());
+        if let Some(record) = req.principal {
+            for (key, value) in &record.attributes {
+                principal = principal.with_attribute(key.clone(), value.clone());
+            }
+        }
+        // Set last, so a record attribute can't override what the kernel
+        // knows.
+        let principal = principal
+            .with_attribute("internal", req.principal.is_some_and(|r| r.internal))
             .with_attribute("id", req.agent_id.to_string());
 
         let resource = Resource::tool(tool.clone())

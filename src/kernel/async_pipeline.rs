@@ -730,13 +730,11 @@ impl AsyncPipeline {
                             let latency_us = start_time.elapsed().as_micros() as u64;
                             metrics.record_completed(latency_us);
 
-                            Ok(ToolResponse {
-                                request_id: envelope.request.request_id,
-                                success: true,
-                                result: Some(value),
-                                error: None,
-                                execution_time_ms: start_time.elapsed().as_millis() as u64,
-                            })
+                            Ok(ToolResponse::success(
+                                envelope.request.request_id,
+                                value,
+                                start_time.elapsed().as_millis() as u64,
+                            ))
                         }
                         Ok(Ok(Err(e))) => {
                             metrics.record_failed();

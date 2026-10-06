@@ -51,7 +51,9 @@ use tokio::sync::{RwLock, Semaphore};
 use tracing::{debug, info};
 
 use crate::policy::context::{ContextConfig, DynamicContextCollector};
-use crate::policy::enforcer::{Action, CedarEnforcer, EnforcerConfig, Principal, Resource};
+use crate::policy::enforcer::{
+    Action, CedarEnforcer, EnforcerConfig, EnforcerResult, Principal, Resource,
+};
 
 /// Errors that can occur in async host operations
 #[derive(Debug, Error)]
@@ -292,6 +294,21 @@ impl std::fmt::Debug for AsyncHostContext {
 // - Arc<T>: Send + Sync when T is Send + Sync
 // - AtomicU64: Send + Sync
 
+/// The enforcer a host context starts with.
+///
+/// If it can't be built, the context gets one that denies everything. This
+/// used to fall back to `CedarEnforcer::new_permissive()`, so a construction
+/// failure granted every host operation for the skill's whole lifetime.
+fn enforcer_or_deny(built: EnforcerResult<CedarEnforcer>) -> CedarEnforcer {
+    built.unwrap_or_else(|e| {
+        tracing::error!(
+            error = %e,
+            "Failed to construct async host policy enforcer - denying all operations"
+        );
+        CedarEnforcer::new_denying()
+    })
+}
+
 impl AsyncHostContext {
     /// Create a new async host context
     pub fn new(agent_id: impl Into<String>, session_id: impl Into<String>) -> Self {
@@ -305,10 +322,9 @@ impl AsyncHostContext {
         config: AsyncHostConfig,
     ) -> Self {
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent_ops));
-        let enforcer = Arc::new(
-            CedarEnforcer::new(EnforcerConfig::default())
-                .unwrap_or_else(|_| CedarEnforcer::new_permissive()),
-        );
+        let enforcer = Arc::new(enforcer_or_deny(CedarEnforcer::new(
+            EnforcerConfig::default(),
+        )));
         let context_collector = Arc::new(DynamicContextCollector::new(ContextConfig::default()));
 
         Self {
@@ -838,6 +854,43 @@ mod tests {
         let ctx = AsyncHostContext::new("agent-1", "session-1");
         assert_eq!(ctx.agent_id, "agent-1");
         assert_eq!(ctx.session_id, "session-1");
+    }
+
+    #[tokio::test]
+    async fn test_enforcer_construction_failure_denies() {
+        // Regression: a failed construction used to fall back to an enforcer
+        // that allowed every host operation.
+        let failed = Err(crate::policy::enforcer::EnforcerError::InvalidPolicy(
+            "broken".to_string(),
+        ));
+        let enforcer = enforcer_or_deny(failed);
+        let decision = enforcer
+            .authorize(
+                &Principal::agent("agent-1"),
+                &Action::file_read(),
+                &Resource::file("/etc/passwd"),
+                None,
+            )
+            .await;
+        assert!(
+            !matches!(decision, Ok(ref d) if d.is_allowed()),
+            "a host context without a working enforcer must deny, got {decision:?}"
+        );
+
+        // The same enforcer behind a context denies a real operation.
+        let mut ctx = AsyncHostContext::new("agent-1", "session-1");
+        ctx.enforcer = Arc::new(enforcer);
+        ctx.register_handler("test_op", Arc::new(TestHandler)).await;
+        let result = ctx
+            .execute_async(AsyncOperation::Custom {
+                name: "test_op".to_string(),
+                params: serde_json::json!({"key": "success"}),
+            })
+            .await;
+        assert!(
+            !matches!(result, Ok(ref r) if r.success),
+            "operation must not run, got {result:?}"
+        );
     }
 
     #[tokio::test]

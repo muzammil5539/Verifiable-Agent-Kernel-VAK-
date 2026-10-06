@@ -1,8 +1,9 @@
 # VAK v2: a research-grounded architecture for the agent kernel library
 
-Status: proposed (October 2026). Supersedes the "Technical Architecture" section of
-`docs/blue-ocean-opportunity.md` where they conflict. The decision record is
-`docs/adr/0002-reference-monitor-core-with-ports-and-transparency-log.md`.
+Status: proposed (October 2026), revised as v2.1. Supersedes the "Technical Architecture"
+section of `docs/blue-ocean-opportunity.md` where they conflict. The decision records are
+`docs/adr/0002-reference-monitor-core-with-ports-and-transparency-log.md` and, for the
+admit, budget and outcome stages, `docs/adr/0003-admit-budget-record-outcome-pipeline-stages.md`.
 
 This document does three things:
 
@@ -24,7 +25,7 @@ must be:
 
 | Property | Meaning for VAK | Today |
 |---|---|---|
-| **Complete mediation** | Every agent action goes through one decision point; nothing reaches a tool without it. | Partly. `Kernel::execute` mediates tool calls, but `VakAgent`'s per-agent allow/deny lists are enforced client-side in the library object, not by the kernel (`src/lib_integration.rs:551`). |
+| **Complete mediation** | Every agent action goes through one decision point; nothing reaches a tool without it. | Yes, for tool calls, since v2.1. `VakAgent`'s per-agent allow/deny lists used to be enforced client-side; they are now part of the agent's record and checked in the kernel's Admit stage (ADR 0003). |
 | **Tamper-proof** | Decisions and their records can't be silently altered. | Partly. The kernel's audit chain was fixed in `a9076d8`, but it lives only in process memory (`src/kernel/mod.rs:115`), and a hash chain can't prove append-only to a third party (§4.2). |
 | **Verifiable** | Small enough to analyze and test. | **No.** About 81k lines in one crate, all compiled by default, with no boundary between the trusted core and research prototypes. |
 
@@ -52,10 +53,10 @@ stub or a placeholder.
 | K2 | WASM skills run with a time limit | Epoch interruption is enabled and `epoch_deadline_trap()` is set, but `set_epoch_deadline` is never called. Per the Wasmtime docs the default deadline is 0, so **every skill traps on its first epoch check**. No test runs a real module through the kernel, so this went unnoticed. | `src/sandbox/mod.rs:211-277` | S2 |
 | K3 | Sandbox is scalable | A new `wasmtime::Engine` is created, and the module recompiled, on **every** tool call. Execution is synchronous inside an `async fn`, blocking a Tokio worker for the skill's whole runtime. | `src/kernel/mod.rs:634`, `src/sandbox/mod.rs:217` | S2 |
 | K4 | Skills are cryptographically signed | The registry's "signature" is an unkeyed SHA-256 over name, version and description, which anyone can recompute. There's also an `unwrap()` on that path. (`sandbox/verified_publisher.rs` has real Ed25519, but the registry doesn't use it.) | `src/sandbox/registry.rs:519,540` | S1 |
-| K5 | Rate limiting, constitution, neuro-symbolic checks protect execution | `RateLimiter`, `Constitution`, `NeuroSymbolicPipeline` and `AsyncPipeline` are declared in `kernel/` but never called by `Kernel::execute`. | `src/kernel/mod.rs:31-54,503` | S2 |
-| K6 | Audit module provides persistent, signed, rotatable logs | `audit::AuditLogger` (file, SQLite, S3 backends, Ed25519) is **not used by the kernel**. The kernel keeps its own `Vec<AuditEntry>` in RAM, which grows without bound; `get_audit_log` clones all of it. | `src/kernel/mod.rs:115,875` | S2 |
+| K5 | Rate limiting, constitution, neuro-symbolic checks protect execution | `RateLimiter`, `Constitution`, `NeuroSymbolicPipeline` and `AsyncPipeline` are declared in `kernel/` but never called by `Kernel::execute`. **v2.1:** rate limiting is enforced by the Budget stage; the others wait for the Guard port. | `src/kernel/mod.rs:31-54,503` | S2 |
+| K6 | Audit module provides persistent, signed, rotatable logs | `audit::AuditLogger` (file, SQLite, S3 backends, Ed25519) is **not used by the kernel**. The kernel keeps its own `Vec<AuditEntry>` in RAM, which grows without bound; `get_audit_log` clones all of it. **v2.1:** the kernel's log is the `AuditLog` port; `FileAuditLog` persists it when `audit.log_path` is set. Merging `AuditLogger` in is slice 1e. | `src/kernel/mod.rs:115,875` | S2 |
 | K7 | `audit::AuditLogger` hashes are collision-free | Fields are concatenated without length prefixes, so `("ab","c")` and `("a","bc")` hash identically, and `metadata` isn't hashed at all. (The kernel's own entry hash was fixed in `a9076d8`; this one wasn't.) | `src/audit/mod.rs:1270-1290` | S1 |
-| K8 | Policy attributes reflect the agent | Every principal gets `internal = true`, whoever the agent is. | `src/kernel/mod.rs:272` | S2 |
+| K8 | Policy attributes reflect the agent | Every principal gets `internal = true`, whoever the agent is. **Fixed in v2.1:** attributes come from the agent's `AgentRecord`; anonymous agents are not internal. | `src/kernel/mod.rs:272` | S2 |
 | K9 | `VakRuntime` builder configures the kernel | `with_audit_logging`, `with_policy_enforcement` and `with_sandboxing` are stored in `RuntimeConfig` but never reach `KernelConfig`. `register_tool` registers a schema with no handler, so calls hit K1. | `src/lib_integration.rs:860-880,672` | S2 |
 | K10 | Library users can add tools | Only by dropping a WASM skill on disk. `kernel::custom_handlers` has a working handler registry, but the kernel never consults it. The `kernel::traits` ports (`PolicyEvaluator`, `AuditWriter`, …) have no implementations or callers. | `src/kernel/custom_handlers.rs`, `src/kernel/traits.rs` | S3 |
 
@@ -410,7 +411,9 @@ flowchart TB
 |---|---|---|---|
 | `PolicyDecisionPoint` | request + context → `PolicyDecision` | `CedarEnforcer` if `policy_paths` set, else `ConfigPolicy` (allowlist + default deny) | **added in this change** |
 | `ToolHandler` | execute one named tool | registry of host closures | wired in this change (existed, unused) |
-| `AuditLog` | append → receipt; tree head; inclusion and consistency proofs | in-memory `MerkleLog` | tree added; port next |
+| `AgentRegistry` | agent → record (attributes, status, tool scope) | `InMemoryAgentRegistry` | **added in v2.1** |
+| `Budget` | charge one request to an agent's budget | `AgentRateBudget` (token bucket) or `Unlimited` | **added in v2.1** |
+| `AuditLog` | append; tree head; inclusion and consistency proofs | `MemoryAuditLog`, or `FileAuditLog` when `audit.log_path` is set | **added in v2.1** |
 | `Guard` | extra pre-execution checks with an assurance level | none | next |
 | `Signer` | sign tree heads | Ed25519 (`ed25519-dalek`) | tree-head signing added |
 | `StateStore`, `Clock`, `ApprovalChannel` | persistence, time, human-in-the-loop | memory, system clock, deny | later |
@@ -477,6 +480,7 @@ let proof = kernel.prove_audit_inclusion(0).await?;  // anyone can verify
 |---|---|---|---|
 | Mediation (`Kernel::execute`) | Checked (unknown tools fake success) | **Enforced** (fail closed) | Enforced + model-checked pipeline |
 | Policy (YAML CedarEnforcer) | Enforced (post-a9076d8) | Enforced, behind a port | real Cedar + SymCC: Enforced + analyzed |
+| Admission and budget | none: constant attributes (K8), unenforced rate limit (K5) | **Enforced** (v2.1: registry, session binding, scope, token bucket) | shared adapters for fleets |
 | Audit | Enforced, but in-RAM and O(n) | **Enforced, with O(log n) inclusion and consistency proofs** | + persistent tiles, witness cosigning |
 | WASM sandbox | broken (traps immediately) | **works, with wall-clock deadline** | shared engine, Component Model, signed skills |
 | Skill signatures | none (unkeyed hash) | none (documented) | Ed25519 → Sigstore |
@@ -516,14 +520,16 @@ phase's exit criterion.
   for Phase 1.
 
 **Phase 1: library hardening (2 to 4 weeks)**
+- [x] Slice 1a (v2.1, ADR 0003): `AgentRegistry` port and the Admit stage (status,
+      session binding, per-agent tool scope moved from `VakAgent` into the kernel rather
+      than the PDP, so no PDP can widen it), principal attributes from the record (K8);
+      `Budget` port and the Budget stage from `security.*` (K5); `AuditLog` port with
+      memory and JSONL file adapters; outcome leaves; receipts on `ToolResponse`; the
+      async-host enforcer denies when it can't be built.
 - Feature-gate modules per §5.3. `default-features = false` builds the core alone.
-- `AuditLog` port, with SQLite and file adapters over the transparency log; outcome
-  leaves; receipts on `ToolResponse`.
+- SQLite adapter for the `AuditLog` port, replacing or absorbing `audit::AuditLogger`.
 - Shared `SandboxRuntime` (engine, module cache, ticker); `spawn_blocking` execution.
 - Ed25519 skill signatures via `verified_publisher` and a trust root (K4).
-- Principal attributes come from an `AgentRegistry`, not a constant (K8). Per-agent
-  tool restrictions move from `VakAgent` into the PDP.
-- Wire `RateLimiter` into step 2 (K5).
 - Exit criterion: one end-to-end test signs a skill, loads it, executes it, and verifies
   the inclusion proof for both decision and outcome leaves.
 

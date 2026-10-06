@@ -8,10 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 See `docs/architecture-v2.md` for the audit and design behind these changes, and
-`docs/adr/0002-reference-monitor-core-with-ports-and-transparency-log.md` for the
-decision record.
+`docs/adr/0002-reference-monitor-core-with-ports-and-transparency-log.md` and
+`docs/adr/0003-admit-budget-record-outcome-pipeline-stages.md` for the decision records.
 
 ### Added
+- Mediation pipeline stages (ADR 0003). `kernel::identity` (`AgentRegistry`,
+  `AgentRecord`, `InMemoryAgentRegistry`) for the Admit stage, `kernel::budget`
+  (`Budget`, `AgentRateBudget`, `Unlimited`) for the Budget stage, and
+  `kernel::audit_log` (`AuditLog`, `MemoryAuditLog`, `FileAuditLog`) for the Record
+  stages. Injected with `KernelBuilder::{with_agent_registry, with_budget,
+  with_audit_log}`.
+- `Kernel::register_agent`, `Kernel::end_session`, and
+  `security.require_registered_agents`.
+- Outcome leaves (`AuditEntry::outcome`, `AuditOutcome`) and receipts
+  (`ToolResponse::receipt`, `AuditReceipt`).
+- `KernelError::{AgentSuspended, SessionConflict, RateLimited, AuditUnavailable}`
+  (E012 to E015). `PolicyRequest` gained `principal` and `session_id`.
 - `audit::transparency`: RFC 9162 Merkle tree log with inclusion and consistency proofs,
   stand-alone verifiers, and Ed25519-signed tree heads. Tested against the Certificate
   Transparency reference vectors.
@@ -24,6 +36,15 @@ decision record.
   `CustomHandlerRegistry::{register_arc, register_new}`.
 
 ### Changed
+- **Behaviour change:** `security.enable_rate_limiting` and `max_requests_per_minute`
+  are enforced (default 60 per agent per minute). They were previously ignored.
+- **Behaviour change:** principals reach policy with `internal` from their agent
+  record, not a constant `true`. Unregistered agents are not internal.
+- **Behaviour change:** an executed call is recorded as two audit entries, a decision
+  and an outcome. A session is bound to the first agent that uses it.
+- `VakAgent`'s allowed and blocked tools are enforced by the kernel, and refusals are
+  audited. `audit.log_path` selects a durable `FileAuditLog`; a log there that can't be
+  opened or doesn't verify fails `Kernel::build`.
 - **Breaking:** `Kernel::execute` on a permitted tool that doesn't exist now returns
   `Err(KernelError::ToolNotFound)`. It used to return `success: true` from a "default
   handler" that executed nothing.
@@ -38,6 +59,8 @@ decision record.
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- `sandbox::async_host` fell back to an allow-everything enforcer when its policy
+  enforcer couldn't be built. It now denies everything instead.
 - WASM skills trapped on entry: epoch interruption was enabled with no deadline, and
   Wasmtime's default deadline is 0. A per-execution watchdog now enforces the wall-clock
   timeout, and traps are classified by trap code.

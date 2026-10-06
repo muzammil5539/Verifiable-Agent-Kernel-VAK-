@@ -424,6 +424,15 @@ pub struct SecurityConfig {
     /// Maximum requests per minute per agent.
     #[serde(default = "default_rate_limit")]
     pub max_requests_per_minute: u32,
+
+    /// Whether agents must be registered before they may act.
+    ///
+    /// When `false`, an agent the registry doesn't know is admitted with an
+    /// anonymous record (not internal, no attributes), and policy decides.
+    /// When `true`, it is refused with `AgentNotFound`. Recommended for
+    /// production; off by default for compatibility.
+    #[serde(default)]
+    pub require_registered_agents: bool,
 }
 
 fn default_true() -> bool {
@@ -450,6 +459,7 @@ impl Default for SecurityConfig {
             blocked_tools: Vec::new(),
             enable_rate_limiting: true,
             max_requests_per_minute: default_rate_limit(),
+            require_registered_agents: false,
         }
     }
 }

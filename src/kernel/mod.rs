@@ -10,14 +10,24 @@
 //! - [`traits`]: Async traits for policy evaluation, audit, state, and tool execution
 //! - [`async_pipeline`]: Async request processing pipeline for multi-agent throughput (Issue #44)
 //! - [`custom_handlers`]: Custom tool handler registry for runtime extensibility
-//! - [`ports`]: Traits the mediation pipeline calls (policy decision point)
+//! - [`ports`]: Traits the mediation pipeline calls, one per stage
+//! - [`identity`]: Agent records and the agent registry (Admit stage)
+//! - [`budget`]: Per-agent budgets (Budget stage)
 //! - [`pdp`]: Built-in policy decision points (config allowlist, CedarEnforcer)
+//! - [`audit_log`]: The audit log port, with memory and file adapters
 //!
 //! ## Mediation
 //!
-//! [`Kernel::execute`] is the single mediation point: decide (via the
-//! [`ports::PolicyDecisionPoint`]), record the decision in the audit log,
-//! then execute. Tools resolve in order: built-ins, handlers registered with
+//! [`Kernel::execute`] is the single mediation point. Every request passes,
+//! in order: **admit** (the agent's record, status, session and own tool
+//! scope, via [`ports::AgentRegistry`]), **budget** ([`ports::Budget`]),
+//! **decide** ([`ports::PolicyDecisionPoint`]), **record** the decision
+//! ([`ports::AuditLog`]), **execute**, **record the outcome**, and
+//! **respond** with an [`types::AuditReceipt`]. A request stopped at any
+//! stage is still recorded. If the decision can't be recorded, the tool
+//! doesn't run.
+//!
+//! Tools resolve in order: built-ins, handlers registered with
 //! [`Kernel::register_tool`] or [`KernelBuilder::with_tool`], WASM skills.
 //! Anything else is [`KernelError::ToolNotFound`]; the kernel never reports
 //! success for a tool that did not run.
@@ -25,7 +35,7 @@
 //! The audit log is an RFC 9162 Merkle tree ([`crate::audit::transparency`]),
 //! so any decision can be proven to a third party with
 //! [`Kernel::prove_audit_inclusion`] against a [`Kernel::audit_tree_head`].
-//! See `docs/architecture-v2.md`.
+//! See `docs/architecture-v2.md` and `docs/adr/0003`.
 //!
 //! ## Architecture Overview
 //!
@@ -45,10 +55,13 @@
 //! ```
 
 pub mod async_pipeline;
+pub mod audit_log;
+pub mod budget;
 pub mod config;
 pub mod constitution;
 pub mod custom_handlers;
 pub mod error;
+pub mod identity;
 pub mod neurosymbolic_pipeline;
 pub mod pdp;
 pub mod ports;
@@ -79,37 +92,32 @@ pub use self::constitution::{
 /// sandbox. Any other tool name is dispatched to the skill registry.
 pub const BUILTIN_TOOLS: &[&str] = &["echo", "calculator", "data_processor", "system_info"];
 
+pub use self::audit_log::{AuditLogError, FileAuditLog, MemoryAuditLog};
+pub use self::budget::{AgentRateBudget, BudgetDecision, Unlimited};
+pub use self::identity::{AgentRecord, AgentStatus, InMemoryAgentRegistry, RegistryError};
 pub use self::pdp::{ConfigPolicy, EnforcerPolicy};
-pub use self::ports::{PolicyDecisionPoint, PolicyRequest};
+pub use self::ports::{AgentRegistry, AuditLog, Budget, PolicyDecisionPoint, PolicyRequest};
 
+use std::collections::hash_map::Entry;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use futures::FutureExt;
 use rand::rngs::OsRng;
+use sha2::{Digest as _, Sha256};
 use tokio::sync::RwLock;
 use tracing::{info, instrument, warn};
 
 use self::types::{
-    AgentId, AuditEntry, KernelError, PolicyDecision, SessionId, ToolRequest, ToolResponse,
+    AgentId, AuditEntry, AuditOutcome, AuditReceipt, KernelError, PolicyDecision, SessionId,
+    ToolRequest, ToolResponse,
 };
 
 // Import sandbox and skill registry for WASM execution (Issue #6)
 use crate::sandbox::{SandboxConfig, SkillRegistry, WasmSandbox};
 
-use crate::audit::transparency::{
-    leaf_hash, ConsistencyProof, Digest, InclusionProof, MerkleLog, SignedTreeHead,
-    TransparencyError,
-};
-
-/// The kernel's audit trail: the entries themselves, plus a Merkle tree over
-/// their hashes for inclusion and consistency proofs.
-#[derive(Debug, Default)]
-struct AuditTrail {
-    entries: Vec<AuditEntry>,
-    log: MerkleLog,
-}
+use crate::audit::transparency::{ConsistencyProof, Digest, InclusionProof, SignedTreeHead};
 
 /// The main kernel instance that manages agent execution and policy enforcement.
 ///
@@ -142,14 +150,20 @@ pub struct Kernel {
     /// Kernel configuration
     config: KernelConfig,
 
-    /// Audit trail, in memory. Persistence is an adapter (Phase 1 in
-    /// docs/architecture-v2.md).
-    audit: Arc<RwLock<AuditTrail>>,
+    /// Where decisions and outcomes are recorded. In memory unless
+    /// `audit.log_path` is set or a log is injected.
+    audit: Arc<dyn AuditLog>,
 
     /// Key that signs audit tree heads.
     audit_key: SigningKey,
 
-    /// Active sessions
+    /// Looks up the requesting agent (Admit stage).
+    agents: Arc<dyn AgentRegistry>,
+
+    /// Charges each admitted request (Budget stage).
+    budget: Arc<dyn Budget>,
+
+    /// Each session is bound to the first agent that uses it.
     sessions: Arc<RwLock<std::collections::HashMap<SessionId, AgentId>>>,
 
     /// Skill registry for WASM tools (Issue #6)
@@ -170,6 +184,9 @@ impl std::fmt::Debug for Kernel {
         f.debug_struct("Kernel")
             .field("name", &self.config.name)
             .field("policy", &self.policy.name())
+            .field("agents", &self.agents.name())
+            .field("budget", &self.budget.name())
+            .field("audit", &self.audit.name())
             .field(
                 "audit_key",
                 &hex::encode(self.audit_key.verifying_key().to_bytes()),
@@ -229,6 +246,9 @@ pub struct KernelBuilder {
     policy: Option<Arc<dyn PolicyDecisionPoint>>,
     tools: Vec<Arc<dyn ToolHandler>>,
     audit_key: Option<SigningKey>,
+    audit_log: Option<Arc<dyn AuditLog>>,
+    agents: Option<Arc<dyn AgentRegistry>>,
+    budget: Option<Arc<dyn Budget>>,
 }
 
 impl std::fmt::Debug for KernelBuilder {
@@ -256,6 +276,9 @@ impl KernelBuilder {
             policy: None,
             tools: Vec::new(),
             audit_key: None,
+            audit_log: None,
+            agents: None,
+            budget: None,
         }
     }
 
@@ -284,12 +307,39 @@ impl KernelBuilder {
         self
     }
 
+    /// Records into `log`, instead of the log `config.audit.log_path`
+    /// describes.
+    #[must_use]
+    pub fn with_audit_log(mut self, log: Arc<dyn AuditLog>) -> Self {
+        self.audit_log = Some(log);
+        self
+    }
+
+    /// Looks agents up in `registry`, instead of an empty
+    /// [`InMemoryAgentRegistry`].
+    #[must_use]
+    pub fn with_agent_registry(mut self, registry: Arc<dyn AgentRegistry>) -> Self {
+        self.agents = Some(registry);
+        self
+    }
+
+    /// Charges requests to `budget`, instead of the one `config.security`
+    /// describes.
+    #[must_use]
+    pub fn with_budget(mut self, budget: Arc<dyn Budget>) -> Self {
+        self.budget = Some(budget);
+        self
+    }
+
     /// Builds the kernel.
     ///
     /// # Errors
     ///
-    /// Returns an error if the configuration is invalid or a tool handler's
-    /// name collides with a built-in tool or another handler.
+    /// Returns an error if the configuration is invalid, a tool handler's
+    /// name collides with a built-in tool or another handler, or
+    /// `audit.log_path` is set and the log there can't be opened or doesn't
+    /// verify. A configured log that can't be used never falls back to an
+    /// in-memory one.
     pub async fn build(self) -> Result<Kernel, KernelError> {
         let config = self.config;
         config.validate()?;
@@ -342,12 +392,43 @@ impl KernelBuilder {
                 })?;
         }
 
+        let audit: Arc<dyn AuditLog> = match (self.audit_log, &config.audit.log_path) {
+            (Some(log), _) => log,
+            (None, Some(path)) => Arc::new(FileAuditLog::open(path).await.map_err(|e| {
+                KernelError::InvalidConfiguration {
+                    message: format!("audit.log_path: {e}"),
+                }
+            })?),
+            (None, None) => Arc::new(MemoryAuditLog::new()),
+        };
+
+        let budget: Arc<dyn Budget> = match self.budget {
+            Some(budget) => budget,
+            None if config.security.enable_rate_limiting => Arc::new(AgentRateBudget::per_minute(
+                config.security.max_requests_per_minute,
+            )),
+            None => Arc::new(Unlimited),
+        };
+
+        let agents = self
+            .agents
+            .unwrap_or_else(|| Arc::new(InMemoryAgentRegistry::new()));
+
+        info!(
+            audit = audit.name(),
+            budget = budget.name(),
+            agents = agents.name(),
+            "Mediation ports ready"
+        );
+
         Ok(Kernel {
             config,
-            audit: Arc::new(RwLock::new(AuditTrail::default())),
+            audit,
             audit_key: self
                 .audit_key
                 .unwrap_or_else(|| SigningKey::generate(&mut OsRng)),
+            agents,
+            budget,
             sessions: Arc::new(RwLock::new(std::collections::HashMap::new())),
             skill_registry: Arc::new(RwLock::new(skill_registry)),
             sandbox_config,
@@ -458,13 +539,64 @@ impl Kernel {
             .unwrap_or_else(|| PathBuf::from("skills"))
     }
 
+    /// The agent registry the Admit stage consults.
+    #[must_use]
+    pub fn agent_registry(&self) -> &Arc<dyn AgentRegistry> {
+        &self.agents
+    }
+
+    /// The audit log decisions and outcomes are recorded in.
+    #[must_use]
+    pub fn audit_log(&self) -> &Arc<dyn AuditLog> {
+        &self.audit
+    }
+
+    /// Registers an agent, or replaces its record.
+    ///
+    /// The record's attributes reach policy as `principal.*`, and its own
+    /// tool scope narrows what policy allows. Registration does not grant
+    /// anything by itself.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KernelError::InvalidConfiguration`] if the registry is
+    /// read-only.
+    pub async fn register_agent(&self, record: AgentRecord) -> Result<(), KernelError> {
+        self.agents
+            .register(record)
+            .await
+            .map_err(|e| KernelError::InvalidConfiguration {
+                message: e.to_string(),
+            })
+    }
+
+    /// Releases a session, so its ID is no longer bound to an agent.
+    /// Returns whether it was bound.
+    pub async fn end_session(&self, session_id: &SessionId) -> bool {
+        self.sessions.write().await.remove(session_id).is_some()
+    }
+
+    /// The record the kernel uses for `agent_id`: the registered one, or an
+    /// anonymous one if the agent isn't registered.
+    async fn principal(&self, agent_id: &AgentId) -> Option<AgentRecord> {
+        match self.agents.lookup(agent_id).await {
+            Some(record) => Some(record),
+            None if self.config.security.require_registered_agents => None,
+            None => Some(AgentRecord::anonymous(*agent_id)),
+        }
+    }
+
     /// Evaluates a policy decision for a given tool request.
     ///
-    /// Delegates to the kernel's [`PolicyDecisionPoint`]. With
-    /// [`Kernel::new`] that is chosen from config by
-    /// [`pdp::policy_from_config`]: a [`EnforcerPolicy`] when
+    /// Delegates to the kernel's [`PolicyDecisionPoint`], with the agent's
+    /// record as the principal. With [`Kernel::new`] that is chosen from
+    /// config by [`pdp::policy_from_config`]: a [`EnforcerPolicy`] when
     /// `policy.policy_paths` names files (docs/adr/0001), otherwise a
     /// [`ConfigPolicy`] that denies unmatched tools by default.
+    ///
+    /// This is the Decide stage alone. It doesn't check the agent's status,
+    /// session or own scope, doesn't charge a budget, and records nothing;
+    /// [`Kernel::execute`] does all of that.
     #[instrument(skip(self, request), fields(agent_id = %agent_id, tool = %request.tool_name))]
     pub async fn evaluate_policy(
         &self,
@@ -477,11 +609,33 @@ impl Kernel {
             policy = self.policy.name(),
             "Evaluating policy for tool request"
         );
+        let Some(principal) = self.principal(agent_id).await else {
+            return PolicyDecision::Deny {
+                reason: format!("Agent {agent_id} is not registered"),
+                violated_policies: Some(vec!["security.require_registered_agents".to_string()]),
+            };
+        };
         self.policy
-            .decide(&PolicyRequest::new(agent_id, request))
+            .decide(&PolicyRequest::new(agent_id, request).with_principal(&principal))
             .await
     }
-    /// Executes a tool request after policy evaluation.
+
+    /// Executes a tool request through the mediation pipeline.
+    ///
+    /// 1. **Admit**: the agent must be registered (if
+    ///    `security.require_registered_agents`) and active, the session must
+    ///    be its own, and the tool must be inside the agent's own scope.
+    /// 2. **Budget**: the request is charged to the agent's budget.
+    /// 3. **Decide**: the policy decision point must allow it.
+    /// 4. **Guard**: planned (Phase 2); nothing runs here yet.
+    /// 5. **Record**: the decision is appended to the audit log. If that
+    ///    fails, the tool does not run.
+    /// 6. **Execute** the tool.
+    /// 7. **Record the outcome**, linked to the decision.
+    /// 8. **Respond**, with an [`AuditReceipt`] naming both leaves.
+    ///
+    /// A request stopped at stages 1 to 3 is recorded as a denial before
+    /// the error is returned. See `docs/adr/0003`.
     ///
     /// # Arguments
     ///
@@ -491,10 +645,17 @@ impl Kernel {
     ///
     /// # Errors
     ///
-    /// Returns an error if:
-    /// - The policy evaluation denies the request
-    /// - The tool execution fails
-    /// - The audit logging fails
+    /// - [`KernelError::AgentNotFound`], [`KernelError::AgentSuspended`],
+    ///   [`KernelError::SessionConflict`]: refused at admission
+    /// - [`KernelError::PolicyViolation`]: outside the agent's scope
+    ///   (`policy_id` `"agent.scope"`), or denied by policy
+    /// - [`KernelError::RateLimited`]: over budget
+    /// - [`KernelError::AuditUnavailable`]: the decision couldn't be
+    ///   recorded, so nothing ran
+    /// - [`KernelError::ToolNotFound`]: no such tool
+    ///
+    /// A tool that runs and fails is not an error here: the response has
+    /// `success: false`.
     #[instrument(skip(self, request), fields(
         agent_id = %agent_id,
         session_id = %session_id,
@@ -506,37 +667,108 @@ impl Kernel {
         session_id: &SessionId,
         request: ToolRequest,
     ) -> Result<ToolResponse, KernelError> {
-        // Step 1: Evaluate policy
-        let decision = self.evaluate_policy(agent_id, &request).await;
-
-        // Step 2: Record the decision *before* acting on it. Denials are
-        // audited too — a rejected action is exactly the event an auditor
-        // most needs to see.
-        let rejection = match &decision {
-            PolicyDecision::Deny { reason, .. } | PolicyDecision::Inadmissible { reason } => {
-                Some(reason.clone())
+        // Stage 1: Admit.
+        let principal = match self.admit(agent_id, session_id, &request).await {
+            Ok(principal) => principal,
+            Err((decision, error)) => {
+                self.record_rejection(agent_id, session_id, &request, decision)
+                    .await;
+                return Err(error);
             }
-            PolicyDecision::Allow { .. } => None,
         };
 
-        self.append_audit(*agent_id, *session_id, request.tool_name.clone(), decision)
+        // Stage 2: Budget. Charged before policy, so requests the policy
+        // would deny still count.
+        if let BudgetDecision::Exceeded {
+            reason,
+            retry_after_ms,
+        } = self.budget.charge(&principal, &request).await
+        {
+            warn!(agent_id = %agent_id, %reason, "Request over budget");
+            let decision = deny(format!("Budget exceeded: {reason}"), "kernel.budget");
+            self.record_rejection(agent_id, session_id, &request, decision)
+                .await;
+            return Err(KernelError::RateLimited {
+                reason,
+                retry_after_ms,
+            });
+        }
+
+        // Stage 3: Decide.
+        let decision = self
+            .policy
+            .decide(
+                &PolicyRequest::new(agent_id, &request)
+                    .with_principal(&principal)
+                    .with_session(session_id),
+            )
             .await;
 
-        if let Some(reason) = rejection {
+        // Stage 4 (Guard) arrives with the Guard port in Phase 2.
+
+        // Stage 5: Record the decision *before* acting on it. Denials are
+        // audited too: a rejected action is exactly the event an auditor
+        // most needs to see.
+        if let PolicyDecision::Deny { reason, .. } | PolicyDecision::Inadmissible { reason } =
+            &decision
+        {
+            let reason = reason.clone();
+            self.record_rejection(agent_id, session_id, &request, decision)
+                .await;
             return Err(KernelError::PolicyViolation {
                 policy_id: "default".to_string(),
                 reason,
             });
         }
+        let decision_entry = AuditEntry::new(
+            *agent_id,
+            *session_id,
+            request.tool_name.clone(),
+            decision.clone(),
+        );
+        let decision_leaf = self.audit.append(decision_entry).await.map_err(|e| {
+            tracing::error!(error = %e, "Could not record decision - not executing");
+            KernelError::AuditUnavailable {
+                message: e.to_string(),
+            }
+        })?;
 
-        // Step 3: Execute the tool
-        // Measure execution time
+        // Stage 6: Execute.
         let start_time = std::time::Instant::now();
-
         let execution_result = self.dispatch_tool(agent_id, &request).await;
-
         let execution_time_ms = start_time.elapsed().as_millis() as u64;
 
+        // Stage 7: Record the outcome, linked to the decision. The tool has
+        // already run, so a failure here must not turn into an error: the
+        // agent would think the action didn't happen and might repeat it. A
+        // response without a receipt is the signal instead.
+        let outcome = AuditOutcome {
+            decision_leaf,
+            success: execution_result.is_ok(),
+            error: execution_result.as_ref().err().map(ToString::to_string),
+            result_sha256: execution_result.as_ref().ok().map(result_digest),
+            execution_time_ms,
+        };
+        let outcome_entry =
+            AuditEntry::new(*agent_id, *session_id, request.tool_name.clone(), decision)
+                .with_outcome(outcome);
+        let receipt = match self.audit.append(outcome_entry).await {
+            Ok(outcome_leaf) => Some(AuditReceipt {
+                decision_leaf,
+                outcome_leaf,
+                tree_head: self.audit_tree_head().await,
+            }),
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    decision_leaf,
+                    "Tool ran but its outcome could not be recorded"
+                );
+                None
+            }
+        };
+
+        // Stage 8: Respond.
         let response = match execution_result {
             // A tool that doesn't exist is the caller's error, not a failed
             // execution, and must never be reported as anything that ran.
@@ -547,6 +779,7 @@ impl Kernel {
                 result: Some(result),
                 error: None,
                 execution_time_ms,
+                receipt,
             },
             Err(e) => ToolResponse {
                 request_id: request.request_id,
@@ -554,10 +787,92 @@ impl Kernel {
                 result: None,
                 error: Some(e.to_string()),
                 execution_time_ms,
+                receipt,
             },
         };
 
         Ok(response)
+    }
+
+    /// The Admit stage. On refusal, returns the decision to record and the
+    /// error to return.
+    async fn admit(
+        &self,
+        agent_id: &AgentId,
+        session_id: &SessionId,
+        request: &ToolRequest,
+    ) -> Result<AgentRecord, (PolicyDecision, KernelError)> {
+        let Some(principal) = self.principal(agent_id).await else {
+            warn!(agent_id = %agent_id, "Unregistered agent refused");
+            return Err((
+                deny(
+                    format!("Agent {agent_id} is not registered"),
+                    "security.require_registered_agents",
+                ),
+                KernelError::AgentNotFound {
+                    agent_id: agent_id.to_string(),
+                },
+            ));
+        };
+
+        if let AgentStatus::Suspended { reason } = &principal.status {
+            warn!(agent_id = %agent_id, %reason, "Suspended agent refused");
+            return Err((
+                deny(format!("Agent is suspended: {reason}"), "kernel.admission"),
+                KernelError::AgentSuspended {
+                    agent_id: agent_id.to_string(),
+                    reason: reason.clone(),
+                },
+            ));
+        }
+
+        match self.sessions.write().await.entry(*session_id) {
+            Entry::Occupied(bound) if bound.get() != agent_id => {
+                warn!(agent_id = %agent_id, session_id = %session_id, "Session belongs to another agent");
+                return Err((
+                    deny(
+                        format!("Session {session_id} belongs to another agent"),
+                        "kernel.session",
+                    ),
+                    KernelError::SessionConflict {
+                        session_id: session_id.to_string(),
+                    },
+                ));
+            }
+            Entry::Occupied(_) => {}
+            Entry::Vacant(slot) => {
+                slot.insert(*agent_id);
+            }
+        }
+
+        if let Some(reason) = principal.scope_violation(&request.tool_name) {
+            warn!(agent_id = %agent_id, tool = %request.tool_name, "Tool outside agent scope");
+            return Err((
+                deny(reason.clone(), "agent.scope"),
+                KernelError::PolicyViolation {
+                    policy_id: "agent.scope".to_string(),
+                    reason,
+                },
+            ));
+        }
+
+        Ok(principal)
+    }
+
+    /// Records a refused request. The request is refused whether or not this
+    /// succeeds, so a failure is logged rather than returned: the caller
+    /// needs the real reason for the refusal.
+    async fn record_rejection(
+        &self,
+        agent_id: &AgentId,
+        session_id: &SessionId,
+        request: &ToolRequest,
+        decision: PolicyDecision,
+    ) {
+        let entry = AuditEntry::new(*agent_id, *session_id, request.tool_name.clone(), decision);
+        if let Err(e) = self.audit.append(entry).await {
+            tracing::error!(error = %e, tool = %request.tool_name, "Could not record a refused request");
+        }
     }
 
     /// Dispatches a tool request to the appropriate handler.
@@ -890,30 +1205,6 @@ impl Kernel {
         }
     }
 
-    /// Appends an entry to the audit log, linking it to the current chain head
-    /// and adding it to the Merkle tree. Returns the entry's leaf index.
-    ///
-    /// Holds the write lock across read-tail-and-push so that concurrent
-    /// requests cannot interleave and produce two entries claiming the same
-    /// predecessor, or leaves out of order with entries.
-    async fn append_audit(
-        &self,
-        agent_id: AgentId,
-        session_id: SessionId,
-        action: String,
-        decision: PolicyDecision,
-    ) -> u64 {
-        let mut trail = self.audit.write().await;
-        let entry = AuditEntry::new(agent_id, session_id, action, decision);
-        let entry = match trail.entries.last() {
-            Some(prev) => entry.with_previous(prev.hash.clone()),
-            None => entry,
-        };
-        let index = trail.log.append_leaf_hash(Self::audit_leaf_hash(&entry));
-        trail.entries.push(entry);
-        index
-    }
-
     /// The Merkle leaf hash of an audit entry: `leaf_hash(entry.hash)`, over
     /// the entry's hex hash string as bytes.
     ///
@@ -928,14 +1219,14 @@ impl Kernel {
     /// old hash.
     #[must_use]
     pub fn audit_leaf_hash(entry: &AuditEntry) -> Digest {
-        leaf_hash(entry.hash.as_bytes())
+        audit_log::entry_leaf_hash(entry)
     }
 
     /// Retrieves the audit log entries.
     ///
     /// In production, this would support pagination and filtering.
     pub async fn get_audit_log(&self) -> Vec<AuditEntry> {
-        self.audit.read().await.entries.clone()
+        self.audit.entries().await
     }
 
     /// Verifies the integrity of the kernel's audit chain.
@@ -943,7 +1234,7 @@ impl Kernel {
     /// Returns `Err(index)` identifying the first entry that has been altered,
     /// reordered, or spliced in.
     pub async fn verify_audit_chain(&self) -> Result<(), usize> {
-        AuditEntry::verify_chain(&self.audit.read().await.entries)
+        AuditEntry::verify_chain(&self.audit.entries().await)
     }
 
     /// The current audit tree head, signed with the kernel's audit key.
@@ -952,7 +1243,7 @@ impl Kernel {
     /// [`Kernel::prove_audit_consistency`] proof, which the kernel cannot
     /// produce if it has since dropped or rewritten any entry.
     pub async fn audit_tree_head(&self) -> SignedTreeHead {
-        let head = self.audit.read().await.log.tree_head();
+        let head = self.audit.tree_head().await;
         let timestamp_ms = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap_or(0);
         head.sign(&self.audit_key, timestamp_ms)
     }
@@ -977,10 +1268,8 @@ impl Kernel {
         tree_size: u64,
     ) -> Result<InclusionProof, KernelError> {
         self.audit
-            .read()
-            .await
-            .log
             .inclusion_proof(leaf_index, tree_size)
+            .await
             .map_err(audit_proof_error)
     }
 
@@ -997,23 +1286,35 @@ impl Kernel {
         new_size: u64,
     ) -> Result<ConsistencyProof, KernelError> {
         self.audit
-            .read()
-            .await
-            .log
             .consistency_proof(old_size, new_size)
+            .await
             .map_err(audit_proof_error)
     }
 
-    /// Returns the number of active sessions.
+    /// Returns the number of sessions currently bound to an agent.
     pub async fn active_session_count(&self) -> usize {
         self.sessions.read().await.len()
     }
 }
 
-fn audit_proof_error(e: TransparencyError) -> KernelError {
+fn audit_proof_error(e: AuditLogError) -> KernelError {
     KernelError::AuditProof {
         message: e.to_string(),
     }
+}
+
+/// A denial recorded for a request refused before (or by) policy.
+fn deny(reason: String, rule: &str) -> PolicyDecision {
+    PolicyDecision::Deny {
+        reason,
+        violated_policies: Some(vec![rule.to_string()]),
+    }
+}
+
+/// Hex SHA-256 of a tool result's JSON serialization.
+fn result_digest(result: &serde_json::Value) -> String {
+    let bytes = serde_json::to_vec(result).unwrap_or_default();
+    format!("{:x}", Sha256::digest(&bytes))
 }
 
 #[cfg(test)]
@@ -1156,8 +1457,15 @@ mod tests {
             matches!(result, Err(KernelError::ToolNotFound { ref tool_name }) if tool_name == "transfer_funds"),
             "got {result:?}"
         );
-        // The attempt is still on the record.
-        assert_eq!(kernel.get_audit_log().await.len(), 1);
+        // The attempt is still on the record: the decision, then an outcome
+        // saying nothing ran.
+        let entries = kernel.get_audit_log().await;
+        assert_eq!(entries.len(), 2);
+        let outcome = entries[1].outcome.as_ref().unwrap();
+        assert_eq!(outcome.decision_leaf, 0);
+        assert!(!outcome.success);
+        assert!(outcome.error.as_ref().unwrap().contains("not found"));
+        assert!(outcome.result_sha256.is_none());
     }
 
     #[tokio::test]
@@ -1361,7 +1669,9 @@ mod tests {
         assert_eq!(kernel.audit_verifying_key(), key.verifying_key());
         head.verify(&key.verifying_key()).unwrap();
         first_head.verify(&key.verifying_key()).unwrap();
-        assert_eq!(head.head.size, 3);
+        // echo: decision + outcome; rm_rf: one denial; system_info: decision
+        // + outcome.
+        assert_eq!(head.head.size, 5);
 
         // Every decision, including the denial, is provably in the log.
         let entries = kernel.get_audit_log().await;
@@ -1372,7 +1682,8 @@ mod tests {
                 .unwrap();
             verify_inclusion(&Kernel::audit_leaf_hash(entry), &proof, &head.head.root).unwrap();
         }
-        assert!(matches!(entries[1].decision, PolicyDecision::Deny { .. }));
+        assert!(matches!(entries[2].decision, PolicyDecision::Deny { .. }));
+        assert!(entries[2].outcome.is_none());
 
         // The later head extends the earlier one.
         let consistency = kernel
@@ -1383,11 +1694,11 @@ mod tests {
 
         // Out-of-range requests are errors, not panics.
         assert!(matches!(
-            kernel.prove_audit_inclusion(3, 3).await,
+            kernel.prove_audit_inclusion(5, 5).await,
             Err(KernelError::AuditProof { .. })
         ));
         assert!(matches!(
-            kernel.prove_audit_consistency(1, 4).await,
+            kernel.prove_audit_consistency(1, 6).await,
             Err(KernelError::AuditProof { .. })
         ));
     }
@@ -1400,7 +1711,10 @@ mod tests {
             .await
             .unwrap();
         let head = kernel.audit_tree_head().await;
-        let proof = kernel.prove_audit_inclusion(0, 1).await.unwrap();
+        let proof = kernel
+            .prove_audit_inclusion(0, head.head.size)
+            .await
+            .unwrap();
         let original = kernel.get_audit_log().await.remove(0);
         assert!(original.verify_integrity());
         verify_inclusion(&Kernel::audit_leaf_hash(&original), &proof, &head.head.root).unwrap();

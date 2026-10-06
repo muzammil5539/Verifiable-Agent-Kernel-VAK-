@@ -19,6 +19,8 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::audit::transparency::SignedTreeHead;
+
 // ============================================================================
 // Identifier Types
 // ============================================================================
@@ -335,6 +337,10 @@ impl ToolRequest {
 ///
 /// `ToolResponse` contains the result of executing a tool request,
 /// including success/failure status, any returned data, and timing information.
+///
+/// A response from [`crate::kernel::Kernel::execute`] also carries an
+/// [`AuditReceipt`]: the audit leaves recording the decision and the outcome,
+/// and a signed tree head they can be proven against.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResponse {
     /// The ID of the original request.
@@ -353,6 +359,15 @@ pub struct ToolResponse {
 
     /// Time taken to execute the tool in milliseconds.
     pub execution_time_ms: u64,
+
+    /// Where this call is recorded in the kernel's audit log.
+    ///
+    /// Set by `Kernel::execute`. `None` on a response built elsewhere (a tool
+    /// handler's own response), or if the outcome leaf could not be appended
+    /// after the tool had already run; in that case the decision is still on
+    /// record but the outcome is not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<AuditReceipt>,
 }
 
 impl ToolResponse {
@@ -365,6 +380,7 @@ impl ToolResponse {
             result: Some(result),
             error: None,
             execution_time_ms,
+            receipt: None,
         }
     }
 
@@ -377,13 +393,51 @@ impl ToolResponse {
             result: None,
             error: Some(error.into()),
             execution_time_ms,
+            receipt: None,
         }
     }
+}
+
+/// Proof material for one executed call: which audit leaves record it, and a
+/// signed tree head taken right after the outcome leaf was appended.
+///
+/// To check it without trusting the kernel, verify the tree head against the
+/// kernel's public key, then verify inclusion of both leaves with
+/// `Kernel::prove_audit_inclusion` (see `docs/architecture-v2.md` §4.2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuditReceipt {
+    /// Leaf index of the decision entry, appended before the tool ran.
+    pub decision_leaf: u64,
+    /// Leaf index of the outcome entry, appended after the tool ran.
+    pub outcome_leaf: u64,
+    /// Signed tree head covering both leaves.
+    pub tree_head: SignedTreeHead,
 }
 
 // ============================================================================
 // Audit Types
 // ============================================================================
+
+/// What happened when an allowed tool call ran.
+///
+/// Recorded in an outcome entry, appended after execution and linked to the
+/// decision entry by its leaf index. The result itself is not stored, only
+/// its SHA-256, so the log proves what was returned without holding the data.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuditOutcome {
+    /// Leaf index of the decision entry this outcome belongs to.
+    pub decision_leaf: u64,
+    /// Whether the tool ran and reported success.
+    pub success: bool,
+    /// The failure, if it did not succeed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Hex SHA-256 of the result's JSON serialization, if there was a result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_sha256: Option<String>,
+    /// Time the tool took, in milliseconds.
+    pub execution_time_ms: u64,
+}
 
 /// An immutable audit log entry.
 ///
@@ -396,6 +450,10 @@ impl ToolResponse {
 /// - The action taken and its result
 /// - A cryptographic hash for integrity verification
 /// - A reference to the previous entry (for chain integrity)
+///
+/// A *decision* entry records what the kernel decided, before acting. An
+/// *outcome* entry (`outcome` is set) records what happened after an allowed
+/// call ran, and names its decision entry's leaf.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEntry {
     /// Unique identifier for this audit entry.
@@ -422,6 +480,10 @@ pub struct AuditEntry {
     /// Hash of the previous audit entry (for chain integrity).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_hash: Option<String>,
+
+    /// For an outcome entry, what happened when the tool ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<AuditOutcome>,
 }
 
 impl AuditEntry {
@@ -433,30 +495,19 @@ impl AuditEntry {
         action: impl Into<String>,
         decision: PolicyDecision,
     ) -> Self {
-        let audit_id = AuditId::new();
-        let timestamp = Utc::now();
-        let action = action.into();
-
-        let hash = Self::compute_hash(
-            &audit_id,
-            &timestamp,
-            &agent_id,
-            &session_id,
-            &action,
-            &decision,
-            None,
-        );
-
-        Self {
-            audit_id,
-            timestamp,
+        let mut entry = Self {
+            audit_id: AuditId::new(),
+            timestamp: Utc::now(),
             agent_id,
             session_id,
-            action,
+            action: action.into(),
             decision,
-            hash,
+            hash: String::new(),
             previous_hash: None,
-        }
+            outcome: None,
+        };
+        entry.hash = entry.compute_hash();
+        entry
     }
 
     /// Creates a new audit entry with a reference to the previous entry.
@@ -464,16 +515,16 @@ impl AuditEntry {
     pub fn with_previous(mut self, previous_hash: String) -> Self {
         // Recompute hash so it commits to the predecessor. Without this the
         // "chain" is inert: entries could be reordered or spliced freely.
-        self.hash = Self::compute_hash(
-            &self.audit_id,
-            &self.timestamp,
-            &self.agent_id,
-            &self.session_id,
-            &self.action,
-            &self.decision,
-            Some(previous_hash.as_str()),
-        );
         self.previous_hash = Some(previous_hash);
+        self.hash = self.compute_hash();
+        self
+    }
+
+    /// Makes this an outcome entry, recording what happened when the tool ran.
+    #[must_use]
+    pub fn with_outcome(mut self, outcome: AuditOutcome) -> Self {
+        self.outcome = Some(outcome);
+        self.hash = self.compute_hash();
         self
     }
 
@@ -485,34 +536,39 @@ impl AuditEntry {
     /// [`Self::verify_integrity`] still reported success.
     ///
     /// Fields are length-prefixed so that no two distinct entries can produce
-    /// the same pre-image by shifting bytes across field boundaries.
-    fn compute_hash(
-        audit_id: &AuditId,
-        timestamp: &DateTime<Utc>,
-        agent_id: &AgentId,
-        session_id: &SessionId,
-        action: &str,
-        decision: &PolicyDecision,
-        previous_hash: Option<&str>,
-    ) -> String {
+    /// the same pre-image by shifting bytes across field boundaries. The
+    /// outcome is absorbed only when present, so a decision entry hashes
+    /// exactly as entries did before outcomes existed.
+    fn compute_hash(&self) -> String {
         fn absorb(hasher: &mut Sha256, field: &[u8]) {
             hasher.update((field.len() as u64).to_be_bytes());
             hasher.update(field);
         }
 
         let mut hasher = Sha256::new();
-        absorb(&mut hasher, audit_id.0.as_bytes());
-        absorb(&mut hasher, timestamp.to_rfc3339().as_bytes());
-        absorb(&mut hasher, agent_id.0.as_bytes());
-        absorb(&mut hasher, session_id.0.as_bytes());
-        absorb(&mut hasher, action.as_bytes());
+        absorb(&mut hasher, self.audit_id.0.as_bytes());
+        absorb(&mut hasher, self.timestamp.to_rfc3339().as_bytes());
+        absorb(&mut hasher, self.agent_id.0.as_bytes());
+        absorb(&mut hasher, self.session_id.0.as_bytes());
+        absorb(&mut hasher, self.action.as_bytes());
 
         // Decision is canonicalised via serde so the digest tracks both the
         // variant and its payload (reason, violated policies, constraints).
-        let decision_bytes = serde_json::to_vec(decision).unwrap_or_default();
+        let decision_bytes = serde_json::to_vec(&self.decision).unwrap_or_default();
         absorb(&mut hasher, &decision_bytes);
 
-        absorb(&mut hasher, previous_hash.unwrap_or("").as_bytes());
+        absorb(
+            &mut hasher,
+            self.previous_hash.as_deref().unwrap_or("").as_bytes(),
+        );
+
+        if let Some(outcome) = &self.outcome {
+            absorb(&mut hasher, b"outcome");
+            absorb(
+                &mut hasher,
+                &serde_json::to_vec(outcome).unwrap_or_default(),
+            );
+        }
 
         format!("{:x}", hasher.finalize())
     }
@@ -524,16 +580,7 @@ impl AuditEntry {
     /// `previous_hash` equals its predecessor's `hash`.
     #[must_use]
     pub fn verify_integrity(&self) -> bool {
-        let computed = Self::compute_hash(
-            &self.audit_id,
-            &self.timestamp,
-            &self.agent_id,
-            &self.session_id,
-            &self.action,
-            &self.decision,
-            self.previous_hash.as_deref(),
-        );
-        computed == self.hash
+        self.compute_hash() == self.hash
     }
 
     /// Verifies a full audit chain: every entry's hash must be self-consistent
@@ -647,6 +694,39 @@ pub enum KernelError {
         /// Why the proof could not be produced.
         message: String,
     },
+
+    /// The agent is registered but suspended.
+    #[error("Agent suspended: {agent_id}: {reason}")]
+    AgentSuspended {
+        /// The suspended agent.
+        agent_id: String,
+        /// Why it was suspended.
+        reason: String,
+    },
+
+    /// The session is bound to a different agent.
+    #[error("Session {session_id} belongs to another agent")]
+    SessionConflict {
+        /// The session that was presented.
+        session_id: String,
+    },
+
+    /// The agent has used up its request budget.
+    #[error("Rate limited: {reason} (retry after {retry_after_ms}ms)")]
+    RateLimited {
+        /// Which limit was hit.
+        reason: String,
+        /// How long until a request would be within budget.
+        retry_after_ms: u64,
+    },
+
+    /// The audit log could not record the decision, so the request was not
+    /// executed.
+    #[error("Audit log unavailable: {message}")]
+    AuditUnavailable {
+        /// Why the append failed.
+        message: String,
+    },
 }
 
 impl KernelError {
@@ -655,7 +735,9 @@ impl KernelError {
     pub fn is_recoverable(&self) -> bool {
         matches!(
             self,
-            KernelError::Timeout { .. } | KernelError::ResourceLimitExceeded { .. }
+            KernelError::Timeout { .. }
+                | KernelError::ResourceLimitExceeded { .. }
+                | KernelError::RateLimited { .. }
         )
     }
 
@@ -674,6 +756,10 @@ impl KernelError {
             KernelError::Timeout { .. } => "E009",
             KernelError::ResourceLimitExceeded { .. } => "E010",
             KernelError::AuditProof { .. } => "E011",
+            KernelError::AgentSuspended { .. } => "E012",
+            KernelError::SessionConflict { .. } => "E013",
+            KernelError::RateLimited { .. } => "E014",
+            KernelError::AuditUnavailable { .. } => "E015",
         }
     }
 }

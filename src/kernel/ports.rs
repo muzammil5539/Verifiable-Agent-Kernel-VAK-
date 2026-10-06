@@ -1,17 +1,30 @@
 //! Ports: the traits the kernel's mediation pipeline calls.
 //!
-//! The kernel owns *mediation* (every request is decided, recorded, then
-//! executed, in that order). It does not own *how* decisions are made or
-//! tools run. Those sit behind the traits here, so an embedder can supply a
-//! real Cedar engine, an OPA client, or a test double without forking the
-//! kernel. See `docs/architecture-v2.md` §5.2.
+//! The kernel owns *mediation*: every request is admitted, budgeted,
+//! decided, recorded, then executed, in that order. It does not own *how*
+//! agents are looked up, budgets kept, decisions made, records stored or
+//! tools run. Those sit behind the traits re-exported here, so an embedder
+//! can supply a real Cedar engine, a database-backed registry, or a test
+//! double without forking the kernel. See `docs/architecture-v2.md` §5.2 and
+//! `docs/adr/0003`.
 //!
-//! Tool execution uses the existing [`ToolHandler`](super::custom_handlers::ToolHandler)
-//! trait; this module adds the policy port.
+//! | Stage | Port |
+//! |---|---|
+//! | Admit | [`AgentRegistry`] |
+//! | Budget | [`Budget`] |
+//! | Decide | [`PolicyDecisionPoint`] |
+//! | Record | [`AuditLog`] |
+//! | Execute | [`ToolHandler`] |
 
 use async_trait::async_trait;
 
-use super::types::{AgentId, PolicyDecision, ToolRequest};
+pub use super::audit_log::AuditLog;
+pub use super::budget::Budget;
+pub use super::custom_handlers::ToolHandler;
+pub use super::identity::AgentRegistry;
+
+use super::identity::AgentRecord;
+use super::types::{AgentId, PolicyDecision, SessionId, ToolRequest};
 
 /// What a [`PolicyDecisionPoint`] is asked to decide.
 ///
@@ -26,13 +39,39 @@ pub struct PolicyRequest<'a> {
     pub agent_id: &'a AgentId,
     /// The tool call it wants to make.
     pub request: &'a ToolRequest,
+    /// The agent's record from the Admit stage. Its attributes are what
+    /// policy conditions read as `principal.*`. `None` only when the PDP is
+    /// called outside `Kernel::execute`; treat that as an agent about which
+    /// nothing is known.
+    pub principal: Option<&'a AgentRecord>,
+    /// The session the request was made in.
+    pub session_id: Option<&'a SessionId>,
 }
 
 impl<'a> PolicyRequest<'a> {
     /// Creates a policy request.
     #[must_use]
     pub fn new(agent_id: &'a AgentId, request: &'a ToolRequest) -> Self {
-        Self { agent_id, request }
+        Self {
+            agent_id,
+            request,
+            principal: None,
+            session_id: None,
+        }
+    }
+
+    /// Attaches the agent's record.
+    #[must_use]
+    pub fn with_principal(mut self, principal: &'a AgentRecord) -> Self {
+        self.principal = Some(principal);
+        self
+    }
+
+    /// Attaches the session.
+    #[must_use]
+    pub fn with_session(mut self, session_id: &'a SessionId) -> Self {
+        self.session_id = Some(session_id);
+        self
     }
 }
 

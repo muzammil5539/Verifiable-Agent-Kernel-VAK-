@@ -45,16 +45,20 @@ that language is exactly how the gap went unnoticed for thirteen sprints.
       module) removed
 - [x] `CONTEXT.md` and `docs/adr/` established as the place decisions get
       recorded, so the next drift is visible in a diff instead of silent
+- [x] `sandbox::async_host` denies when its enforcer can't be built, instead of
+      falling back to `CedarEnforcer::new_permissive()`
+      (`test_enforcer_construction_failure_denies`)
+- [x] Mediation pipeline stages from `docs/adr/0003`, all driven through
+      `Kernel::execute` in `tests/mediation_pipeline.rs`: Admit (agent registry,
+      suspension, session binding, per-agent tool scope moved out of `VakAgent`),
+      Budget (`security.enable_rate_limiting` is now enforced), principal attributes
+      from the agent record instead of a constant `internal = true`, the `AuditLog`
+      port with a durable JSONL adapter (`audit.log_path`), outcome leaves, and
+      receipts on `ToolResponse`
 
 ---
 
 ## P0 — Security: still fails open
-
-- [ ] **`src/sandbox/async_host.rs:309`** — `CedarEnforcer::new(...).unwrap_or_else(|_|
-      CedarEnforcer::new_permissive())`. A misconfigured enforcer degrades to
-      *allow everything* on the sandbox host-function path. `CedarEnforcer::new_denying()`
-      already exists for exactly this (added while wiring the kernel path); swap it in
-      and add a regression test that construction failure denies rather than permits.
 
 - [ ] **ZK proofs are not zero-knowledge.** `src/reasoner/zk_proof.rs::verify_response`
       accepts any 64-character hex string as a valid proof of any statement — there is
@@ -73,6 +77,10 @@ Each of these exists as a well-tested standalone module. None of them sit on the
 request path. In order of leverage:
 
 - [ ] **Delegate kernel auditing to `AuditLogger`, backed by `MerkleDag`.**
+      *Partly superseded (ADR 0002, 0003):* the kernel's log is now the `AuditLog`
+      port over an RFC 9162 tree, with receipts and a durable file adapter. What
+      remains is making `AuditLogger`'s SQLite backend an `AuditLog` adapter, or
+      removing it (Phase 1 slice 1e).
       `Kernel` currently keeps its own `Vec<AuditEntry>` in parallel with
       `src/audit/mod.rs`'s `AuditLogger` (9,211 lines, Ed25519 signing, rotation,
       multiple backends — genuinely more capable, and unused). Collapsing to one

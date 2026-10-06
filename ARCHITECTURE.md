@@ -162,9 +162,9 @@ The kernel orchestrates the full request lifecycle:
 | `SessionId` | UUIDv7 identifier for sessions. |
 | `AuditId` | UUIDv7 identifier for audit entries. |
 | `ToolRequest` | Encapsulates tool name, parameters (JSON), timeout, and a unique request ID. |
-| `ToolResponse` | Contains success/failure, result JSON, error string, and execution time. |
+| `ToolResponse` | Contains success/failure, result JSON, error string, execution time, and an `AuditReceipt` (decision and outcome leaves, signed tree head). |
 | `PolicyDecision` | Enum: `Allow { reason, constraints }`, `Deny { reason, violated_policies }`, `Inadmissible { reason }`. |
-| `KernelError` | Comprehensive error enum with error codes (E001-E010). |
+| `KernelError` | Comprehensive error enum with error codes (E001-E015). |
 | `KernelConfig` | Builder-based configuration with security, audit, policy, and resource sub-configs. |
 
 **Sub-modules:**
@@ -176,8 +176,13 @@ The kernel orchestrates the full request lifecycle:
 | `traits.rs` | Async traits: `PolicyEvaluator`, `AuditWriter`, `StateStore`, `ToolExecutor` |
 | `async_pipeline.rs` | Concurrent request processing pipeline |
 | `neurosymbolic_pipeline.rs` | PRM/reasoning integration pipeline |
-| `rate_limiter.rs` | Token-bucket rate limiter per agent |
+| `rate_limiter.rs` | Token-bucket and sliding-window primitives; `TokenBucket` backs `AgentRateBudget` |
 | `custom_handlers.rs` | Registry for user-defined tool handlers |
+| `ports.rs` | The pipeline's ports, one per stage: `AgentRegistry`, `Budget`, `PolicyDecisionPoint`, `AuditLog`, `ToolHandler` |
+| `identity.rs` | `AgentRecord`, `AgentRegistry`, `InMemoryAgentRegistry` (Admit stage) |
+| `budget.rs` | `Budget`, `AgentRateBudget`, `Unlimited` (Budget stage) |
+| `pdp.rs` | `ConfigPolicy`, `EnforcerPolicy` (Decide stage) |
+| `audit_log.rs` | `AuditLog`, `MemoryAuditLog`, `FileAuditLog` (Record stages) |
 
 **Built-in tools:**
 
@@ -623,36 +628,38 @@ Extends the skill marketplace with comprehensive publisher verification, reputat
 
 ### Tool Request Lifecycle
 
+`Kernel::execute` is the single mediation point. Every stage that refuses a request
+records one `Deny` entry before returning the error. See `docs/adr/0003` for the
+reasoning and `docs/architecture-v2.md` §5.1 for the target design.
+
 ```
-1. Agent sends ToolRequest
-       │
+1. Admit        AgentRegistry: registered (if required)? active? session its own?
+       │        tool inside the agent's own allowed/blocked lists?
+       │        ── refuse ──► Deny entry + AgentNotFound / AgentSuspended /
+       │                      SessionConflict / PolicyViolation("agent.scope")
        ▼
-2. Rate Limiter check
-       │ (pass)
+2. Budget       Budget: per-agent token bucket (security.max_requests_per_minute)
+       │        ── over ────► Deny entry + RateLimited
        ▼
-3. Policy Engine evaluates request
-       │
-       ├── Deny ──► Return error + Audit log (denied)
-       │
-       ▼ (Allow)
-4. Audit Logger records decision
-       │
+3. Decide       PolicyDecisionPoint (EnforcerPolicy or ConfigPolicy), with the
+       │        agent's record as principal
+       │        ── deny ────► Deny entry + PolicyViolation
        ▼
-5. Dispatcher selects handler
-       │
-       ├── Built-in tool ──► Execute directly
-       │
-       └── WASM skill ──► Sandbox execution
-              │
-              ├── Load skill from SkillRegistry
-              ├── Verify Ed25519 signature
-              ├── Instantiate WASM with resource limits
-              ├── Execute with fuel metering
-              └── Return result or error
-       │
+4. Guard        (planned: Phase 2)
        ▼
-6. ToolResponse returned to agent
+5. Record       AuditLog::append(decision)  ── fails ──► AuditUnavailable, nothing runs
+       ▼
+6. Execute      built-in ──► host handler (panic boundary, timeout) ──► WASM skill
+       │        (fuel, epoch deadline) ──► otherwise ToolNotFound
+       ▼
+7. Outcome      AuditLog::append(outcome { decision_leaf, success, result_sha256 })
+       ▼
+8. Respond      ToolResponse { ..., receipt: { decision_leaf, outcome_leaf,
+                signed tree head } }
 ```
+
+WASM skill signatures are not verified yet: the registry's "signature" is an unkeyed
+hash (finding K4 in `docs/architecture-v2.md`, Phase 1 slice 1c).
 
 ### Neuro-Symbolic Verification Flow (High-Stakes Actions)
 

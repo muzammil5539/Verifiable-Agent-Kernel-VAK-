@@ -141,12 +141,47 @@ let config: &KernelConfig = kernel.config();
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `new` | `async fn new(config: KernelConfig) -> Result<Self, KernelError>` | Creates a kernel instance. Validates config, loads skills, configures sandbox. |
-| `execute` | `async fn execute(&self, agent_id: &AgentId, session_id: &SessionId, request: ToolRequest) -> Result<ToolResponse, KernelError>` | Evaluates policy, logs decision, dispatches tool, returns response. |
-| `evaluate_policy` | `async fn evaluate_policy(&self, agent_id: &AgentId, request: &ToolRequest) -> PolicyDecision` | Evaluates policy for a request without executing it. |
-| `get_audit_log` | `async fn get_audit_log(&self) -> Vec<AuditEntry>` | Returns all audit entries. |
-| `list_tools` | `async fn list_tools(&self) -> Vec<String>` | Lists built-in tools and registered WASM skills. |
-| `active_session_count` | `async fn active_session_count(&self) -> usize` | Returns number of active sessions. |
+| `execute` | `async fn execute(&self, agent_id: &AgentId, session_id: &SessionId, request: ToolRequest) -> Result<ToolResponse, KernelError>` | Runs the mediation pipeline: admit, budget, decide, record the decision, execute, record the outcome, respond with an `AuditReceipt`. Refusals at any stage are recorded. |
+| `evaluate_policy` | `async fn evaluate_policy(&self, agent_id: &AgentId, request: &ToolRequest) -> PolicyDecision` | The Decide stage alone, with the agent's record as principal. No admission, budget or audit. |
+| `register_agent` | `async fn register_agent(&self, record: AgentRecord) -> Result<(), KernelError>` | Adds or replaces an agent record: attributes, status, own tool scope. |
+| `end_session` | `async fn end_session(&self, session_id: &SessionId) -> bool` | Releases a session's binding to its agent. |
+| `get_audit_log` | `async fn get_audit_log(&self) -> Vec<AuditEntry>` | Returns all audit entries: decisions, and outcomes (`outcome` set). |
+| `audit_tree_head` | `async fn audit_tree_head(&self) -> SignedTreeHead` | Current Merkle tree head, signed with the kernel's Ed25519 key. |
+| `prove_audit_inclusion` / `prove_audit_consistency` | `async fn(&self, u64, u64) -> Result<_, KernelError>` | RFC 9162 proofs, verifiable without trusting the kernel. |
+| `list_tools` | `async fn list_tools(&self) -> Vec<String>` | Lists built-in tools, registered host handlers and WASM skills. |
+| `active_session_count` | `async fn active_session_count(&self) -> usize` | Returns the number of sessions bound to an agent. |
 | `config` | `fn config(&self) -> &KernelConfig` | Returns kernel configuration reference. |
+
+### KernelBuilder and ports
+
+`Kernel::builder(config)` injects an implementation for any pipeline stage. Anything
+not supplied is built from `config`, as `Kernel::new` would. See `docs/adr/0003`.
+
+```rust
+use vak::kernel::{AgentRecord, InMemoryAgentRegistry, Kernel, KernelConfig};
+
+let registry = Arc::new(InMemoryAgentRegistry::new());
+let kernel = Kernel::builder(config)
+    .with_agent_registry(registry.clone())   // Admit: Arc<dyn AgentRegistry>
+    .with_budget(budget)                     // Budget: Arc<dyn Budget>
+    .with_policy(pdp)                        // Decide: Arc<dyn PolicyDecisionPoint>
+    .with_audit_log(log)                     // Record: Arc<dyn AuditLog>
+    .with_audit_signing_key(key)             // signs tree heads
+    .with_tool(handler)                      // Execute: impl ToolHandler
+    .build()
+    .await?;
+
+kernel.register_agent(AgentRecord::new(agent_id, "billing").internal(true)
+    .with_allowed_tools(["invoice_lookup"])).await?;
+registry.suspend(&agent_id, "key rotated").await?;  // refused from the next request
+```
+
+| Port | Default | Selected by |
+|------|---------|-------------|
+| `AgentRegistry` | `InMemoryAgentRegistry` (unknown agents get an anonymous record) | `security.require_registered_agents` refuses unknown agents |
+| `Budget` | `AgentRateBudget::per_minute(n)` | `security.enable_rate_limiting`, `security.max_requests_per_minute` |
+| `PolicyDecisionPoint` | `EnforcerPolicy` or `ConfigPolicy` | `policy.policy_paths` |
+| `AuditLog` | `FileAuditLog` or `MemoryAuditLog` | `audit.log_path` |
 
 ---
 
@@ -414,6 +449,11 @@ pub enum KernelError {
     SerializationError(serde_json::Error),        // E008
     Timeout { timeout_ms },                       // E009
     ResourceLimitExceeded { resource, limit, requested }, // E010
+    AuditProof { message },                       // E011
+    AgentSuspended { agent_id, reason },          // E012
+    SessionConflict { session_id },               // E013
+    RateLimited { reason, retry_after_ms },       // E014
+    AuditUnavailable { message },                 // E015
 }
 ```
 
@@ -421,8 +461,8 @@ pub enum KernelError {
 
 | Method | Return | Description |
 |--------|--------|-------------|
-| `is_recoverable()` | `bool` | `true` for `Timeout` and `ResourceLimitExceeded` |
-| `error_code()` | `&str` | Returns code string (E001-E010) |
+| `is_recoverable()` | `bool` | `true` for `Timeout`, `ResourceLimitExceeded` and `RateLimited` |
+| `error_code()` | `&str` | Returns code string (E001-E015) |
 
 ---
 
@@ -1503,6 +1543,11 @@ exports:
 | E008 | `SerializationError` | No | JSON serialization/deserialization failed |
 | E009 | `Timeout` | Yes | Operation exceeded time limit |
 | E010 | `ResourceLimitExceeded` | Yes | Memory, CPU, or connection limit exceeded |
+| E011 | `AuditProof` | No | An audit proof was requested for an index or size the log doesn't have |
+| E012 | `AgentSuspended` | No | The agent is registered but suspended |
+| E013 | `SessionConflict` | No | The session is bound to a different agent |
+| E014 | `RateLimited` | Yes | The agent is over its request budget; retry after `retry_after_ms` |
+| E015 | `AuditUnavailable` | No | The decision couldn't be recorded, so the tool didn't run |
 
 ---
 
