@@ -116,7 +116,8 @@ use self::types::{
 
 // Import sandbox and skill registry for WASM execution (Issue #6)
 use crate::sandbox::{
-    SandboxConfig, SandboxError, SandboxRuntime, SandboxRuntimeConfig, SkillRegistry,
+    SandboxConfig, SandboxError, SandboxRuntime, SandboxRuntimeConfig, SignatureConfig,
+    SkillRegistry, SkillSignatureVerifier,
 };
 
 use crate::audit::transparency::{ConsistencyProof, Digest, InclusionProof, SignedTreeHead};
@@ -386,8 +387,24 @@ impl KernelBuilder {
         let skill_registry = match self.skills {
             Some(registry) => registry,
             None => {
-                let skills_dir = Kernel::resolve_skills_dir();
-                let mut registry = SkillRegistry::new(skills_dir.clone());
+                let skills_dir = config
+                    .security
+                    .skills_path
+                    .clone()
+                    .unwrap_or_else(Kernel::resolve_skills_dir);
+                // Signed skills only, from the configured publishers, unless
+                // unsigned skills are explicitly allowed. A trusted key that
+                // doesn't parse is a configuration error, not a key to skip.
+                let verifier = SkillSignatureVerifier::try_new(SignatureConfig {
+                    require_signatures: true,
+                    trusted_keys: config.security.trusted_skill_keys.clone(),
+                    allow_unsigned_in_dev: config.security.allow_unsigned_skills,
+                })
+                .map_err(|e| KernelError::InvalidConfiguration {
+                    message: format!("security.trusted_skill_keys: {e}"),
+                })?;
+                let mut registry =
+                    SkillRegistry::with_signature_verification(skills_dir.clone(), verifier);
                 if skills_dir.exists() {
                     match registry.load_all_skills() {
                         Ok(ids) => info!(count = ids.len(), "Loaded skills from registry"),
@@ -771,7 +788,10 @@ impl Kernel {
 
         // Stage 6: Execute.
         let start_time = std::time::Instant::now();
-        let execution_result = self.dispatch_tool(agent_id, &request).await;
+        let Dispatched {
+            result: execution_result,
+            module_sha256,
+        } = self.dispatch_tool(agent_id, &request).await;
         let execution_time_ms = start_time.elapsed().as_millis() as u64;
 
         // Stage 7: Record the outcome, linked to the decision. The tool has
@@ -784,6 +804,7 @@ impl Kernel {
             error: execution_result.as_ref().err().map(ToString::to_string),
             result_sha256: execution_result.as_ref().ok().map(result_digest),
             execution_time_ms,
+            module_sha256,
         };
         let outcome_entry =
             AuditEntry::new(*agent_id, *session_id, request.tool_name.clone(), decision)
@@ -928,12 +949,8 @@ impl Kernel {
     /// - `calculator`: Performs basic arithmetic operations
     /// - `data_processor`: Processes data arrays with various operations
     /// - `system_info`: Returns system information (kernel version, etc.)
-    async fn dispatch_tool(
-        &self,
-        agent_id: &AgentId,
-        request: &ToolRequest,
-    ) -> Result<serde_json::Value, KernelError> {
-        match request.tool_name.as_str() {
+    async fn dispatch_tool(&self, agent_id: &AgentId, request: &ToolRequest) -> Dispatched {
+        let result = match request.tool_name.as_str() {
             "echo" => {
                 // Echo tool: returns the input parameters
                 Ok(request.parameters.clone())
@@ -961,9 +978,13 @@ impl Kernel {
                     self.execute_registered_tool(agent_id, request).await
                 } else {
                     // Try to execute as WASM skill (Issue #6)
-                    self.execute_wasm_skill(request).await
+                    return self.execute_wasm_skill(request).await;
                 }
             }
+        };
+        Dispatched {
+            result,
+            module_sha256: None,
         }
     }
 
@@ -1017,64 +1038,84 @@ impl Kernel {
     /// The skill never runs on a Tokio worker, so a slow or spinning skill
     /// can't stall other requests. A panic on the blocking thread fails this
     /// call only.
-    async fn execute_wasm_skill(
-        &self,
-        request: &ToolRequest,
-    ) -> Result<serde_json::Value, KernelError> {
+    async fn execute_wasm_skill(&self, request: &ToolRequest) -> Dispatched {
         let failed = |reason: String| KernelError::ToolExecutionFailed {
             tool_name: request.tool_name.clone(),
             reason,
         };
 
         // Copy what's needed and release the registry lock before running.
-        let Some(manifest) = self
-            .skill_registry
-            .read()
-            .await
-            .get_skill_by_name(&request.tool_name)
-            .cloned()
-        else {
+        // The digest is the module the skill was verified with at load; only
+        // those bytes may run under its name.
+        let found = {
+            let registry = self.skill_registry.read().await;
+            registry
+                .get_skill_by_name(&request.tool_name)
+                .cloned()
+                .zip(registry.module_digest(&request.tool_name))
+        };
+        let Some((manifest, pinned)) = found else {
             // Fail closed. This used to return a success response from a
             // "default handler" that executed nothing, so an agent could be
             // told an action happened when it hadn't.
             warn!(tool = %request.tool_name, "Tool not found");
-            return Err(KernelError::ToolNotFound {
-                tool_name: request.tool_name.clone(),
-            });
+            return Dispatched {
+                result: Err(KernelError::ToolNotFound {
+                    tool_name: request.tool_name.clone(),
+                }),
+                module_sha256: None,
+            };
         };
+        let module_sha256 = Some(hex::encode(pinned));
         info!(
             tool = %request.tool_name,
             version = %manifest.version,
+            module_sha256 = ?module_sha256,
             "Executing WASM skill"
         );
 
-        let runtime = self
+        let runtime = match self
             .sandbox
             .get_or_try_init(|| async {
                 SandboxRuntime::new(SandboxRuntimeConfig::default()).map(Arc::new)
             })
             .await
-            .map_err(|e| failed(format!("WASM runtime unavailable: {e}")))?
-            .clone();
+        {
+            Ok(runtime) => runtime.clone(),
+            Err(e) => {
+                return Dispatched {
+                    result: Err(failed(format!("WASM runtime unavailable: {e}"))),
+                    module_sha256,
+                }
+            }
+        };
         let limits = self.sandbox_config.clone();
         let input = request.parameters.clone();
 
         let joined = tokio::task::spawn_blocking(move || {
-            let skill = runtime.prepare_file(&manifest.wasm_path)?;
+            let skill = runtime.prepare_file_pinned(&manifest.wasm_path, &pinned)?;
             runtime.execute_json(&skill, &limits, "execute", &input)
         })
         .await;
 
-        match joined {
+        let result = match joined {
             Ok(Ok(result)) => Ok(result),
             Ok(Err(SandboxError::Timeout(limit))) => Err(KernelError::Timeout {
                 timeout_ms: u64::try_from(limit.as_millis()).unwrap_or(u64::MAX),
             }),
+            Ok(Err(e @ SandboxError::ModuleChanged { .. })) => {
+                tracing::error!(tool = %request.tool_name, error = %e, "Refusing to run a module that changed since it was verified");
+                Err(failed(e.to_string()))
+            }
             Ok(Err(e)) => Err(failed(format!("WASM execution failed: {e}"))),
             Err(join_error) => {
                 tracing::error!(tool = %request.tool_name, error = %join_error, "WASM skill execution panicked");
                 Err(failed("skill execution panicked".to_string()))
             }
+        };
+        Dispatched {
+            result,
+            module_sha256,
         }
     }
 
@@ -1363,6 +1404,13 @@ fn deny(reason: String, rule: &str) -> PolicyDecision {
         reason,
         violated_policies: Some(vec![rule.to_string()]),
     }
+}
+
+/// What running a tool produced, and, for a WASM skill, which module ran.
+struct Dispatched {
+    result: Result<serde_json::Value, KernelError>,
+    /// Hex SHA-256 of the skill's module: the one it was verified with.
+    module_sha256: Option<String>,
 }
 
 /// Hex SHA-256 of a tool result's JSON serialization.

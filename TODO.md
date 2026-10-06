@@ -48,6 +48,11 @@ that language is exactly how the gap went unnoticed for thirteen sprints.
 - [x] `sandbox::async_host` denies when its enforcer can't be built, instead of
       falling back to `CedarEnforcer::new_permissive()`
       (`test_enforcer_construction_failure_denies`)
+- [x] Signed skills (`docs/adr/0005`): Ed25519 over the module digest and manifest,
+      verified against `security.trusted_skill_keys`, unsigned skills refused by default,
+      each skill pinned to the module it was verified with, the module digest recorded in
+      the outcome leaf. `tests/signed_skills.rs` also meets the Phase 1 exit criterion
+      (sign, load, execute, prove both leaves after a restart)
 - [x] Shared WASM runtime (`docs/adr/0004`): one engine and a SHA-256-keyed module
       cache per kernel (injectable, so kernels can share), one epoch ticker thread that
       parks while idle, skills run on `spawn_blocking`, skill output bounds-checked.
@@ -111,8 +116,10 @@ request path. In order of leverage:
       anywhere in the repo, and there's no build step compiling the five skill
       crates under `.github/skills/` to `wasm32-unknown-unknown` and signing
       them. The registry now points at the right directory (fixed) but has
-      nothing to load. Without this, "sandboxed execution" is untested outside
-      unit tests that construct a `WasmSandbox` directly.
+      nothing to load. *Narrowed:* real modules now run through `Kernel::execute`
+      in tests (`tests/wasm_skills.rs`, `tests/signed_skills.rs`), and
+      `examples/sign_skill.rs` signs manifests. What remains is a `make skills`
+      step that builds the five crates, writes their manifests, and signs them.
 
 - [ ] **Swarm consensus is unreachable from the kernel.** Voting, consensus,
       and sycophancy detection (`src/swarm/`) have no caller outside their own

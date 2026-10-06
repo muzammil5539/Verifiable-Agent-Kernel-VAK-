@@ -365,7 +365,7 @@ Isolated execution environment using Wasmtime 41.x.
 | Fuel | 10,000,000 in the kernel | CPU instruction quota (1,000,000 for a bare `SandboxConfig`) |
 | Timeout | `max_execution_time` (30 s) | Per-call wall clock, checked every 10 ms epoch tick |
 
-**Skill manifest fields:** `name`, `version`, `description`, `module` (WASM path), `capabilities`, `limits` (memory pages, execution time), `exports` (function signatures with schemas)
+**Skill manifest fields:** `name`, `version`, `description`, `author`, `permissions`, `input_schema`, `output_schema`, `wasm_path`, and `signed_by` / `signature`: a hex Ed25519 public key and a signature over the module's SHA-256 and every other field except `wasm_path` (`sandbox::signing`, ADR 0005). The kernel loads a skill only if `signed_by` is in `security.trusted_skill_keys` and the signature verifies, unless `security.allow_unsigned_skills` is set. Each loaded skill is pinned to the digest of the module it was verified with. Sign with `cargo run --example sign_skill`.
 
 **Included WASM skills:**
 
@@ -658,8 +658,10 @@ reasoning and `docs/architecture-v2.md` §5.1 for the target design.
                 signed tree head } }
 ```
 
-WASM skill signatures are not verified yet: the registry's "signature" is an unkeyed
-hash (finding K4 in `docs/architecture-v2.md`, Phase 1 slice 1c).
+A WASM skill is in the registry only if its Ed25519 signature verified at load against
+`security.trusted_skill_keys` (or unsigned skills are explicitly allowed). Execution runs
+only the module with the digest it was verified with; a file swapped afterwards is
+refused, and the outcome leaf records the module digest that ran (ADR 0005).
 
 ### Neuro-Symbolic Verification Flow (High-Stakes Actions)
 

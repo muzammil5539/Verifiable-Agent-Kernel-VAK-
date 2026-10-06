@@ -12,6 +12,13 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 `docs/adr/0003-admit-budget-record-outcome-pipeline-stages.md` for the decision records.
 
 ### Added
+- `sandbox::signing` (ADR 0005): Ed25519 skill signatures over the module's SHA-256 and
+  every manifest field except `wasm_path`, verified against trusted publisher keys.
+  `SkillManifest::signed_by`, `SkillRegistry::module_digest`,
+  `SandboxRuntime::prepare_file_pinned`, `SandboxError::ModuleChanged`,
+  `AuditOutcome::module_sha256`, and `security.{skills_path, trusted_skill_keys,
+  allow_unsigned_skills}`. `examples/sign_skill.rs` generates publisher keys and signs
+  manifests.
 - `sandbox::SandboxRuntime` (ADR 0004): one Wasmtime engine, a compiled-module cache
   keyed by SHA-256, and one epoch ticker that parks while idle. The kernel runs every
   WASM skill on it, on `tokio::task::spawn_blocking`. `KernelBuilder::{with_sandbox_runtime,
@@ -40,6 +47,13 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
   `CustomHandlerRegistry::{register_arc, register_new}`.
 
 ### Changed
+- **Breaking:** skill signatures are Ed25519 (`signed_by` + `signature`). The old unkeyed
+  SHA-256 "signatures" no longer verify. `SkillSignatureVerifier::{compute_signature,
+  sign_manifest}` and `SignatureVerificationResult` are removed; use
+  `signing::sign_skill` and `VerifiedSkill`. `SignatureConfig::trusted_keys` now holds hex
+  Ed25519 public keys and is enforced.
+- **Behaviour change:** a skill loads only if its module file exists, and runs only with
+  the module bytes it was verified with at load.
 - **Behaviour change:** `security.enable_rate_limiting` and `max_requests_per_minute`
   are enforced (default 60 per agent per minute). They were previously ignored.
 - **Behaviour change:** principals reach policy with `internal` from their agent
@@ -63,6 +77,8 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- Skills were "signed" with an unkeyed hash anyone could recompute, over the module's path
+  when the module was missing, and `trusted_keys` was never read (K4).
 - WASM skills no longer block a Tokio worker for their whole runtime, and are no longer
   recompiled (with a new engine and a new watchdog thread) on every call (K3).
 - A skill's output pointer and length are bounds-checked against guest memory as

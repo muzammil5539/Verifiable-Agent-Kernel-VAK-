@@ -437,6 +437,10 @@ pub struct AuditOutcome {
     pub result_sha256: Option<String>,
     /// Time the tool took, in milliseconds.
     pub execution_time_ms: u64,
+    /// For a WASM skill, hex SHA-256 of the module that ran: the one its
+    /// signature was verified against.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module_sha256: Option<String>,
 }
 
 /// An immutable audit log entry.

@@ -210,6 +210,41 @@ impl SandboxRuntime {
         Ok(PreparedSkill { digest, pre })
     }
 
+    /// Prepares the module with SHA-256 `expected`, and nothing else.
+    ///
+    /// If that module is cached, it is used without reading `path` at all:
+    /// the cached compilation is the verified code, whatever is on disk now.
+    /// Otherwise `path` is read, and refused unless its digest matches.
+    /// This is how a skill verified at load can't be swapped afterwards.
+    ///
+    /// # Errors
+    ///
+    /// [`SandboxError::ModuleChanged`] if the file's digest differs, and
+    /// otherwise as [`SandboxRuntime::prepare_file`].
+    pub fn prepare_file_pinned(
+        &self,
+        path: &Path,
+        expected: &[u8; 32],
+    ) -> Result<PreparedSkill, SandboxError> {
+        if let Some(pre) = self.cache().get(expected) {
+            self.hits.fetch_add(1, Ordering::Relaxed);
+            return Ok(PreparedSkill {
+                digest: *expected,
+                pre,
+            });
+        }
+        let bytes = std::fs::read(path)
+            .map_err(|e| SandboxError::ModuleLoad(format!("{}: {e}", path.display())))?;
+        let actual: [u8; 32] = Sha256::digest(&bytes).into();
+        if &actual != expected {
+            return Err(SandboxError::ModuleChanged {
+                expected: hex::encode(expected),
+                actual: hex::encode(actual),
+            });
+        }
+        self.prepare(&bytes)
+    }
+
     /// Reads and prepares the module at `path`. The cache is keyed by the
     /// file's contents, so a file replaced on disk is recompiled.
     ///
@@ -593,6 +628,35 @@ mod tests {
             .prepare(b"(module (func (export \"answer\") (result i32) (i32.const 0)))")
             .unwrap();
         assert_eq!(runtime.stats().compiled_modules, 4);
+    }
+
+    #[test]
+    fn test_pinned_preparation_runs_only_the_verified_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("skill.wat");
+        std::fs::write(&path, SKILL_WAT).unwrap();
+        let pinned: [u8; 32] = Sha256::digest(SKILL_WAT.as_bytes()).into();
+
+        // A swapped file is refused while nothing is cached.
+        let runtime = runtime();
+        std::fs::write(&path, "(module)").unwrap();
+        assert!(matches!(
+            runtime.prepare_file_pinned(&path, &pinned),
+            Err(SandboxError::ModuleChanged { .. })
+        ));
+
+        // With the verified bytes cached, the disk isn't consulted at all.
+        std::fs::write(&path, SKILL_WAT).unwrap();
+        let skill = runtime.prepare_file_pinned(&path, &pinned).unwrap();
+        std::fs::write(&path, "(module)").unwrap();
+        let again = runtime.prepare_file_pinned(&path, &pinned).unwrap();
+        assert_eq!(skill.digest_hex(), again.digest_hex());
+        assert_eq!(
+            runtime
+                .execute_i32(&again, &SandboxConfig::default(), "answer")
+                .unwrap(),
+            42
+        );
     }
 
     #[test]

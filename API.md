@@ -771,7 +771,42 @@ let mut registry = SkillRegistry::new("skills/".into());
 let loaded_ids = registry.load_all_skills()?;
 let manifest = registry.get_skill_by_name("calculator");
 let skills = registry.list_skills();
+let pinned: Option<[u8; 32]> = registry.module_digest("calculator");
 ```
+
+`SkillRegistry::new` requires every skill to carry a valid signature from a trusted key;
+with no trusted keys, nothing loads. Trust publishers with
+`SkillRegistry::new_with_signature_config(dir, SignatureConfig::strict().with_trusted_key(hex))`,
+or in the kernel with `security.trusted_skill_keys`. Loading reads the module once,
+verifies the signature over those bytes, and pins the skill to their SHA-256.
+
+### Skill signing
+
+**Module:** `vak::sandbox::signing` (ADR 0005)
+
+```rust
+use vak::sandbox::signing::{sign_skill, module_digest, SkillSignatureVerifier};
+
+// Publisher side (or: cargo run --example sign_skill -- sign skill.yaml key.hex)
+sign_skill(&mut manifest, &module_bytes, &signing_key)?;   // sets signed_by, signature
+
+// Kernel side
+let verifier = SkillSignatureVerifier::try_new(
+    SignatureConfig::strict().with_trusted_key(publisher_public_key_hex),
+)?;
+let verified = verifier.verify(&manifest, &module_digest(&module_bytes))?;
+```
+
+The signed statement is `vak.skill-signature.v1\n` followed by the canonical JSON (sorted
+keys, no whitespace) of `author`, `description`, `input_schema`, `module_sha256`, `name`,
+`output_schema`, `permissions` and `version`. `wasm_path` is not signed: the module is
+bound by its digest.
+
+| `KernelConfig` field | Default | Effect |
+|---|---|---|
+| `security.skills_path` | unset | Skill manifest directory; else `VAK_SKILLS_PATH`, `.github/skills`, `skills` |
+| `security.trusted_skill_keys` | empty | Hex Ed25519 public keys whose signatures are trusted. A key that doesn't parse fails `Kernel::build` |
+| `security.allow_unsigned_skills` | `false` | Load unsigned skills (development only). A bad signature is refused regardless |
 
 ### Verified Publishers
 

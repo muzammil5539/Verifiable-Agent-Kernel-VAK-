@@ -52,7 +52,7 @@ stub or a placeholder.
 | K1 | Unknown tools are rejected | Any permitted tool name that isn't a built-in or a loaded skill returns `success: true` with `"Tool executed successfully (default handler)"`, though nothing executed. An agent told `transfer_funds` succeeded would act on a lie. | `src/kernel/mod.rs:669` | S1 |
 | K2 | WASM skills run with a time limit | Epoch interruption is enabled and `epoch_deadline_trap()` is set, but `set_epoch_deadline` is never called. Per the Wasmtime docs the default deadline is 0, so **every skill traps on its first epoch check**. No test runs a real module through the kernel, so this went unnoticed. | `src/sandbox/mod.rs:211-277` | S2 |
 | K3 | Sandbox is scalable | A new `wasmtime::Engine` is created, and the module recompiled, on **every** tool call. Execution is synchronous inside an `async fn`, blocking a Tokio worker for the skill's whole runtime. **Fixed in slice 1b:** `SandboxRuntime` (one engine, SHA-256-keyed module cache, one parked epoch ticker), execution on `spawn_blocking` (ADR 0004). | `src/kernel/mod.rs:634`, `src/sandbox/mod.rs:217` | S2 |
-| K4 | Skills are cryptographically signed | The registry's "signature" is an unkeyed SHA-256 over name, version and description, which anyone can recompute. There's also an `unwrap()` on that path. (`sandbox/verified_publisher.rs` has real Ed25519, but the registry doesn't use it.) | `src/sandbox/registry.rs:519,540` | S1 |
+| K4 | Skills are cryptographically signed | The registry's "signature" is an unkeyed SHA-256 over name, version and description, which anyone can recompute. If the module was missing it hashed the module's *path*. `trusted_keys` was never read, and there was an `unwrap()` on that path. (This table originally said `sandbox/verified_publisher.rs` had real Ed25519. It doesn't: it stores key and signature strings and never verifies one.) **Fixed in slice 1c:** Ed25519 over the module digest and the manifest, verified against `security.trusted_skill_keys`, with each skill pinned to the verified module (ADR 0005). | `src/sandbox/registry.rs:519,540` | S1 |
 | K5 | Rate limiting, constitution, neuro-symbolic checks protect execution | `RateLimiter`, `Constitution`, `NeuroSymbolicPipeline` and `AsyncPipeline` are declared in `kernel/` but never called by `Kernel::execute`. **v2.1:** rate limiting is enforced by the Budget stage; the others wait for the Guard port. | `src/kernel/mod.rs:31-54,503` | S2 |
 | K6 | Audit module provides persistent, signed, rotatable logs | `audit::AuditLogger` (file, SQLite, S3 backends, Ed25519) is **not used by the kernel**. The kernel keeps its own `Vec<AuditEntry>` in RAM, which grows without bound; `get_audit_log` clones all of it. **v2.1:** the kernel's log is the `AuditLog` port; `FileAuditLog` persists it when `audit.log_path` is set. Merging `AuditLogger` in is slice 1e. | `src/kernel/mod.rs:115,875` | S2 |
 | K7 | `audit::AuditLogger` hashes are collision-free | Fields are concatenated without length prefixes, so `("ab","c")` and `("a","bc")` hash identically, and `metadata` isn't hashed at all. (The kernel's own entry hash was fixed in `a9076d8`; this one wasn't.) | `src/audit/mod.rs:1270-1290` | S1 |
@@ -209,8 +209,10 @@ level** once implemented.
     re-entering the kernel's PDP.
   - Assurance: `Enforced` (isolation) and `Checked` (resource limits).
 - **Supply chain.** Replace the unkeyed SHA-256 "signature" (K4) with real signatures:
-  Ed25519 over the module digest and manifest, verified against a trust root, using the
-  `verified_publisher` code that already exists. Then move to Sigstore bundles
+  Ed25519 over the module digest and manifest, verified against a trust root. (Done in
+  slice 1c, `sandbox::signing`, written directly on `ed25519-dalek`:
+  `verified_publisher` turned out to hold key strings without verifying anything.)
+  Then move to Sigstore bundles
   (Newman, Meyers and Torres-Arias, CCS 2022), which add keyless OIDC identities and a
   Rekor transparency-log entry. The `wasmsign2` format embeds signatures in custom
   sections. The OpenSSF Model Signing spec is the analogue for model weights.
@@ -483,7 +485,7 @@ let proof = kernel.prove_audit_inclusion(0).await?;  // anyone can verify
 | Admission and budget | none: constant attributes (K8), unenforced rate limit (K5) | **Enforced** (v2.1: registry, session binding, scope, token bucket) | shared adapters for fleets |
 | Audit | Enforced, but in-RAM and O(n) | **Enforced, with O(log n) inclusion and consistency proofs** | + persistent tiles, witness cosigning |
 | WASM sandbox | broken (traps immediately) | **works, with wall-clock deadline; shared engine and module cache, off the async executor (1b)** | Component Model, signed skills |
-| Skill signatures | none (unkeyed hash) | none (documented) | Ed25519 → Sigstore |
+| Skill signatures | none (unkeyed hash) | **Ed25519 against a trust root, module pinned (1c)** | Sigstore, witness-logged |
 | Z3 verifier | unsafe (SMT injection) | **injection closed; untranslatable constraints fail closed** | replaced by SymCC for policy analysis |
 | Datalog | Heuristic (exact strings) | Heuristic (documented) | Ascent: Enforced |
 | PRM / ToT | Heuristic (LLM judge) | Heuristic (documented) | trained PRM + calibration |
@@ -531,9 +533,14 @@ phase's exit criterion.
 - [x] Slice 1b (ADR 0004): shared `SandboxRuntime` (engine, module cache keyed by
       SHA-256, one epoch ticker that parks while idle); `spawn_blocking` execution;
       untrusted skill output bounds-checked. Pooling allocator available, opt-in.
-- Ed25519 skill signatures via `verified_publisher` and a trust root (K4).
-- Exit criterion: one end-to-end test signs a skill, loads it, executes it, and verifies
-  the inclusion proof for both decision and outcome leaves.
+- [x] Slice 1c (ADR 0005): Ed25519 skill signatures over the module digest and every
+      manifest field but `wasm_path`, verified against `security.trusted_skill_keys`;
+      unsigned skills refused unless `security.allow_unsigned_skills`; each skill pinned
+      to the verified module's digest, which outcome leaves record (K4).
+- [x] Exit criterion: one end-to-end test signs a skill, loads it, executes it, and
+      verifies the inclusion proof for both decision and outcome leaves
+      (`tests/signed_skills.rs`, against a tree head over the log reloaded from disk).
+      Slices 1d and 1e remain.
 
 **Phase 2: research-grade enforcement (1 to 2 months)**
 - `cedar` feature: a `cedar-policy` 4.x adapter, schema for VAK entities, and a SymCC

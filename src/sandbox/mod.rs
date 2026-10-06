@@ -25,6 +25,7 @@ pub mod pooling;
 pub mod reasoning_host;
 pub mod registry;
 pub mod runtime;
+pub mod signing;
 pub mod verified_publisher;
 
 // Re-export the shared runtime (Phase 1 slice 1b, docs/adr/0004)
@@ -32,8 +33,8 @@ pub use runtime::{PreparedSkill, SandboxRuntime, SandboxRuntimeConfig, SandboxRu
 
 // Re-export registry types for convenient access
 pub use registry::{
-    PermissionError, RegistryError, SignatureConfig, SignatureError, SignatureVerificationResult,
-    SkillId, SkillManifest, SkillPermissions, SkillRegistry, SkillSignatureVerifier,
+    PermissionError, RegistryError, SignatureConfig, SignatureError, SkillId, SkillManifest,
+    SkillPermissions, SkillRegistry, SkillSignatureVerifier, VerifiedSkill,
 };
 
 // Re-export marketplace types
@@ -157,6 +158,15 @@ pub enum SandboxError {
     /// Memory allocation failed in guest
     #[error("Memory allocation failed in guest")]
     GuestAllocation,
+
+    /// The module on disk is not the one the skill was verified with.
+    #[error("Module changed since it was verified: expected sha256 {expected}, found {actual}")]
+    ModuleChanged {
+        /// Hex SHA-256 the skill is pinned to.
+        expected: String,
+        /// Hex SHA-256 of the bytes found.
+        actual: String,
+    },
 }
 
 /// Store data holding resource limits. Time limits are enforced by the

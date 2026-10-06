@@ -433,6 +433,23 @@ pub struct SecurityConfig {
     /// production; off by default for compatibility.
     #[serde(default)]
     pub require_registered_agents: bool,
+
+    /// Directory of WASM skill manifests. Unset: `VAK_SKILLS_PATH`, else
+    /// `.github/skills`, else `skills`.
+    #[serde(default)]
+    pub skills_path: Option<PathBuf>,
+
+    /// Publishers whose skills the kernel loads: hex Ed25519 public keys.
+    /// Every skill must be signed by one of them, unless
+    /// `allow_unsigned_skills` is set. Empty means no signed skill loads.
+    #[serde(default)]
+    pub trusted_skill_keys: Vec<String>,
+
+    /// Load skills that carry no signature. For development only: an
+    /// unsigned skill is code nobody vouched for. A skill that carries a bad
+    /// signature is refused either way.
+    #[serde(default)]
+    pub allow_unsigned_skills: bool,
 }
 
 fn default_true() -> bool {
@@ -460,6 +477,9 @@ impl Default for SecurityConfig {
             enable_rate_limiting: true,
             max_requests_per_minute: default_rate_limit(),
             require_registered_agents: false,
+            skills_path: None,
+            trusted_skill_keys: Vec::new(),
+            allow_unsigned_skills: false,
         }
     }
 }
