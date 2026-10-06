@@ -84,6 +84,7 @@ stub or a placeholder.
 | S2 | Sycophancy detection | It measures entropy of the *final* votes. Unanimity is not sycophancy; the literature measures **opinion change after exposure to peers** (§4.7). | `src/swarm/sycophancy.rs:286-320` | S2 |
 | I1 | MCP server | Pinned to protocol `2024-11-05`. The current spec is `2026-07-28`, which uses a stateless core, header routing and hardened OAuth. | `src/integrations/mcp.rs:420` | S3 |
 | I2 | A2A protocol with signed messages | An in-process message bus, not the A2A v1.0 HTTP/JSON-RPC protocol. The `signature` field is never set or checked. | `src/swarm/a2a.rs:200` | S2 |
+| I3 | MCP `execute_skill` runs a sandboxed skill | Nothing runs. For any skill name it returns `is_error: false` with "Skill '…' executed successfully", the same fake success as K1. When `./skills` exists it loads skills with `new_permissive_dev` (unsigned allowed), outside the kernel's pipeline. Found during slice 1c; not yet fixed. | `src/integrations/mcp.rs:860,884` | S1 |
 | D1 | Security audit status table: "✅ Audited" | No external audit is referenced anywhere in the repo. | `src/lib.rs:88-95` | S2 |
 
 **What is sound:** the CedarEnforcer path after `a9076d8` (default deny, condition

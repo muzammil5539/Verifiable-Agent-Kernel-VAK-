@@ -132,6 +132,12 @@ request path. In order of leverage:
 
 ## P2 — Fix the parts that mislead adopters
 
+- [ ] **MCP `execute_skill` reports success without running anything** (finding I3
+      in `docs/architecture-v2.md`). `src/integrations/mcp.rs` returns
+      "executed successfully" for any skill name and loads unsigned skills with
+      `new_permissive_dev`, bypassing the kernel. Route it through
+      `Kernel::execute` and make an unknown or refused skill an error.
+
 - [ ] **Python SDK silently substitutes a fake kernel.** `VakKernel` falls back
       to `_StubKernel` — a pure-Python in-memory imitation with no policy
       enforcement and no real audit chain — whenever the PyO3 extension isn't
