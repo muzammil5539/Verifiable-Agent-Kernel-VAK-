@@ -48,6 +48,11 @@ that language is exactly how the gap went unnoticed for thirteen sprints.
 - [x] `sandbox::async_host` denies when its enforcer can't be built, instead of
       falling back to `CedarEnforcer::new_permissive()`
       (`test_enforcer_construction_failure_denies`)
+- [x] Shared WASM runtime (`docs/adr/0004`): one engine and a SHA-256-keyed module
+      cache per kernel (injectable, so kernels can share), one epoch ticker thread that
+      parks while idle, skills run on `spawn_blocking`, skill output bounds-checked.
+      `tests/wasm_skills.rs` runs a real module through `Kernel::execute`, including a
+      spinning skill on a single-threaded runtime that must not stall other requests
 - [x] Mediation pipeline stages from `docs/adr/0003`, all driven through
       `Kernel::execute` in `tests/mediation_pipeline.rs`: Admit (agent registry,
       suspension, session binding, per-agent tool scope moved out of `VakAgent`),

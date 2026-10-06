@@ -115,7 +115,9 @@ use self::types::{
 };
 
 // Import sandbox and skill registry for WASM execution (Issue #6)
-use crate::sandbox::{SandboxConfig, SkillRegistry, WasmSandbox};
+use crate::sandbox::{
+    SandboxConfig, SandboxError, SandboxRuntime, SandboxRuntimeConfig, SkillRegistry,
+};
 
 use crate::audit::transparency::{ConsistencyProof, Digest, InclusionProof, SignedTreeHead};
 
@@ -168,6 +170,11 @@ pub struct Kernel {
 
     /// Skill registry for WASM tools (Issue #6)
     skill_registry: Arc<RwLock<SkillRegistry>>,
+
+    /// The engine, module cache and epoch ticker every skill call runs on.
+    /// Built on the first skill call unless injected, so kernels that never
+    /// run a skill don't pay for one.
+    sandbox: tokio::sync::OnceCell<Arc<SandboxRuntime>>,
 
     /// Sandbox configuration for WASM execution
     sandbox_config: SandboxConfig,
@@ -249,6 +256,8 @@ pub struct KernelBuilder {
     audit_log: Option<Arc<dyn AuditLog>>,
     agents: Option<Arc<dyn AgentRegistry>>,
     budget: Option<Arc<dyn Budget>>,
+    sandbox: Option<Arc<SandboxRuntime>>,
+    skills: Option<SkillRegistry>,
 }
 
 impl std::fmt::Debug for KernelBuilder {
@@ -279,6 +288,8 @@ impl KernelBuilder {
             audit_log: None,
             agents: None,
             budget: None,
+            sandbox: None,
+            skills: None,
         }
     }
 
@@ -287,6 +298,23 @@ impl KernelBuilder {
     #[must_use]
     pub fn with_policy(mut self, policy: Arc<dyn PolicyDecisionPoint>) -> Self {
         self.policy = Some(policy);
+        self
+    }
+
+    /// Runs WASM skills on `runtime`. Several kernels can share one, and
+    /// with it one engine, module cache and epoch ticker. Without this the
+    /// kernel builds its own on the first skill call.
+    #[must_use]
+    pub fn with_sandbox_runtime(mut self, runtime: Arc<SandboxRuntime>) -> Self {
+        self.sandbox = Some(runtime);
+        self
+    }
+
+    /// Resolves WASM skills from `registry`, instead of loading manifests
+    /// from `VAK_SKILLS_PATH` or `.github/skills`.
+    #[must_use]
+    pub fn with_skill_registry(mut self, registry: SkillRegistry) -> Self {
+        self.skills = Some(registry);
         self
     }
 
@@ -355,16 +383,20 @@ impl KernelBuilder {
         // The path was previously hardcoded to "skills", which does not exist
         // in this repo (the skill crates live under .github/skills), so the
         // registry silently loaded nothing and every non-builtin tool failed.
-        let skills_dir = Kernel::resolve_skills_dir();
-        let mut skill_registry = SkillRegistry::new(skills_dir.clone());
-
-        // Try to load skills from directory
-        if skills_dir.exists() {
-            match skill_registry.load_all_skills() {
-                Ok(ids) => info!(count = ids.len(), "Loaded skills from registry"),
-                Err(e) => warn!(error = %e, "Failed to load skills from registry"),
+        let skill_registry = match self.skills {
+            Some(registry) => registry,
+            None => {
+                let skills_dir = Kernel::resolve_skills_dir();
+                let mut registry = SkillRegistry::new(skills_dir.clone());
+                if skills_dir.exists() {
+                    match registry.load_all_skills() {
+                        Ok(ids) => info!(count = ids.len(), "Loaded skills from registry"),
+                        Err(e) => warn!(error = %e, "Failed to load skills from registry"),
+                    }
+                }
+                registry
             }
-        }
+        };
 
         // Configure sandbox based on kernel config
         let sandbox_config = SandboxConfig {
@@ -431,6 +463,10 @@ impl KernelBuilder {
             budget,
             sessions: Arc::new(RwLock::new(std::collections::HashMap::new())),
             skill_registry: Arc::new(RwLock::new(skill_registry)),
+            sandbox: match self.sandbox {
+                Some(runtime) => tokio::sync::OnceCell::new_with(Some(runtime)),
+                None => tokio::sync::OnceCell::new(),
+            },
             sandbox_config,
             policy,
             tools,
@@ -964,63 +1000,81 @@ impl Kernel {
         }
     }
 
+    /// The WASM runtime, if a skill has run or one was injected.
+    #[must_use]
+    pub fn sandbox_runtime(&self) -> Option<&Arc<SandboxRuntime>> {
+        self.sandbox.get()
+    }
+
     /// Executes a WASM skill in the sandbox (Issue #6)
     ///
-    /// This method handles the execution flow:
-    /// 1. Look up skill in registry by name
-    /// 2. Load the WASM module if found
-    /// 3. Execute in sandboxed environment with resource limits
-    /// 4. Return the result, or [`KernelError::ToolNotFound`] if no skill has
-    ///    that name
+    /// 1. Look the skill up in the registry by name, or fail with
+    ///    [`KernelError::ToolNotFound`].
+    /// 2. On a blocking-pool thread: prepare the module through the shared
+    ///    runtime (compiled once per content digest), then run it with the
+    ///    kernel's fuel, memory and wall-clock limits.
+    ///
+    /// The skill never runs on a Tokio worker, so a slow or spinning skill
+    /// can't stall other requests. A panic on the blocking thread fails this
+    /// call only.
     async fn execute_wasm_skill(
         &self,
         request: &ToolRequest,
     ) -> Result<serde_json::Value, KernelError> {
-        // Check if skill exists in registry
-        let registry = self.skill_registry.read().await;
+        let failed = |reason: String| KernelError::ToolExecutionFailed {
+            tool_name: request.tool_name.clone(),
+            reason,
+        };
 
-        if let Some(manifest) = registry.get_skill_by_name(&request.tool_name) {
-            // Skill found - try to execute in sandbox
-            info!(
-                tool = %request.tool_name,
-                version = %manifest.version,
-                "Executing WASM skill"
-            );
-
-            // Create sandbox with configured limits
-            let mut sandbox = WasmSandbox::new(self.sandbox_config.clone()).map_err(|e| {
-                KernelError::ToolExecutionFailed {
-                    tool_name: request.tool_name.clone(),
-                    reason: format!("Failed to create sandbox: {}", e),
-                }
-            })?;
-
-            // Load the WASM module
-            sandbox
-                .load_skill_from_file(&manifest.wasm_path)
-                .map_err(|e| KernelError::ToolExecutionFailed {
-                    tool_name: request.tool_name.clone(),
-                    reason: format!("Failed to load WASM module: {}", e),
-                })?;
-
-            // Execute the skill
-            // WASM skills expose an "execute" function that takes JSON input
-            let result = sandbox
-                .execute("execute", &request.parameters)
-                .map_err(|e| KernelError::ToolExecutionFailed {
-                    tool_name: request.tool_name.clone(),
-                    reason: format!("WASM execution failed: {}", e),
-                })?;
-
-            Ok(result)
-        } else {
+        // Copy what's needed and release the registry lock before running.
+        let Some(manifest) = self
+            .skill_registry
+            .read()
+            .await
+            .get_skill_by_name(&request.tool_name)
+            .cloned()
+        else {
             // Fail closed. This used to return a success response from a
             // "default handler" that executed nothing, so an agent could be
             // told an action happened when it hadn't.
             warn!(tool = %request.tool_name, "Tool not found");
-            Err(KernelError::ToolNotFound {
+            return Err(KernelError::ToolNotFound {
                 tool_name: request.tool_name.clone(),
+            });
+        };
+        info!(
+            tool = %request.tool_name,
+            version = %manifest.version,
+            "Executing WASM skill"
+        );
+
+        let runtime = self
+            .sandbox
+            .get_or_try_init(|| async {
+                SandboxRuntime::new(SandboxRuntimeConfig::default()).map(Arc::new)
             })
+            .await
+            .map_err(|e| failed(format!("WASM runtime unavailable: {e}")))?
+            .clone();
+        let limits = self.sandbox_config.clone();
+        let input = request.parameters.clone();
+
+        let joined = tokio::task::spawn_blocking(move || {
+            let skill = runtime.prepare_file(&manifest.wasm_path)?;
+            runtime.execute_json(&skill, &limits, "execute", &input)
+        })
+        .await;
+
+        match joined {
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(SandboxError::Timeout(limit))) => Err(KernelError::Timeout {
+                timeout_ms: u64::try_from(limit.as_millis()).unwrap_or(u64::MAX),
+            }),
+            Ok(Err(e)) => Err(failed(format!("WASM execution failed: {e}"))),
+            Err(join_error) => {
+                tracing::error!(tool = %request.tool_name, error = %join_error, "WASM skill execution panicked");
+                Err(failed("skill execution panicked".to_string()))
+            }
         }
     }
 

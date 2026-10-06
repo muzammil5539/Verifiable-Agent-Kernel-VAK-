@@ -51,7 +51,7 @@ stub or a placeholder.
 |---|---|---|---|---|
 | K1 | Unknown tools are rejected | Any permitted tool name that isn't a built-in or a loaded skill returns `success: true` with `"Tool executed successfully (default handler)"`, though nothing executed. An agent told `transfer_funds` succeeded would act on a lie. | `src/kernel/mod.rs:669` | S1 |
 | K2 | WASM skills run with a time limit | Epoch interruption is enabled and `epoch_deadline_trap()` is set, but `set_epoch_deadline` is never called. Per the Wasmtime docs the default deadline is 0, so **every skill traps on its first epoch check**. No test runs a real module through the kernel, so this went unnoticed. | `src/sandbox/mod.rs:211-277` | S2 |
-| K3 | Sandbox is scalable | A new `wasmtime::Engine` is created, and the module recompiled, on **every** tool call. Execution is synchronous inside an `async fn`, blocking a Tokio worker for the skill's whole runtime. | `src/kernel/mod.rs:634`, `src/sandbox/mod.rs:217` | S2 |
+| K3 | Sandbox is scalable | A new `wasmtime::Engine` is created, and the module recompiled, on **every** tool call. Execution is synchronous inside an `async fn`, blocking a Tokio worker for the skill's whole runtime. **Fixed in slice 1b:** `SandboxRuntime` (one engine, SHA-256-keyed module cache, one parked epoch ticker), execution on `spawn_blocking` (ADR 0004). | `src/kernel/mod.rs:634`, `src/sandbox/mod.rs:217` | S2 |
 | K4 | Skills are cryptographically signed | The registry's "signature" is an unkeyed SHA-256 over name, version and description, which anyone can recompute. There's also an `unwrap()` on that path. (`sandbox/verified_publisher.rs` has real Ed25519, but the registry doesn't use it.) | `src/sandbox/registry.rs:519,540` | S1 |
 | K5 | Rate limiting, constitution, neuro-symbolic checks protect execution | `RateLimiter`, `Constitution`, `NeuroSymbolicPipeline` and `AsyncPipeline` are declared in `kernel/` but never called by `Kernel::execute`. **v2.1:** rate limiting is enforced by the Budget stage; the others wait for the Guard port. | `src/kernel/mod.rs:31-54,503` | S2 |
 | K6 | Audit module provides persistent, signed, rotatable logs | `audit::AuditLogger` (file, SQLite, S3 backends, Ed25519) is **not used by the kernel**. The kernel keeps its own `Vec<AuditEntry>` in RAM, which grows without bound; `get_audit_log` clones all of it. **v2.1:** the kernel's log is the `AuditLog` port; `FileAuditLog` persists it when `audit.log_path` is set. Merging `AuditLogger` in is slice 1e. | `src/kernel/mod.rs:115,875` | S2 |
@@ -482,7 +482,7 @@ let proof = kernel.prove_audit_inclusion(0).await?;  // anyone can verify
 | Policy (YAML CedarEnforcer) | Enforced (post-a9076d8) | Enforced, behind a port | real Cedar + SymCC: Enforced + analyzed |
 | Admission and budget | none: constant attributes (K8), unenforced rate limit (K5) | **Enforced** (v2.1: registry, session binding, scope, token bucket) | shared adapters for fleets |
 | Audit | Enforced, but in-RAM and O(n) | **Enforced, with O(log n) inclusion and consistency proofs** | + persistent tiles, witness cosigning |
-| WASM sandbox | broken (traps immediately) | **works, with wall-clock deadline** | shared engine, Component Model, signed skills |
+| WASM sandbox | broken (traps immediately) | **works, with wall-clock deadline; shared engine and module cache, off the async executor (1b)** | Component Model, signed skills |
 | Skill signatures | none (unkeyed hash) | none (documented) | Ed25519 → Sigstore |
 | Z3 verifier | unsafe (SMT injection) | **injection closed; untranslatable constraints fail closed** | replaced by SymCC for policy analysis |
 | Datalog | Heuristic (exact strings) | Heuristic (documented) | Ascent: Enforced |
@@ -528,7 +528,9 @@ phase's exit criterion.
       async-host enforcer denies when it can't be built.
 - Feature-gate modules per §5.3. `default-features = false` builds the core alone.
 - SQLite adapter for the `AuditLog` port, replacing or absorbing `audit::AuditLogger`.
-- Shared `SandboxRuntime` (engine, module cache, ticker); `spawn_blocking` execution.
+- [x] Slice 1b (ADR 0004): shared `SandboxRuntime` (engine, module cache keyed by
+      SHA-256, one epoch ticker that parks while idle); `spawn_blocking` execution;
+      untrusted skill output bounds-checked. Pooling allocator available, opt-in.
 - Ed25519 skill signatures via `verified_publisher` and a trust root (K4).
 - Exit criterion: one end-to-end test signs a skill, loads it, executes it, and verifies
   the inclusion proof for both decision and outcome leaves.

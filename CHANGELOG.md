@@ -12,6 +12,10 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 `docs/adr/0003-admit-budget-record-outcome-pipeline-stages.md` for the decision records.
 
 ### Added
+- `sandbox::SandboxRuntime` (ADR 0004): one Wasmtime engine, a compiled-module cache
+  keyed by SHA-256, and one epoch ticker that parks while idle. The kernel runs every
+  WASM skill on it, on `tokio::task::spawn_blocking`. `KernelBuilder::{with_sandbox_runtime,
+  with_skill_registry}`, `Kernel::sandbox_runtime`, `WasmSandbox::with_runtime`.
 - Mediation pipeline stages (ADR 0003). `kernel::identity` (`AgentRegistry`,
   `AgentRecord`, `InMemoryAgentRegistry`) for the Admit stage, `kernel::budget`
   (`Budget`, `AgentRateBudget`, `Unlimited`) for the Budget stage, and
@@ -59,6 +63,13 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- WASM skills no longer block a Tokio worker for their whole runtime, and are no longer
+  recompiled (with a new engine and a new watchdog thread) on every call (K3).
+- A skill's output pointer and length are bounds-checked against guest memory as
+  unsigned values. A negative length used to make the host panic while allocating the
+  output buffer, unwinding through `Kernel::execute`.
+- A WASM skill that hits its wall-clock limit fails with `KernelError::Timeout`, like a
+  host handler, instead of a generic execution failure.
 - `sandbox::async_host` fell back to an allow-everything enforcer when its policy
   enforcer couldn't be built. It now denies everything instead.
 - WASM skills trapped on entry: epoch interruption was enabled with no deadline, and

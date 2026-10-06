@@ -24,7 +24,11 @@ pub mod marketplace;
 pub mod pooling;
 pub mod reasoning_host;
 pub mod registry;
+pub mod runtime;
 pub mod verified_publisher;
+
+// Re-export the shared runtime (Phase 1 slice 1b, docs/adr/0004)
+pub use runtime::{PreparedSkill, SandboxRuntime, SandboxRuntimeConfig, SandboxRuntimeStats};
 
 // Re-export registry types for convenient access
 pub use registry::{
@@ -82,10 +86,9 @@ pub use verified_publisher::{
     VerificationRequest, VerificationStatus,
 };
 
-use std::time::{Duration, Instant};
-use wasmtime::{
-    Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder, UpdateDeadline,
-};
+use std::sync::Arc;
+use std::time::Duration;
+use wasmtime::{Store, StoreLimits, StoreLimitsBuilder};
 
 /// Configuration for sandbox resource limits
 #[derive(Debug, Clone)]
@@ -156,8 +159,8 @@ pub enum SandboxError {
     GuestAllocation,
 }
 
-/// Store data holding resource limits. Time limits are enforced by
-/// [`Watchdog`], not tracked here.
+/// Store data holding resource limits. Time limits are enforced by the
+/// store's epoch deadline (see [`runtime`]), not tracked here.
 #[derive(Debug)]
 pub struct SandboxState {
     limits: StoreLimits,
@@ -173,126 +176,42 @@ impl SandboxState {
     }
 }
 
-/// Enforces a store's wall-clock timeout via epoch interruption.
+/// A sandbox for one skill: a [`SandboxRuntime`] plus the limits to run it
+/// with.
 ///
-/// Epoch interruption needs two things, and the sandbox used to have
-/// neither: a deadline on the store (without one, Wasmtime's default deadline
-/// of 0 traps on the first check, so every skill failed on entry) and
-/// something advancing the engine's epoch.
-///
-/// The deadline is checked against the wall clock in the epoch callback
-/// rather than counted in ticks. Ticks are engine-wide, so with concurrent
-/// executions each watchdog's ticks would count against every store and cut
-/// the others short.
-///
-/// Dropping the watchdog stops its ticker thread. Phase 1 of
-/// docs/architecture-v2.md replaces the per-execution thread with one ticker
-/// per shared engine.
-struct Watchdog {
-    stop: Option<std::sync::mpsc::Sender<()>>,
-    ticker: Option<std::thread::JoinHandle<()>>,
-}
-
-impl Watchdog {
-    /// Longest gap between deadline checks.
-    const MAX_TICK: Duration = Duration::from_millis(10);
-
-    fn arm(
-        engine: &Engine,
-        store: &mut Store<SandboxState>,
-        timeout: Duration,
-    ) -> Result<Self, SandboxError> {
-        let deadline = Instant::now() + timeout;
-        store.set_epoch_deadline(1);
-        store.epoch_deadline_callback(move |_| {
-            if Instant::now() >= deadline {
-                Ok(UpdateDeadline::Interrupt)
-            } else {
-                Ok(UpdateDeadline::Continue(1))
-            }
-        });
-
-        let tick = (timeout / 10).clamp(Duration::from_millis(1), Self::MAX_TICK);
-        let (stop, stopped) = std::sync::mpsc::channel::<()>();
-        let engine = engine.clone();
-        let ticker = std::thread::Builder::new()
-            .name("vak-wasm-watchdog".into())
-            .spawn(move || {
-                while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) =
-                    stopped.recv_timeout(tick)
-                {
-                    engine.increment_epoch();
-                }
-            })
-            // Without a ticker the deadline is never checked. Refuse to run
-            // rather than run without a time limit.
-            .map_err(|e| SandboxError::EngineCreation(format!("failed to start watchdog: {e}")))?;
-
-        Ok(Self {
-            stop: Some(stop),
-            ticker: Some(ticker),
-        })
-    }
-}
-
-impl Drop for Watchdog {
-    fn drop(&mut self) {
-        // Disconnecting the channel wakes the ticker immediately.
-        drop(self.stop.take());
-        if let Some(ticker) = self.ticker.take() {
-            let _ = ticker.join();
-        }
-    }
-}
-
-/// WASM Sandbox for isolated skill execution
+/// [`WasmSandbox::new`] builds a runtime of its own, which is what the kernel
+/// used to do on every call. To share one engine, module cache and epoch
+/// ticker across sandboxes, build them with [`WasmSandbox::with_runtime`].
 pub struct WasmSandbox {
-    engine: Engine,
+    runtime: Arc<SandboxRuntime>,
     config: SandboxConfig,
-    module: Option<Module>,
+    skill: Option<PreparedSkill>,
 }
 
 impl std::fmt::Debug for WasmSandbox {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WasmSandbox")
             .field("config", &self.config)
-            .field("module_loaded", &self.module.is_some())
+            .field("module_loaded", &self.skill.is_some())
             .finish_non_exhaustive()
     }
 }
 
 impl WasmSandbox {
-    /// Create a new WASM sandbox with the given configuration
+    /// Create a new WASM sandbox with the given configuration, on a runtime
+    /// of its own.
     pub fn new(config: SandboxConfig) -> Result<Self, SandboxError> {
-        let mut wasm_config = Config::new();
-
-        // Enable fuel consumption for CPU limiting
-        wasm_config.consume_fuel(true);
-
-        // Enable epoch interruption for timeout handling
-        wasm_config.epoch_interruption(true);
-
-        let engine =
-            Engine::new(&wasm_config).map_err(|e| SandboxError::EngineCreation(e.to_string()))?;
-
-        Ok(Self {
-            engine,
-            config,
-            module: None,
-        })
+        let runtime = Arc::new(SandboxRuntime::new(SandboxRuntimeConfig::default())?);
+        Ok(Self::with_runtime(runtime, config))
     }
 
-    /// Maps a Wasmtime error to a sandbox error by its trap code, so a
-    /// deadline or fuel trap is reported as such whatever the timing.
-    fn classify(
-        &self,
-        error: wasmtime::Error,
-        otherwise: impl FnOnce(wasmtime::Error) -> SandboxError,
-    ) -> SandboxError {
-        match error.downcast_ref::<wasmtime::Trap>() {
-            Some(wasmtime::Trap::Interrupt) => SandboxError::Timeout(self.config.timeout),
-            Some(wasmtime::Trap::OutOfFuel) => SandboxError::FuelExhausted,
-            _ => otherwise(error),
+    /// Create a sandbox on a shared runtime.
+    #[must_use]
+    pub fn with_runtime(runtime: Arc<SandboxRuntime>, config: SandboxConfig) -> Self {
+        Self {
+            runtime,
+            config,
+            skill: None,
         }
     }
 
@@ -301,25 +220,29 @@ impl WasmSandbox {
         Self::new(SandboxConfig::default())
     }
 
-    /// Load a WASM skill module from bytes
+    /// Load a WASM skill module from bytes (binary or text format). Compiled
+    /// once per distinct content on the runtime.
     pub fn load_skill(&mut self, wasm_bytes: &[u8]) -> Result<(), SandboxError> {
-        let module = Module::new(&self.engine, wasm_bytes)
-            .map_err(|e| SandboxError::ModuleLoad(e.to_string()))?;
-
-        self.module = Some(module);
+        self.skill = Some(self.runtime.prepare(wasm_bytes)?);
         Ok(())
     }
 
     /// Load a WASM skill module from a file path
     pub fn load_skill_from_file(&mut self, path: &std::path::Path) -> Result<(), SandboxError> {
-        let module = Module::from_file(&self.engine, path)
-            .map_err(|e| SandboxError::ModuleLoad(e.to_string()))?;
-
-        self.module = Some(module);
+        self.skill = Some(self.runtime.prepare_file(path)?);
         Ok(())
     }
 
+    fn loaded(&self) -> Result<&PreparedSkill, SandboxError> {
+        self.skill.as_ref().ok_or_else(|| {
+            SandboxError::ModuleLoad("No module loaded. Call load_skill() first.".into())
+        })
+    }
+
     /// Execute a function in the loaded WASM module with JSON input/output
+    ///
+    /// Blocks until the call returns or a limit stops it; from async code,
+    /// call it on `tokio::task::spawn_blocking`.
     ///
     /// # Arguments
     /// * `func_name` - Name of the exported function to call
@@ -332,114 +255,15 @@ impl WasmSandbox {
         func_name: &str,
         input: &serde_json::Value,
     ) -> Result<serde_json::Value, SandboxError> {
-        let module = self.module.as_ref().ok_or_else(|| {
-            SandboxError::ModuleLoad("No module loaded. Call load_skill() first.".into())
-        })?;
-
-        // Create store with resource limits
-        let state = SandboxState::new(&self.config);
-        let mut store = Store::new(&self.engine, state);
-
-        // Configure resource limits
-        store.limiter(|state| &mut state.limits);
-        store
-            .set_fuel(self.config.fuel_limit)
-            .map_err(|e| SandboxError::EngineCreation(format!("Failed to set fuel: {}", e)))?;
-
-        // Enforce the wall-clock timeout, including during instantiation.
-        let _watchdog = Watchdog::arm(&self.engine, &mut store, self.config.timeout)?;
-
-        // Create linker and instantiate module
-        let linker = Linker::new(&self.engine);
-        let instance = linker
-            .instantiate(&mut store, module)
-            .map_err(|e| self.classify(e, |e| SandboxError::Instantiation(e.to_string())))?;
-
-        // Serialize input to JSON string
-        let input_json =
-            serde_json::to_string(input).map_err(|e| SandboxError::InvalidInput(e.to_string()))?;
-
-        // Get memory and required functions
-        let memory = instance
-            .get_memory(&mut store, "memory")
-            .ok_or_else(|| SandboxError::Instantiation("Module has no exported memory".into()))?;
-
-        // Try to get allocation function (standard WASM interface)
-        let alloc_fn = instance
-            .get_typed_func::<i32, i32>(&mut store, "alloc")
-            .map_err(|_| SandboxError::FunctionNotFound("alloc".into()))?;
-
-        // Allocate memory for input in guest
-        let input_bytes = input_json.as_bytes();
-        let input_len = input_bytes.len() as i32;
-
-        let input_ptr = alloc_fn
-            .call(&mut store, input_len)
-            .map_err(|e| self.classify(e, |_| SandboxError::GuestAllocation))?;
-
-        // Write input to guest memory
-        memory
-            .write(&mut store, input_ptr as usize, input_bytes)
-            .map_err(|_| SandboxError::MemoryLimitExceeded)?;
-
-        // Get and call the target function
-        // Expected signature: func(input_ptr: i32, input_len: i32) -> i32 (output_ptr)
-        let target_fn = instance
-            .get_typed_func::<(i32, i32), i32>(&mut store, func_name)
-            .map_err(|_| SandboxError::FunctionNotFound(func_name.into()))?;
-
-        let output_ptr = target_fn
-            .call(&mut store, (input_ptr, input_len))
-            .map_err(|e| self.classify(e, |e| SandboxError::Execution(e.to_string())))?;
-
-        // Read output length (first 4 bytes at output_ptr)
-        let mut len_bytes = [0u8; 4];
-        memory
-            .read(&store, output_ptr as usize, &mut len_bytes)
-            .map_err(|_| SandboxError::InvalidOutput("Failed to read output length".into()))?;
-        let output_len = i32::from_le_bytes(len_bytes) as usize;
-
-        // Read output JSON string
-        let mut output_bytes = vec![0u8; output_len];
-        memory
-            .read(&store, (output_ptr + 4) as usize, &mut output_bytes)
-            .map_err(|_| SandboxError::InvalidOutput("Failed to read output data".into()))?;
-
-        // Parse output JSON
-        let output_json = String::from_utf8(output_bytes)
-            .map_err(|e| SandboxError::InvalidOutput(e.to_string()))?;
-
-        serde_json::from_str(&output_json).map_err(|e| SandboxError::InvalidOutput(e.to_string()))
+        self.runtime
+            .execute_json(self.loaded()?, &self.config, func_name, input)
     }
 
     /// Execute a simple function that takes no input and returns an i32
     /// Useful for testing or simple operations
     pub fn execute_simple(&self, func_name: &str) -> Result<i32, SandboxError> {
-        let module = self.module.as_ref().ok_or_else(|| {
-            SandboxError::ModuleLoad("No module loaded. Call load_skill() first.".into())
-        })?;
-
-        let state = SandboxState::new(&self.config);
-        let mut store = Store::new(&self.engine, state);
-
-        store.limiter(|state| &mut state.limits);
-        store
-            .set_fuel(self.config.fuel_limit)
-            .map_err(|e| SandboxError::EngineCreation(format!("Failed to set fuel: {}", e)))?;
-
-        let _watchdog = Watchdog::arm(&self.engine, &mut store, self.config.timeout)?;
-
-        let linker = Linker::new(&self.engine);
-        let instance = linker
-            .instantiate(&mut store, module)
-            .map_err(|e| self.classify(e, |e| SandboxError::Instantiation(e.to_string())))?;
-
-        let func = instance
-            .get_typed_func::<(), i32>(&mut store, func_name)
-            .map_err(|_| SandboxError::FunctionNotFound(func_name.into()))?;
-
-        func.call(&mut store, ())
-            .map_err(|e| self.classify(e, |e| SandboxError::Execution(e.to_string())))
+        self.runtime
+            .execute_i32(self.loaded()?, &self.config, func_name)
     }
 
     /// Get remaining fuel after execution
@@ -454,13 +278,20 @@ impl WasmSandbox {
 
     /// Check if a module is loaded
     pub fn has_module(&self) -> bool {
-        self.module.is_some()
+        self.skill.is_some()
+    }
+
+    /// The runtime this sandbox runs on.
+    #[must_use]
+    pub fn runtime(&self) -> &Arc<SandboxRuntime> {
+        &self.runtime
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     #[test]
     fn test_sandbox_config_default() {
@@ -591,9 +422,9 @@ mod tests {
 
     #[test]
     fn test_concurrent_executions_do_not_cut_each_other_short() {
-        // Each execution's watchdog ticks the shared engine epoch. A deadline
-        // expressed in ticks would let one execution's ticker expire another;
-        // the deadline must be wall-clock per store.
+        // All executions share one engine epoch. A deadline expressed in
+        // ticks would let one execution's ticks expire another; the deadline
+        // must be wall-clock per store.
         let sandbox = std::sync::Arc::new(echo_sandbox(SandboxConfig {
             fuel_limit: u64::MAX / 2,
             timeout: Duration::from_millis(400),

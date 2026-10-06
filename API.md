@@ -721,6 +721,37 @@ sandbox.load_skill_from_file("skill.wasm")?;
 let result = sandbox.execute("execute", &json_input)?;
 ```
 
+`execute` blocks until the skill returns or a limit stops it; from async code, call it on
+`tokio::task::spawn_blocking`.
+
+### SandboxRuntime
+
+One engine, a compiled-module cache keyed by the module's SHA-256, and one epoch ticker
+thread that runs only while a skill is executing. `WasmSandbox::new` builds one per
+sandbox; share one instead:
+
+```rust
+use std::sync::Arc;
+use vak::sandbox::{SandboxRuntime, SandboxRuntimeConfig, WasmSandbox};
+
+let runtime = Arc::new(SandboxRuntime::new(SandboxRuntimeConfig::default())?);
+let sandbox = WasmSandbox::with_runtime(runtime.clone(), config);
+
+// The kernel builds its own on the first skill call, or takes one:
+let kernel = Kernel::builder(kernel_config)
+    .with_sandbox_runtime(runtime.clone())
+    .with_skill_registry(registry)
+    .build()
+    .await?;
+let stats = runtime.stats(); // compiled_modules, cache_hits, executions, ...
+```
+
+| `SandboxRuntimeConfig` field | Default | Description |
+|-------|---------|-------------|
+| `tick` | 10 ms | Epoch interval: the precision of the wall-clock deadline |
+| `max_cached_modules` | 64 | Compiled modules kept; the oldest is evicted |
+| `pooling` | `None` | `Some(PoolingConfig)` uses the pooling allocator, which reserves virtual memory up front |
+
 ### SandboxConfig
 
 | Field | Type | Default | Description |

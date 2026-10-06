@@ -347,9 +347,10 @@ Isolated execution environment using Wasmtime 41.x.
 
 | Component | File | Description |
 |-----------|------|-------------|
-| `WasmSandbox` | `mod.rs` | Main executor with `SandboxConfig` |
-| `EpochTicker` | `epoch_ticker.rs` | Background thread for cooperative preemption |
-| `PoolManager` | `pooling.rs` | Fixed-slot memory pooling allocator |
+| `SandboxRuntime` | `runtime.rs` | One engine, a module cache keyed by SHA-256, and one epoch ticker that parks while idle. The kernel runs every skill on it, on `spawn_blocking` (ADR 0004). |
+| `WasmSandbox` | `mod.rs` | One skill plus its `SandboxConfig`, on a `SandboxRuntime` (its own, or shared via `with_runtime`) |
+| `EpochTicker` | `epoch_ticker.rs` | Tokio-task ticker; not used by the kernel, which uses the runtime's own ticker thread |
+| `PoolManager` | `pooling.rs` | Fixed-slot memory pooling allocator; `SandboxRuntimeConfig::pooling` opts in |
 | `SkillRegistry` | `registry.rs` | Manifest-based skill management |
 | `HostFuncLinker` | `host_funcs.rs` | WASM-to-Rust host function bridge |
 | `AsyncHostFunctions` | `async_host.rs` | Async host function support |
@@ -360,10 +361,9 @@ Isolated execution environment using Wasmtime 41.x.
 
 | Resource | Default | Description |
 |----------|---------|-------------|
-| Memory | 16 MB | Per-instance memory cap |
-| Fuel | 1,000,000 | CPU instruction quota |
-| Timeout | 5 seconds | Per-call wall clock |
-| Max execution | 30 seconds | Absolute cap |
+| Memory | `resources.max_memory_mb` | Per-instance memory cap (16 MB for a bare `SandboxConfig`) |
+| Fuel | 10,000,000 in the kernel | CPU instruction quota (1,000,000 for a bare `SandboxConfig`) |
+| Timeout | `max_execution_time` (30 s) | Per-call wall clock, checked every 10 ms epoch tick |
 
 **Skill manifest fields:** `name`, `version`, `description`, `module` (WASM path), `capabilities`, `limits` (memory pages, execution time), `exports` (function signatures with schemas)
 
