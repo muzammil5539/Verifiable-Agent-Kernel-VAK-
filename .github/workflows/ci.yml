@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    # claude/** too, so work on those branches is checked before it is
+    # proposed for main.
+    branches: [main, develop, "claude/**"]
   pull_request:
     branches: [main]
 
