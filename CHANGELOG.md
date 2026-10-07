@@ -12,6 +12,11 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 `docs/adr/0003-admit-budget-record-outcome-pipeline-stages.md` for the decision records.
 
 ### Added
+- `sandbox::MAX_TABLE_ELEMENTS` (ADR 0010): a skill's tables are capped at 10,000
+  elements, at instantiation and on `table.grow`, with either allocator. Tables live in
+  host memory, outside the linear-memory limit.
+- `tests/sandbox_escapes.rs`: the escape paths named by the Wasmtime advisories in
+  finding K11, through `Kernel::execute`.
 - The `cedar-analysis` feature (ADR 0009): `policy::cedar::analysis` (`Analyzer`,
   `PolicyProperties`, `AnalysisReport`, `check_reload`, `Widening`, `ReloadRefused`)
   proves properties of Cedar policy sets with SymCC and cvc5 1.3.1. `CedarPolicy::reload`
@@ -68,12 +73,23 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
   `CustomHandlerRegistry::{register_arc, register_new}`.
 
 ### Changed
+- **Breaking:** Wasmtime 49.0.2 (was 41.0.4), for the 16 advisories in finding K11
+  (ADR 0010). Default features are off: Cranelift is the only compiler, and Winch, the
+  component model, GC, threads and WASI aren't compiled in. `cargo deny check` passes.
+  - **Fuel.** Wasmtime now charges fuel per byte for bulk memory operations, so the
+    kernel's fuel budget bounds them too.
+  - **Pooling.** `PoolingConfig::max_instances`, `max_memories` and `max_tables` now
+    limit core instances; they used to set the component-instance limits, which had no
+    effect.
+  - **Trap reasons.** A skill that traps fails with the trap's reason ("wasm trap: out
+    of bounds memory access"), not only its backtrace.
 - PyO3 0.29 (was 0.24), for RUSTSEC-2026-0176 and RUSTSEC-2026-0177 (finding K11). The
   native classes no longer derive `FromPyObject` (`skip_from_py_object`); nothing took
   them by value.
-- **Toolchain:** the minimum supported Rust is 1.90, the highest among dependencies
-  (Wasmtime 41); it was declared as 1.75, which nothing could build. CI tests stable
-  and 1.90, and checks formatting and clippy on stable only. The metrics endpoint's
+- **Toolchain:** the minimum supported Rust is 1.96, the highest among dependencies
+  (Wasmtime 49); it was declared as 1.75, which nothing could build. CI tests stable
+  and 1.96, and checks formatting and clippy on stable only. The Dockerfile builds on
+  1.96 (it was on 1.75). The metrics endpoint's
   `rust_version` and the Python module's `__rust_version__` come from
   `Cargo.toml` instead of a hardcoded "1.75".
 - CI's clippy (`--all-targets --all-features -D warnings`, with `RUSTFLAGS=-D warnings`)

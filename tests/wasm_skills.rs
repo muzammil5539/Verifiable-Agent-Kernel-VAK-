@@ -18,9 +18,10 @@ use vak::sandbox::{SandboxRuntime, SandboxRuntimeConfig, SkillRegistry};
 /// A skill implementing the kernel's ABI. `execute` echoes its input unless
 /// the input is the JSON string "spin" or "lie".
 ///
-/// "spin" loops forever over a 64 KiB `memory.fill`. Each iteration is a few
-/// units of fuel but real work, so the kernel's fuel budget lasts seconds and
-/// the wall-clock deadline is what stops it.
+/// "spin" loops forever over a chain of square roots. Each costs one unit of
+/// fuel but waits on the one before it, so the kernel's fuel budget lasts tens
+/// of milliseconds rather than a few. (It used to loop over a 64 KiB
+/// `memory.fill`, which Wasmtime 49 charges a unit of fuel per byte.)
 ///
 /// "lie" claims an output length that runs past its memory.
 const SKILL_WAT: &str = r#"
@@ -33,12 +34,18 @@ const SKILL_WAT: &str = r#"
     (global.set $next (i32.add (global.get $next) (local.get $len)))
     (local.get $p))
   (func (export "execute") (param $ptr i32) (param $len i32) (result i32)
+    (local $x f64)
     ;; "spin" is 6 bytes with quotes, starting with '"s'
     (if (i32.and (i32.eq (local.get $len) (i32.const 6))
                  (i32.eq (i32.load8_u offset=1 (local.get $ptr)) (i32.const 115)))
-      (then (loop $l
-        (memory.fill (i32.const 0) (i32.const 0) (i32.const 65536))
-        (br $l))))
+      (then
+        (local.set $x (f64.const 1e300))
+        (loop $l
+          (local.set $x
+            (f64.sqrt (f64.sqrt (f64.sqrt (f64.sqrt (f64.sqrt (f64.sqrt (f64.sqrt (f64.sqrt
+            (f64.sqrt (f64.sqrt (f64.sqrt (f64.sqrt (f64.sqrt (f64.sqrt (f64.sqrt (f64.sqrt
+              (f64.add (local.get $x) (f64.const 1e300)))))))))))))))))))
+          (br $l))))
     ;; "lie" is 5 bytes with quotes, starting with '"l'
     (if (i32.and (i32.eq (local.get $len) (i32.const 5))
                  (i32.eq (i32.load8_u offset=1 (local.get $ptr)) (i32.const 108)))
@@ -168,16 +175,23 @@ async fn a_kernel_builds_its_runtime_on_the_first_skill_call() {
 // A single-threaded runtime: if the skill ran on the async executor, nothing
 // else could make progress until it finished.
 #[tokio::test(flavor = "current_thread")]
-async fn a_spinning_skill_times_out_without_stalling_other_requests() {
+async fn a_spinning_skill_runs_out_of_fuel_without_stalling_other_requests() {
     let dir = tempfile::tempdir().unwrap();
     let runtime = Arc::new(SandboxRuntime::new(SandboxRuntimeConfig::default()).unwrap());
-    let kernel = kernel(dir.path(), Duration::from_millis(500), runtime).await;
+    // A deadline far away: only fuel can stop the skill.
+    let kernel = kernel(dir.path(), Duration::from_secs(60), runtime).await;
     let (agent, session) = (AgentId::new(), SessionId::new());
 
     let started = Instant::now();
-    let spin = kernel.execute(&agent, &session, call(serde_json::json!("spin")));
+    let spin = async {
+        let spun = kernel
+            .execute(&agent, &session, call(serde_json::json!("spin")))
+            .await;
+        (spun, started.elapsed())
+    };
     let meanwhile = async {
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        // Wait on a timer, which only fires if the executor is free.
+        tokio::time::sleep(Duration::from_millis(1)).await;
         let response = kernel
             .execute(
                 &agent,
@@ -189,17 +203,17 @@ async fn a_spinning_skill_times_out_without_stalling_other_requests() {
         assert!(response.success);
         started.elapsed()
     };
-    let (spun, echo_done_at) = tokio::join!(spin, meanwhile);
+    let ((spun, spin_done_at), echo_done_at) = tokio::join!(spin, meanwhile);
 
     assert!(
-        echo_done_at < Duration::from_millis(400),
-        "a built-in call waited {echo_done_at:?} behind a spinning skill"
+        echo_done_at < spin_done_at,
+        "a built-in call finished at {echo_done_at:?}, after the spinning skill \
+         ({spin_done_at:?}): it waited behind it"
     );
     let spun = spun.unwrap();
     assert!(!spun.success);
     let error = spun.error.unwrap();
-    assert!(error.contains("timed out"), "{error}");
-    assert!(started.elapsed() >= Duration::from_millis(500));
+    assert!(error.contains("Fuel exhausted"), "{error}");
 
     // The outcome leaf records the failure.
     let log = kernel.get_audit_log().await;
@@ -208,7 +222,48 @@ async fn a_spinning_skill_times_out_without_stalling_other_requests() {
         .filter_map(|e| e.outcome.as_ref())
         .find(|o| !o.success)
         .unwrap();
-    assert!(outcome.error.as_ref().unwrap().contains("timed out"));
+    assert!(outcome.error.as_ref().unwrap().contains("Fuel exhausted"));
+}
+
+/// Fuel stops a skill that computes. The deadline stops one that is slow for
+/// its fuel. Here the deadline is a millisecond and the ticker ticks every
+/// millisecond, so it fires well before the skill could spend the kernel's
+/// fuel budget.
+#[tokio::test]
+async fn a_skill_past_its_deadline_is_stopped() {
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = Arc::new(
+        SandboxRuntime::new(SandboxRuntimeConfig {
+            tick: Duration::from_millis(1),
+            ..SandboxRuntimeConfig::default()
+        })
+        .unwrap(),
+    );
+    let kernel = kernel(dir.path(), Duration::from_millis(1), runtime).await;
+    let (agent, session) = (AgentId::new(), SessionId::new());
+
+    let result = kernel
+        .execute(&agent, &session, call(serde_json::json!("spin")))
+        .await;
+    let error = match result {
+        Ok(response) => {
+            assert!(!response.success, "{response:?}");
+            response.error.unwrap()
+        }
+        Err(e) => e.to_string(),
+    };
+    assert!(error.contains("timed out"), "{error}");
+
+    // The kernel keeps serving afterwards.
+    let echo = kernel
+        .execute(
+            &agent,
+            &session,
+            ToolRequest::new("echo", serde_json::json!(1)),
+        )
+        .await
+        .unwrap();
+    assert!(echo.success);
 }
 
 #[tokio::test]

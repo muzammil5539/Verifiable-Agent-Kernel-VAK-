@@ -11,8 +11,8 @@ resolver = "2"
 [workspace.package]
 version = "1.0.0"
 edition = "2021"
-# The highest minimum among dependencies: Wasmtime 41 needs 1.90.
-rust-version = "1.90"
+# The highest minimum among dependencies: Wasmtime 49 needs 1.96.
+rust-version = "1.96"
 authors = ["VAK Team"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/vak-project/verifiable-agent-kernel"
@@ -49,8 +49,19 @@ rand = "0.8"
 # Database (Issue #4)
 rusqlite = { version = "0.32", features = ["bundled"] }
 
-# WASM runtime
-wasmtime = "41.0.3"
+# WASM runtime. Default features are off, so only what VAK uses is compiled
+# in: Cranelift, never Winch, and no component model, GC, threads or stack
+# switching (docs/adr/0010). 49.0.2 is patched against every advisory in
+# finding K11; it needs Rust 1.96.
+wasmtime = { version = "49.0.2", default-features = false, features = [
+    "cranelift",
+    "runtime",
+    "std",
+    "pooling-allocator",
+    "wat",
+    "async",
+    "parallel-compilation",
+] }
 
 # Cedar policy evaluation (feature `cedar`)
 cedar-policy = "4.13"

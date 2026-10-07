@@ -6,7 +6,7 @@ Thank you for your interest in contributing to the Verifiable Agent Kernel (VAK)
 
 ### Prerequisites
 
-- Rust 1.90+ (`rustup update stable`)
+- Rust 1.96+ (`rustup update stable`)
 - `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
 - Python 3.9+ (for Python bindings, optional)
 - `maturin` (`pip install maturin`, optional)

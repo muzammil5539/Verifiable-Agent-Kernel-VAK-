@@ -281,7 +281,7 @@ impl SandboxRuntime {
         let instance = skill
             .pre
             .instantiate(&mut store)
-            .map_err(|e| classify(e, limits, |e| SandboxError::Instantiation(e.to_string())))?;
+            .map_err(|e| classify(e, limits, SandboxError::Instantiation))?;
 
         let input_json =
             serde_json::to_string(input).map_err(|e| SandboxError::InvalidInput(e.to_string()))?;
@@ -308,7 +308,7 @@ impl SandboxRuntime {
 
         let output_ptr = target_fn
             .call(&mut store, (input_ptr, input_len))
-            .map_err(|e| classify(e, limits, |e| SandboxError::Execution(e.to_string())))?;
+            .map_err(|e| classify(e, limits, SandboxError::Execution))?;
 
         // Everything below is read from untrusted guest memory: bound-check
         // before allocating or slicing.
@@ -350,13 +350,13 @@ impl SandboxRuntime {
         let instance = skill
             .pre
             .instantiate(&mut store)
-            .map_err(|e| classify(e, limits, |e| SandboxError::Instantiation(e.to_string())))?;
+            .map_err(|e| classify(e, limits, SandboxError::Instantiation))?;
         let target_fn = instance
             .get_typed_func::<(), i32>(&mut store, func)
             .map_err(|_| SandboxError::FunctionNotFound(func.into()))?;
         target_fn
             .call(&mut store, ())
-            .map_err(|e| classify(e, limits, |e| SandboxError::Execution(e.to_string())))
+            .map_err(|e| classify(e, limits, SandboxError::Execution))
     }
 
     /// A store with `limits` applied and its deadline armed, plus a guard
@@ -395,15 +395,21 @@ impl SandboxRuntime {
 
 /// Maps a Wasmtime error to a sandbox error by its trap code, so a deadline
 /// or fuel trap is reported as such whatever the timing.
+///
+/// Any other error is described to `otherwise`. A trap is described by its
+/// code ("wasm trap: out of bounds memory access"). A Wasmtime error's plain
+/// `Display` is only its outermost context, the guest backtrace, which says
+/// where the guest stopped but not why.
 fn classify(
     error: wasmtime::Error,
     limits: &SandboxConfig,
-    otherwise: impl FnOnce(wasmtime::Error) -> SandboxError,
+    otherwise: impl FnOnce(String) -> SandboxError,
 ) -> SandboxError {
     match error.downcast_ref::<wasmtime::Trap>() {
         Some(wasmtime::Trap::Interrupt) => SandboxError::Timeout(limits.timeout),
         Some(wasmtime::Trap::OutOfFuel) => SandboxError::FuelExhausted,
-        _ => otherwise(error),
+        Some(trap) => otherwise(format!("wasm trap: {trap}")),
+        None => otherwise(format!("{error:#}")),
     }
 }
 

@@ -39,11 +39,11 @@
 //! - Gap Analysis Sprint 4, T4.3: Reasoning host function
 //! - NSR-003: verify_plan host function exposed to WASM
 
-use anyhow::Result as AnyhowResult;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use thiserror::Error;
 use tracing::{debug, info, warn};
+use wasmtime::{format_err, Result as HostResult};
 use wasmtime::{Caller, Linker};
 
 use crate::reasoner::datalog::{DatalogError, Fact, SafetyEngine, SafetyVerdict, Violation};
@@ -495,7 +495,7 @@ where
         .func_wrap(
             "vak",
             "verify_plan",
-            |_caller: Caller<'_, T>, _plan_ptr: i32, _plan_len: i32| -> AnyhowResult<i64> {
+            |_caller: Caller<'_, T>, _plan_ptr: i32, _plan_len: i32| -> HostResult<i64> {
                 // Note: Full WASM memory reading requires typed state with Memory access.
                 // This basic implementation returns success for now.
                 // Use register_reasoning_functions_with_state for full functionality.
@@ -511,7 +511,7 @@ where
         .func_wrap(
             "vak",
             "add_critical_file",
-            |_caller: Caller<'_, T>, _path_ptr: i32, _path_len: i32| -> AnyhowResult<()> {
+            |_caller: Caller<'_, T>, _path_ptr: i32, _path_len: i32| -> HostResult<()> {
                 // Basic stub - use register_reasoning_functions_with_state for full functionality
                 Ok(())
             },
@@ -525,7 +525,7 @@ where
         .func_wrap(
             "vak",
             "set_risk_score",
-            |_caller: Caller<'_, T>, _score_x1000: i32| -> AnyhowResult<()> {
+            |_caller: Caller<'_, T>, _score_x1000: i32| -> HostResult<()> {
                 // Basic stub - use register_reasoning_functions_with_state for full functionality
                 Ok(())
             },
@@ -575,12 +575,12 @@ where
         .func_wrap(
             "vak",
             "verify_plan",
-            |mut caller: Caller<'_, T>, plan_ptr: i32, plan_len: i32| -> AnyhowResult<i64> {
+            |mut caller: Caller<'_, T>, plan_ptr: i32, plan_len: i32| -> HostResult<i64> {
                 // Get memory from the WASM instance
                 let memory = caller
                     .get_export("memory")
                     .and_then(|e| e.into_memory())
-                    .ok_or_else(|| anyhow::anyhow!("Failed to get WASM memory"))?;
+                    .ok_or_else(|| format_err!("Failed to get WASM memory"))?;
 
                 // Validate bounds and read the plan first
                 let ptr = plan_ptr as usize;
@@ -603,11 +603,11 @@ where
                     // Read the plan JSON from WASM memory
                     let plan_bytes = &data[ptr..ptr + len];
                     let plan_json = std::str::from_utf8(plan_bytes)
-                        .map_err(|e| anyhow::anyhow!("Invalid UTF-8 in plan: {}", e))?;
+                        .map_err(|e| format_err!("Invalid UTF-8 in plan: {}", e))?;
 
                     // Deserialize to PlanVerification
                     serde_json::from_str(plan_json)
-                        .map_err(|e| anyhow::anyhow!("Failed to parse plan JSON: {}", e))?
+                        .map_err(|e| format_err!("Failed to parse plan JSON: {}", e))?
                 };
 
                 debug!(
@@ -643,12 +643,12 @@ where
         .func_wrap(
             "vak",
             "add_critical_file",
-            |mut caller: Caller<'_, T>, path_ptr: i32, path_len: i32| -> AnyhowResult<()> {
+            |mut caller: Caller<'_, T>, path_ptr: i32, path_len: i32| -> HostResult<()> {
                 // Get memory
                 let memory = caller
                     .get_export("memory")
                     .and_then(|e| e.into_memory())
-                    .ok_or_else(|| anyhow::anyhow!("Failed to get WASM memory"))?;
+                    .ok_or_else(|| format_err!("Failed to get WASM memory"))?;
 
                 // Read path from WASM memory before mutable borrow
                 let path: String = {
@@ -657,12 +657,12 @@ where
                     let data = memory.data(&caller);
 
                     if ptr + len > data.len() {
-                        return Err(anyhow::anyhow!("Memory bounds exceeded"));
+                        return Err(format_err!("Memory bounds exceeded"));
                     }
 
                     let path_bytes = &data[ptr..ptr + len];
                     std::str::from_utf8(path_bytes)
-                        .map_err(|e| anyhow::anyhow!("Invalid UTF-8 in path: {}", e))?
+                        .map_err(|e| format_err!("Invalid UTF-8 in path: {}", e))?
                         .to_string()
                 };
 
@@ -683,7 +683,7 @@ where
         .func_wrap(
             "vak",
             "set_risk_score",
-            |mut caller: Caller<'_, T>, score_x1000: i32| -> AnyhowResult<()> {
+            |mut caller: Caller<'_, T>, score_x1000: i32| -> HostResult<()> {
                 // Convert from integer representation (score * 1000) to f64
                 let score = (score_x1000 as f64) / 1000.0;
 
@@ -708,7 +708,7 @@ where
         .func_wrap(
             "vak",
             "get_violation_count",
-            |caller: Caller<'_, T>| -> AnyhowResult<i32> {
+            |caller: Caller<'_, T>| -> HostResult<i32> {
                 let state = caller.data().as_ref();
                 let count = state.host.get_violation_count(&state.agent_id);
                 Ok(count as i32)
@@ -723,7 +723,7 @@ where
         .func_wrap(
             "vak",
             "is_high_risk",
-            |caller: Caller<'_, T>| -> AnyhowResult<i32> {
+            |caller: Caller<'_, T>| -> HostResult<i32> {
                 let state = caller.data().as_ref();
                 let is_high_risk = state.host.is_high_risk_agent(&state.agent_id);
                 Ok(if is_high_risk { 1 } else { 0 })

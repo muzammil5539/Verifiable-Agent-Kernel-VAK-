@@ -93,14 +93,12 @@ that language is exactly how the gap went unnoticed for thirteen sprints.
 
 ## P0 — Security: still fails open
 
-- [ ] **Upgrade Wasmtime past its advisories** (finding K11 in
-      `docs/architecture-v2.md`). Wasmtime 41.0.4 has 17 published advisories,
-      including sandbox escapes and data leakage between pooling-allocator
-      instances, and no patched 41.x exists. Move to 49.0.2 or later (or the 36 LTS
-      line) and adapt `src/sandbox/` to the API changes. Run `tests/wasm_skills.rs`
-      and `tests/signed_skills.rs`, and expect the minimum Rust version to rise. Upgrade
-      PyO3 to 0.29 for its two advisories (done). `cargo deny check` and `cargo audit`
-      (the Security workflow) stay red until then.
+- [x] **Upgrade Wasmtime past its advisories** (finding K11 in
+      `docs/architecture-v2.md`, ADR 0010). Wasmtime 49.0.2 with default features
+      off: Cranelift only, no Winch, component model, GC or WASI. PyO3 0.29.
+      `tests/sandbox_escapes.rs` drives each advisory's escape path through
+      `Kernel::execute`, tables are capped at 10,000 elements, and `cargo deny check`
+      passes. MSRV 1.96.
 
 - [ ] **ZK proofs are not zero-knowledge.** `src/reasoner/zk_proof.rs::verify_response`
       accepts any 64-character hex string as a valid proof of any statement — there is

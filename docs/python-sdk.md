@@ -12,7 +12,7 @@ tamper-evident audit chain.
 | Requirement | Version |
 |-------------|---------|
 | Python      | 3.9+    |
-| Rust        | 1.90+   |
+| Rust        | 1.96+   |
 | maturin     | 1.4+    |
 
 ```bash

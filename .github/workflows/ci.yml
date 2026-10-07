@@ -19,8 +19,8 @@ jobs:
     strategy:
       matrix:
         # Stable, and the minimum supported version: Cargo.toml's
-        # rust-version, which Wasmtime 41 sets at 1.90.
-        rust: [stable, "1.90"]
+        # rust-version, which Wasmtime 49 sets at 1.96 (docs/adr/0010).
+        rust: [stable, "1.96"]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

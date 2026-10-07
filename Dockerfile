@@ -14,7 +14,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: Build dependencies (cached layer)
 # ---------------------------------------------------------------------------
-FROM rust:1.75-bookworm AS deps
+FROM rust:1.96-bookworm AS deps
 
 WORKDIR /app
 
@@ -64,7 +64,7 @@ RUN cargo build --release
 # ---------------------------------------------------------------------------
 # Stage 3: Development image (includes debug tools)
 # ---------------------------------------------------------------------------
-FROM rust:1.75-bookworm AS dev
+FROM rust:1.96-bookworm AS dev
 
 RUN apt-get update && apt-get install -y \
     ca-certificates \

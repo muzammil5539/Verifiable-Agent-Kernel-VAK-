@@ -336,7 +336,7 @@ Three-tier hierarchical memory with cryptographic integrity.
 
 **Location:** `src/sandbox/`
 
-Isolated execution environment using Wasmtime 41.x.
+Isolated execution environment using Wasmtime 49.x, compiled with Cranelift only (docs/adr/0010).
 
 ```
 ┌─────────────────────────────────────────────────────┐

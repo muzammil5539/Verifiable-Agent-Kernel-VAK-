@@ -171,6 +171,17 @@ pub enum SandboxError {
     },
 }
 
+/// The most elements a skill's table may hold, at instantiation or after
+/// `table.grow`.
+///
+/// Tables live in host memory, outside the linear memory that
+/// [`SandboxConfig::memory_limit`] bounds. Without this cap a skill could
+/// declare or grow a table of 2^32 elements and have the host allocate tens
+/// of gigabytes (docs/adr/0010). It matches the pooling allocator's default,
+/// so the limit is the same whichever allocator runs the skill. The shipped
+/// skills use under 40.
+pub const MAX_TABLE_ELEMENTS: usize = 10_000;
+
 /// Store data holding resource limits. Time limits are enforced by the
 /// store's epoch deadline (see [`runtime`]), not tracked here.
 #[derive(Debug)]
@@ -182,6 +193,7 @@ impl SandboxState {
     fn new(config: &SandboxConfig) -> Self {
         let limits = StoreLimitsBuilder::new()
             .memory_size(config.memory_limit)
+            .table_elements(MAX_TABLE_ELEMENTS)
             .build();
 
         Self { limits }

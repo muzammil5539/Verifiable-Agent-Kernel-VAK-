@@ -250,14 +250,17 @@ pub fn create_pooling_engine(config: &PoolingConfig) -> Result<Engine, PoolingEr
     // Configure pooling allocation
     let mut pooling_config = PoolingAllocationConfig::default();
 
-    // Set instance limits
-    pooling_config.total_component_instances(config.max_instances);
+    // Set instance limits. Skills are core modules, so these are the core
+    // knobs: the `*_component*` ones used before limited component
+    // instances, which VAK never creates, and left `max_instances` with no
+    // effect (docs/adr/0010).
+    pooling_config.total_core_instances(config.max_instances);
     pooling_config.total_memories(config.max_instances * config.max_memories);
     pooling_config.total_tables(config.max_instances * config.max_tables);
 
     // Set per-instance limits
-    pooling_config.max_memories_per_component(config.max_memories);
-    pooling_config.max_tables_per_component(config.max_tables);
+    pooling_config.max_memories_per_module(config.max_memories);
+    pooling_config.max_tables_per_module(config.max_tables);
     pooling_config.table_elements(config.max_table_elements as usize);
 
     // Set memory limits
