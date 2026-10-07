@@ -298,7 +298,12 @@ pub struct ToolRequest {
     /// Parameters to pass to the tool.
     pub parameters: serde_json::Value,
 
-    /// Optional timeout in milliseconds.
+    /// A time limit for this call, in milliseconds, tighter than the
+    /// kernel's `max_execution_time`.
+    ///
+    /// WASM skills and registered tool handlers stop at whichever limit
+    /// comes first; this can never extend the kernel's. Built-in tools run
+    /// to completion.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
 }
@@ -315,11 +320,19 @@ impl ToolRequest {
         }
     }
 
-    /// Sets the timeout for this request.
+    /// Sets a time limit for this call ([`ToolRequest::timeout_ms`]).
     #[must_use]
     pub fn with_timeout(mut self, timeout_ms: u64) -> Self {
         self.timeout_ms = Some(timeout_ms);
         self
+    }
+
+    /// The time limit for this call under a kernel limit of `limit`: the
+    /// sooner of the two.
+    #[must_use]
+    pub fn time_limit(&self, limit: std::time::Duration) -> std::time::Duration {
+        self.timeout_ms
+            .map_or(limit, |ms| limit.min(std::time::Duration::from_millis(ms)))
     }
 
     /// Computes a SHA-256 hash of the request for integrity verification.

@@ -281,17 +281,18 @@ impl CustomHandlerRegistry {
             "Executing custom handler"
         );
 
-        // Execute with timeout
+        // Execute with the registry's timeout, or the request's if sooner.
         let handler = Arc::clone(handler);
         let call_clone = tool_call.clone();
         let agent_clone = *agent_id;
+        let limit = tool_call.time_limit(std::time::Duration::from_millis(self.default_timeout_ms));
+        let limit_ms = u64::try_from(limit.as_millis()).unwrap_or(u64::MAX);
 
-        let result = tokio::time::timeout(
-            std::time::Duration::from_millis(self.default_timeout_ms),
-            async move { handler.execute(&call_clone, &agent_clone).await },
-        )
+        let result = tokio::time::timeout(limit, async move {
+            handler.execute(&call_clone, &agent_clone).await
+        })
         .await
-        .map_err(|_| HandlerError::Timeout(self.default_timeout_ms))?;
+        .map_err(|_| HandlerError::Timeout(limit_ms))?;
 
         result
     }

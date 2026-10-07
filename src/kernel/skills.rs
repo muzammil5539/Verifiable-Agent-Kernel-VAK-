@@ -171,7 +171,8 @@ impl Skills {
                 }
             }
         };
-        let limits = self.limits.clone();
+        let mut limits = self.limits.clone();
+        limits.timeout = request.time_limit(limits.timeout);
         let input = request.parameters.clone();
 
         let joined = tokio::task::spawn_blocking(move || {
