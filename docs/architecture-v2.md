@@ -140,6 +140,7 @@ level** once implemented.
   authoring time.
 - **Implication.** VAK's "Cedar-style YAML" engine reimplements a fraction of Cedar
   without its guarantees, and its Z3 integration (V2) answers the wrong question.
+  (Since slice 2a, ADR 0008, `policy.format: cedar` evaluates real Cedar.)
   - **Per request:** evaluate policies with the real `cedar-policy` crate (4.x,
     MSRV 1.89), with schema validation at load time. Evaluation is deterministic and
     takes microseconds. Assurance: `Enforced`.
@@ -414,7 +415,7 @@ flowchart TB
 
 | Port | Responsibility | Default adapter | Status |
 |---|---|---|---|
-| `PolicyDecisionPoint` | request + context → `PolicyDecision` | `CedarEnforcer` if `policy_paths` set, else `ConfigPolicy` (allowlist + default deny) | **added in this change** |
+| `PolicyDecisionPoint` | request + context → `PolicyDecision` | `CedarPolicy` (the `cedar-policy` crate) if `policy.format: cedar`; `CedarEnforcer` (YAML) if `policy_paths` set; else `ConfigPolicy` (allowlist + default deny). `DenyAll` when configured policies don't load | **added in this change**; Cedar in 2a |
 | `ToolHandler` | execute one named tool | registry of host closures | wired in this change (existed, unused) |
 | `AgentRegistry` | agent → record (attributes, status, tool scope) | `InMemoryAgentRegistry` | **added in v2.1** |
 | `Budget` | charge one request to an agent's budget | `AgentRateBudget` (token bucket) or `Unlimited` | **added in v2.1** |
@@ -443,7 +444,7 @@ Phase 1 keeps one crate but gates heavy and experimental modules behind features
 | `legacy-tools` | `tools::skill_sign` (superseded by `sandbox::signing`) | base64 | no |
 | `python` | `python` | pyo3 | no |
 | `full` | everything except `python` | | no |
-| `cedar` | `policy::cedar` adapter over `cedar-policy` | cedar-policy | no (Phase 2) |
+| `cedar` | `policy::cedar` engine and `kernel::CedarPolicy` over `cedar-policy` (slice 2a, ADR 0008); needs Rust 1.89; 64 more packages | cedar-policy | no; in `full` |
 
 Departures from the plan above, with reasons:
 
@@ -566,8 +567,16 @@ phase's exit criterion.
       Phase 1 is complete.
 
 **Phase 2: research-grade enforcement (1 to 2 months)**
-- `cedar` feature: a `cedar-policy` 4.x adapter, schema for VAK entities, and a SymCC
-  property suite run in CI. Port `policies/*.yaml` to `.cedar`.
+- [x] Slice 2a (ADR 0008): the `cedar` feature; `policy.format: cedar` decides with the
+      `cedar-policy` crate. Its `Vak` schema has an agent principal, per-tool actions for
+      typed arguments, and a tool resource. Policies are validated strictly at load, and
+      calls that don't match the schema are denied. So is any call on which a policy
+      errors, which Cedar alone would let through a failing `forbid`.
+      `policies/cedar/default.cedar` ports the tool-call rules of
+      `default_policies.yaml`, and a test shows both decide 24 calls alike.
+- Slice 2b: a SymCC property suite in CI (cvc5), starting with "no policy permits a
+  restricted tool", plus hot reload that checks a new set against the old one before
+  swapping it in.
 - IFC labels on tool results and arguments; label-aware policies; the AgentDojo harness
   as a benchmark.
 - `Guard` port with assurance levels; Datalog rules on Ascent with canonical paths.

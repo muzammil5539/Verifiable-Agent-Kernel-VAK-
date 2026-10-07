@@ -3,7 +3,10 @@
 //! [`policy_from_config`] picks one from [`KernelConfig`], which is what
 //! [`Kernel::new`](super::Kernel::new) uses:
 //!
-//! - [`EnforcerPolicy`] when `policy.policy_paths` names policy files
+//! - `CedarPolicy` when `policy.format` is `cedar` (docs/adr/0008; needs
+//!   the `cedar` feature). If the schema or policies can't be loaded, a
+//!   [`DenyAll`] naming why.
+//! - [`EnforcerPolicy`] when `policy.policy_paths` names YAML policy files
 //!   (docs/adr/0001). If they can't be loaded, the enforcer denies everything.
 //! - [`ConfigPolicy`] otherwise: the blocklist, the allowlist, then
 //!   `policy.default_decision`, which defaults to deny.
@@ -17,7 +20,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tracing::{info, warn};
 
-use super::config::{DefaultPolicyDecision, KernelConfig};
+use super::config::{DefaultPolicyDecision, KernelConfig, PolicyFormat};
 use super::ports::{PolicyDecisionPoint, PolicyRequest};
 use super::types::PolicyDecision;
 use super::BUILTIN_TOOLS;
@@ -34,6 +37,9 @@ use crate::policy::enforcer::{
 /// request: a misconfigured policy path must not silently downgrade to the
 /// fallback.
 pub async fn policy_from_config(config: &KernelConfig) -> Arc<dyn PolicyDecisionPoint> {
+    if config.policy.enabled && config.policy.format == PolicyFormat::Cedar {
+        return cedar_from_config(config);
+    }
     if !config.policy.enabled || config.policy.policy_paths.is_empty() {
         return Arc::new(ConfigPolicy::new(config.clone()));
     }
@@ -72,6 +78,45 @@ pub async fn policy_from_config(config: &KernelConfig) -> Arc<dyn PolicyDecision
     }
 
     Arc::new(EnforcerPolicy::new(enforcer, config))
+}
+
+/// The Cedar decision point `config` describes, or a [`DenyAll`] saying why
+/// there isn't one.
+#[cfg(feature = "cedar")]
+fn cedar_from_config(config: &KernelConfig) -> Arc<dyn PolicyDecisionPoint> {
+    use crate::policy::cedar::CedarPolicySet;
+
+    if config.policy.policy_paths.is_empty() {
+        return Arc::new(DenyAll::new(
+            "policy.format is cedar, but policy.policy_paths names no policies",
+        ));
+    }
+    match CedarPolicySet::load(
+        config.policy.cedar_schema.as_deref(),
+        &config.policy.policy_paths,
+    ) {
+        Ok(policies) => {
+            info!(
+                policies = policies.policy_ids().count(),
+                tool_actions = policies.tool_actions().count(),
+                "Loaded Cedar policies"
+            );
+            Arc::new(CedarPolicy::new(policies, config))
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to load Cedar policies - kernel will deny all requests");
+            Arc::new(DenyAll::new(format!("Cedar policies failed to load: {e}")))
+        }
+    }
+}
+
+/// `KernelConfig::validate` refuses `policy.format: cedar` without the
+/// feature; this only keeps a config that skipped validation closed.
+#[cfg(not(feature = "cedar"))]
+fn cedar_from_config(_config: &KernelConfig) -> Arc<dyn PolicyDecisionPoint> {
+    Arc::new(DenyAll::new(
+        "policy.format is cedar, but this build of vak lacks the `cedar` feature",
+    ))
 }
 
 /// Constraints attached to an allowed request, derived from config.
@@ -264,5 +309,133 @@ impl PolicyDecisionPoint for EnforcerPolicy {
 
     fn name(&self) -> &str {
         "cedar-enforcer"
+    }
+}
+
+/// Denies every request, giving the same reason each time. What the kernel
+/// decides with when the configured policies can't be loaded: a policy that
+/// can't be read must not become no policy at all.
+#[derive(Debug, Clone)]
+pub struct DenyAll {
+    reason: String,
+}
+
+impl DenyAll {
+    /// A decision point that denies everything because of `reason`.
+    #[must_use]
+    pub fn new(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+        }
+    }
+}
+
+#[async_trait]
+impl PolicyDecisionPoint for DenyAll {
+    async fn decide(&self, _req: &PolicyRequest<'_>) -> PolicyDecision {
+        PolicyDecision::Deny {
+            reason: self.reason.clone(),
+            violated_policies: None,
+        }
+    }
+
+    fn name(&self) -> &str {
+        "deny-all"
+    }
+}
+
+/// Decides with Cedar policies, evaluated by the `cedar-policy` crate
+/// (docs/adr/0008).
+///
+/// The principal's attributes come from its agent record, and the tool's
+/// from config: `restricted` from `security.blocked_tools`, `builtin` from
+/// the kernel's built-in tools. Anything Cedar can't decide cleanly (a call
+/// that doesn't match the schema, a policy that fails to evaluate) is denied.
+#[cfg(feature = "cedar")]
+#[derive(Debug)]
+pub struct CedarPolicy {
+    policies: crate::policy::cedar::CedarPolicySet,
+    blocked_tools: Vec<String>,
+    constraints: Option<Vec<String>>,
+}
+
+#[cfg(feature = "cedar")]
+impl CedarPolicy {
+    /// Decides with `policies`, taking tool attributes and execution
+    /// constraints from `config`.
+    #[must_use]
+    pub fn new(policies: crate::policy::cedar::CedarPolicySet, config: &KernelConfig) -> Self {
+        Self {
+            policies,
+            blocked_tools: config.security.blocked_tools.clone(),
+            constraints: execution_constraints(config),
+        }
+    }
+
+    /// The policies this decision point decides with.
+    #[must_use]
+    pub fn policies(&self) -> &crate::policy::cedar::CedarPolicySet {
+        &self.policies
+    }
+}
+
+#[cfg(feature = "cedar")]
+#[async_trait]
+impl PolicyDecisionPoint for CedarPolicy {
+    async fn decide(&self, req: &PolicyRequest<'_>) -> PolicyDecision {
+        use crate::policy::cedar::{CedarDecision, CedarRequest};
+        use std::collections::HashMap;
+
+        let tool = &req.request.tool_name;
+        let agent_id = req.agent_id.to_string();
+        let session = req.session_id.map(ToString::to_string).unwrap_or_default();
+        let no_attributes = HashMap::new();
+        // Without a record nothing is known about the agent, so nothing is
+        // assumed.
+        let (agent_name, internal, attributes) = match req.principal {
+            Some(record) => (record.name.as_str(), record.internal, &record.attributes),
+            None => ("", false, &no_attributes),
+        };
+
+        let decision = self.policies.authorize(&CedarRequest {
+            agent_id: &agent_id,
+            agent_name,
+            internal,
+            attributes,
+            tool,
+            restricted: self.blocked_tools.contains(tool),
+            builtin: BUILTIN_TOOLS.contains(&tool.as_str()),
+            session: &session,
+            arguments: &req.request.parameters,
+        });
+
+        match decision {
+            CedarDecision::Allow { policies } => PolicyDecision::Allow {
+                reason: format!("Permitted by Cedar policy {}", policies.join(", ")),
+                constraints: self.constraints.clone(),
+            },
+            CedarDecision::Forbid { policies } => {
+                warn!(tool = %tool, policies = ?policies, "Forbidden by Cedar policy");
+                PolicyDecision::Deny {
+                    reason: format!("Forbidden by Cedar policy {}", policies.join(", ")),
+                    violated_policies: Some(policies),
+                }
+            }
+            CedarDecision::NotPermitted => PolicyDecision::Deny {
+                reason: format!("No Cedar policy permits tool '{tool}' (default deny)"),
+                violated_policies: None,
+            },
+            CedarDecision::Error { reason, policies } => {
+                tracing::error!(tool = %tool, error = %reason, "Cedar could not decide - denying");
+                PolicyDecision::Deny {
+                    reason: format!("Cedar could not decide: {reason}"),
+                    violated_policies: (!policies.is_empty()).then_some(policies),
+                }
+            }
+        }
+    }
+
+    fn name(&self) -> &str {
+        "cedar"
     }
 }

@@ -123,8 +123,15 @@ impl KernelConfig {
     /// Returns an error if:
     /// - `max_concurrent_agents` is 0
     /// - `max_execution_time` is 0
-    /// - Policy paths don't exist (if specified)
+    /// - `policy.format` is `cedar` in a build without the `cedar` feature
     pub fn validate(&self) -> Result<(), KernelError> {
+        if self.policy.format == PolicyFormat::Cedar && !cfg!(feature = "cedar") {
+            return Err(KernelError::InvalidConfiguration {
+                message: "policy.format is cedar, but this build of vak lacks the `cedar` feature"
+                    .to_string(),
+            });
+        }
+
         if self.max_concurrent_agents == 0 {
             return Err(KernelError::InvalidConfiguration {
                 message: "max_concurrent_agents must be greater than 0".to_string(),
@@ -295,6 +302,17 @@ impl KernelConfig {
                 "allow" => DefaultPolicyDecision::Allow,
                 _ => DefaultPolicyDecision::Deny,
             };
+        }
+
+        if let Ok(format) = std::env::var("VAK_POLICY__FORMAT") {
+            config.policy.format = match format.to_lowercase().as_str() {
+                "cedar" => PolicyFormat::Cedar,
+                _ => PolicyFormat::Yaml,
+            };
+        }
+
+        if let Ok(schema) = std::env::var("VAK_POLICY__CEDAR_SCHEMA") {
+            config.policy.cedar_schema = Some(PathBuf::from(schema));
         }
 
         if let Ok(caching) = std::env::var("VAK_POLICY__ENABLE_CACHING") {
@@ -597,9 +615,20 @@ pub struct PolicyConfig {
     #[serde(default)]
     pub default_decision: DefaultPolicyDecision,
 
-    /// Paths to policy definition files.
+    /// Paths to policy definition files. With `format: cedar`, a directory
+    /// contributes every `*.cedar` file directly in it.
     #[serde(default)]
     pub policy_paths: Vec<PathBuf>,
+
+    /// The language of the files in `policy_paths`.
+    #[serde(default)]
+    pub format: PolicyFormat,
+
+    /// With `format: cedar`, the Cedar schema to validate policies and
+    /// requests against. Unset means the kernel's own schema
+    /// (`policies/cedar/vak.cedarschema`).
+    #[serde(default)]
+    pub cedar_schema: Option<PathBuf>,
 
     /// Whether to enable policy caching.
     #[serde(default = "default_true")]
@@ -620,10 +649,24 @@ impl Default for PolicyConfig {
             enabled: true,
             default_decision: DefaultPolicyDecision::Deny,
             policy_paths: Vec::new(),
+            format: PolicyFormat::default(),
+            cedar_schema: None,
             enable_caching: true,
             cache_ttl_seconds: default_cache_ttl(),
         }
     }
+}
+
+/// The language of policy files (`policy.format`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PolicyFormat {
+    /// Cedar-style YAML rules, decided by `CedarEnforcer` (docs/adr/0001).
+    #[default]
+    Yaml,
+    /// Cedar, decided by the `cedar-policy` crate (docs/adr/0008). Needs the
+    /// `cedar` feature.
+    Cedar,
 }
 
 /// Default policy decision when no policy matches.

@@ -12,6 +12,14 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 `docs/adr/0003-admit-budget-record-outcome-pipeline-stages.md` for the decision records.
 
 ### Added
+- The `cedar` feature (ADR 0008; needs Rust 1.89): `policy::cedar` (`CedarPolicySet`,
+  `CedarRequest`, `CedarDecision`, `CedarPolicyError`, `VAK_SCHEMA`) and
+  `kernel::CedarPolicy`, a `PolicyDecisionPoint` over the `cedar-policy` crate. Selected
+  with `policy.format: cedar` (`PolicyFormat`, `VAK_POLICY__FORMAT`), with
+  `policy.cedar_schema` (`VAK_POLICY__CEDAR_SCHEMA`) for a schema of your own.
+  `policies/cedar/` holds the kernel's schema, the default tool rules in Cedar, and a
+  typed-arguments example.
+- `kernel::DenyAll`: the decision point used when configured policies can't be loaded.
 - `kernel::SqliteAuditLog` (ADR 0007): the kernel's audit log in SQLite, selected with
   `audit.format: sqlite` (`AuditLogFormat`, `VAK_AUDIT__FORMAT`). Each append is a
   durable transaction; opening verifies every row and refuses a database VAK didn't
@@ -55,6 +63,8 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
   `CustomHandlerRegistry::{register_arc, register_new}`.
 
 ### Changed
+- `KernelError::PolicyViolation::policy_id` names the policies that denied, when the
+  decision point reports them. It used to be `"default"` for every denial.
 - **Breaking:** `AuditLogger::log` and `log_with_metadata` return
   `Result<&AuditEntry, AuditError>`. A write the backend refused used to be logged and
   returned as if stored; it is now an error, and the chain is left as it was.

@@ -48,6 +48,12 @@ that language is exactly how the gap went unnoticed for thirteen sprints.
 - [x] `sandbox::async_host` denies when its enforcer can't be built, instead of
       falling back to `CedarEnforcer::new_permissive()`
       (`test_enforcer_construction_failure_denies`)
+- [x] Real Cedar (`docs/adr/0008`, feature `cedar`): `policy.format: cedar` decides
+      with the `cedar-policy` crate against a schema for VAK's agents, tools and
+      per-tool actions (typed arguments). Policies are validated at load, and a call
+      that doesn't match the schema, or on which any policy errors, is denied.
+      `policies/cedar/default.cedar` ports the default tool rules;
+      `tests/cedar_policy.rs` shows it decides like the YAML original
 - [x] One audit path (`docs/adr/0007`): the `AuditLog` port records everything the
       kernel mediates; `SqliteAuditLog` (`audit.format: sqlite`) is its durable,
       queryable adapter and refuses a database that doesn't verify; durable appends

@@ -13,6 +13,8 @@
 //! - Context-integrated policy decisions (POL-005)
 
 pub mod analyzer;
+#[cfg(feature = "cedar")]
+pub mod cedar;
 pub mod context;
 pub mod context_integration;
 pub mod enforcer;

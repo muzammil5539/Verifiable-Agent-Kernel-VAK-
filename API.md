@@ -180,7 +180,7 @@ registry.suspend(&agent_id, "key rotated").await?;  // refused from the next req
 |------|---------|-------------|
 | `AgentRegistry` | `InMemoryAgentRegistry` (unknown agents get an anonymous record) | `security.require_registered_agents` refuses unknown agents |
 | `Budget` | `AgentRateBudget::per_minute(n)` | `security.enable_rate_limiting`, `security.max_requests_per_minute` |
-| `PolicyDecisionPoint` | `EnforcerPolicy` or `ConfigPolicy` | `policy.policy_paths` |
+| `PolicyDecisionPoint` | `CedarPolicy` (feature `cedar`), `EnforcerPolicy` (YAML) or `ConfigPolicy`; `DenyAll` if configured policies don't load | `policy.format`, `policy.policy_paths`, `policy.cedar_schema` |
 | `AuditLog` | `FileAuditLog` (JSONL) or `SqliteAuditLog`, else `MemoryAuditLog` | `audit.log_path`, `audit.format` (`jsonl` or `sqlite`) |
 
 ---
@@ -252,7 +252,7 @@ config.validate()?;
 |--------|------------|
 | `SecurityConfig` | `enable_sandboxing`, `require_signed_requests`, `allowed_tools`, `blocked_tools`, `enable_rate_limiting`, `max_requests_per_minute` |
 | `AuditConfig` | `enabled`, `log_level`, `log_path`, `format`, `include_bodies`, `max_log_size_bytes`, `retention_count` (the last two don't apply to the kernel's log, which is never rotated) |
-| `PolicyConfig` | `enabled`, `default_decision`, `policy_paths`, `enable_caching`, `cache_ttl_seconds` |
+| `PolicyConfig` | `enabled`, `default_decision`, `policy_paths`, `format` (`yaml` or `cedar`), `cedar_schema`, `enable_caching`, `cache_ttl_seconds` |
 | `ResourceConfig` | `max_memory_mb`, `max_cpu_time_ms`, `max_connections`, `max_request_size_bytes`, `max_response_size_bytes` |
 
 **Defaults:**
@@ -535,6 +535,59 @@ let result: ExecutionResult = pipeline.evaluate(plan).await?;
 ---
 
 ## Policy API
+
+### Cedar policies (feature `cedar`)
+
+**Module:** `vak::policy::cedar`; decision point `vak::kernel::CedarPolicy` (ADR 0008)
+
+Policies in Cedar, evaluated by the `cedar-policy` crate and validated against a schema
+when they load. Enable the `cedar` feature (Rust 1.89+) and set:
+
+```yaml
+policy:
+  format: cedar
+  policy_paths: ["policies/cedar"]        # .cedar files, or directories of them
+  cedar_schema: "policies/cedar/vak.cedarschema"   # optional; this is the default
+```
+
+Every tool call reaches Cedar as:
+
+| | |
+|---|---|
+| principal | `Vak::Agent::"<agent id>"`, with `internal`, `name` and the record's attributes |
+| action | `Vak::Action::"<tool>"` if the schema declares it, else `Vak::Action::"call"` |
+| resource | `Vak::Tool::"<tool>"`, with `restricted` (blocked) and `builtin` |
+| context | `{ session, arguments }`, where `arguments` is `{}` for `call` |
+
+```cedar
+@id("forbid-dd")
+forbid (principal, action in Vak::Action::"call", resource == Vak::Tool::"dd");
+
+@id("permit-safe-tools")
+permit (principal, action in Vak::Action::"call", resource) when { !resource.restricted };
+```
+
+To let policies read a tool's arguments, declare an action for it in the schema, with the
+argument types (see `policies/cedar/examples/payments.cedarschema`):
+
+```cedar
+@id("finance-transfers-up-to-1000")
+permit (principal, action == Vak::Action::"transfer_funds", resource)
+when { principal has team && principal.team == "finance" && context.arguments.amount <= 1000 };
+```
+
+Requests that can't be decided cleanly are denied:
+
+- a call whose arguments don't match its action's declared types, including extra
+  fields and fractional numbers;
+- an agent whose record carries an attribute the schema doesn't declare;
+- a call on which any policy fails to evaluate.
+
+A policy set that doesn't load (a parse or validation error, duplicate `@id`s, no
+policies) makes the kernel deny everything, giving the load error as the reason.
+
+`CedarPolicySet::load(schema, paths)` and `authorize(&CedarRequest)` use the engine
+directly. `CedarPolicy::new(set, &config)` plus `KernelBuilder::with_policy` injects it.
 
 ### CedarEnforcer
 
@@ -1561,6 +1614,7 @@ policy:
   enabled: true
   default_decision: "deny"
   policy_paths: ["policies/"]
+  format: "yaml"     # or "cedar" (feature `cedar`)
   enable_caching: true
   cache_ttl_seconds: 300
 

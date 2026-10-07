@@ -51,6 +51,9 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # WASM runtime
 wasmtime = "41.0.3"
 
+# Cedar policy evaluation (feature `cedar`; needs Rust 1.89)
+cedar-policy = "4.13"
+
 # Identifiers
 uuid = { version = "1.6", features = ["v4", "v7", "serde"] }
 
@@ -135,6 +138,7 @@ arc-swap.workspace = true
 
 # Optional: each pulled in only by the feature that needs it.
 wasmtime = { workspace = true, optional = true }
+cedar-policy = { workspace = true, optional = true }
 tokio-stream = { workspace = true, optional = true }
 petgraph = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true }
@@ -165,6 +169,9 @@ integrations = ["reasoner", "wasm"]
 dashboard = ["swarm"]
 # tools::skill_sign, superseded by sandbox::signing; its output doesn't load.
 legacy-tools = ["dep:base64"]
+# Policies in Cedar, evaluated by the cedar-policy crate (docs/adr/0008).
+# Needs Rust 1.89.
+cedar = ["dep:cedar-policy"]
 # Python bindings (PyO3); built by maturin.
 python = ["dep:pyo3"]
 # Everything except the Python bindings. CI builds and tests with this.
@@ -178,6 +185,7 @@ full = [
     "integrations",
     "dashboard",
     "legacy-tools",
+    "cedar",
 ]
 
 [dev-dependencies]

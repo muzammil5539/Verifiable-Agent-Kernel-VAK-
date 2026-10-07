@@ -199,7 +199,10 @@ Any tool name not matching a built-in is dispatched to the WASM skill registry.
 
 **Location:** `src/policy/`
 
-Attribute-Based Access Control with Cedar-style policy definitions.
+Attribute-Based Access Control. Policies are Cedar-style YAML (`CedarEnforcer`, the
+default), or real Cedar evaluated by the `cedar-policy` crate (`policy.format: cedar`,
+feature `cedar`, ADR 0008). The kernel reaches either one through the
+`PolicyDecisionPoint` port (`kernel::pdp`).
 
 ```
 ┌────────────┐     ┌──────────────┐     ┌────────────────┐
@@ -213,6 +216,7 @@ Attribute-Based Access Control with Cedar-style policy definitions.
 
 | Component | File | Description |
 |-----------|------|-------------|
+| `CedarPolicySet` | `cedar.rs` | Feature `cedar`: loads a Cedar schema and `.cedar` policies, validates them strictly, decides tool calls; any evaluation error denies |
 | `CedarEnforcer` | `enforcer.rs` | Core policy evaluation engine. Loads YAML rules, evaluates conditions. |
 | `DynamicContextCollector` | `context.rs` | Injects runtime context (timestamp, risk score) into policy evaluation. |
 | `HotReloadablePolicyEngine` | `hot_reload.rs` | Live policy updates using `arc-swap` for lock-free reads. |

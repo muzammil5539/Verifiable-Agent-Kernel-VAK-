@@ -73,7 +73,7 @@ pub mod traits;
 pub mod types;
 
 // Re-export commonly used types at the module level
-pub use self::config::{AuditLogFormat, DefaultPolicyDecision, KernelConfig};
+pub use self::config::{AuditLogFormat, DefaultPolicyDecision, KernelConfig, PolicyFormat};
 pub use self::custom_handlers::{
     CustomHandlerRegistry, FunctionHandler, HandlerError, HandlerMetadata, HandlerResult,
     ToolHandler,
@@ -99,7 +99,9 @@ pub const BUILTIN_TOOLS: &[&str] = &["echo", "calculator", "data_processor", "sy
 pub use self::audit_log::{AuditLogError, FileAuditLog, MemoryAuditLog, SqliteAuditLog};
 pub use self::budget::{AgentRateBudget, BudgetDecision, Unlimited};
 pub use self::identity::{AgentRecord, AgentStatus, InMemoryAgentRegistry, RegistryError};
-pub use self::pdp::{ConfigPolicy, EnforcerPolicy};
+#[cfg(feature = "cedar")]
+pub use self::pdp::CedarPolicy;
+pub use self::pdp::{ConfigPolicy, DenyAll, EnforcerPolicy};
 pub use self::ports::{AgentRegistry, AuditLog, Budget, PolicyDecisionPoint, PolicyRequest};
 
 use std::collections::hash_map::Entry;
@@ -593,8 +595,9 @@ impl Kernel {
     ///
     /// Delegates to the kernel's [`PolicyDecisionPoint`], with the agent's
     /// record as the principal. With [`Kernel::new`] that is chosen from
-    /// config by [`pdp::policy_from_config`]: a [`EnforcerPolicy`] when
-    /// `policy.policy_paths` names files (docs/adr/0001), otherwise a
+    /// config by [`pdp::policy_from_config`]: Cedar policies when
+    /// `policy.format` is `cedar` (docs/adr/0008), a [`EnforcerPolicy`] when
+    /// `policy.policy_paths` names YAML files (docs/adr/0001), otherwise a
     /// [`ConfigPolicy`] that denies unmatched tools by default.
     ///
     /// This is the Decide stage alone. It doesn't check the agent's status,
@@ -716,12 +719,17 @@ impl Kernel {
             &decision
         {
             let reason = reason.clone();
+            // Name the policy that denied, when the PDP says which did.
+            let policy_id = match &decision {
+                PolicyDecision::Deny {
+                    violated_policies: Some(policies),
+                    ..
+                } if !policies.is_empty() => policies.join(","),
+                _ => "default".to_string(),
+            };
             self.record_rejection(agent_id, session_id, &request, decision)
                 .await;
-            return Err(KernelError::PolicyViolation {
-                policy_id: "default".to_string(),
-                reason,
-            });
+            return Err(KernelError::PolicyViolation { policy_id, reason });
         }
         let decision_entry = AuditEntry::new(
             *agent_id,
