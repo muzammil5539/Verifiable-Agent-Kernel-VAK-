@@ -156,6 +156,13 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- **Breaking:** MCP `execute_skill` runs skills through `Kernel::execute` (finding I3).
+  It reported "executed successfully" for any skill name without running anything,
+  after loading unsigned skills from `./skills` outside the kernel. A refused, unknown
+  or failed skill is now an error result, and a successful one returns the kernel's
+  receipt. `create_vak_mcp_server` takes an `Arc<Kernel>`, and
+  `ExecuteSkillToolHandler::new` takes one too (it was a unit struct). Agent names map
+  to stable agent IDs (`mcp_agent_id`).
 - **Breaking:** `SecretScrubber::scrub_json` and `scrub_map` redact whole any value
   under a sensitive key, keeping the key; they used to scrub such values by pattern
   only, so `{"password": "hunter2"}` passed through. `is_sensitive_key` matches the

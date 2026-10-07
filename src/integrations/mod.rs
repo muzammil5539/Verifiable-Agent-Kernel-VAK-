@@ -43,7 +43,7 @@ pub use langchain::{
     LangChainConfig, LlmCall, LlmMessage, ReasoningContext, ToolCall, ToolExecutionRecord,
 };
 pub use mcp::{
-    create_vak_mcp_server, ContentItem, JsonRpcError, JsonRpcRequest, JsonRpcResponse, McpConfig,
-    McpError, McpResource, McpResult, McpServer, McpTool, ServerCapabilities, ServerInfo,
-    ToolCallResult, ToolHandler,
+    create_vak_mcp_server, mcp_agent_id, ContentItem, ExecuteSkillToolHandler, JsonRpcError,
+    JsonRpcRequest, JsonRpcResponse, McpConfig, McpError, McpResource, McpResult, McpServer,
+    McpTool, ServerCapabilities, ServerInfo, ToolCallResult, ToolHandler,
 };

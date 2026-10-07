@@ -160,11 +160,10 @@ request path. In order of leverage:
       "max_tokens" keep their values. Nothing on the kernel's path calls the
       scrubber yet.
 
-- [ ] **MCP `execute_skill` reports success without running anything** (finding I3
-      in `docs/architecture-v2.md`). `src/integrations/mcp.rs` returns
-      "executed successfully" for any skill name and loads unsigned skills with
-      `new_permissive_dev`, bypassing the kernel. Route it through
-      `Kernel::execute` and make an unknown or refused skill an error.
+- [x] **MCP `execute_skill` reports success without running anything** (finding I3
+      in `docs/architecture-v2.md`). It now runs every call through
+      `Kernel::execute` on the kernel `create_vak_mcp_server` is given; a refused,
+      unknown or failed skill is an error result.
 
 - [ ] **The Python SDK's native `Kernel` is not the kernel** (finding I4).
       `PyKernel` in `src/python.rs` has its own `PolicyEngine` and `AuditLogger`

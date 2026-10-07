@@ -23,23 +23,15 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use vak::integrations::mcp::{McpServer, McpConfig};
+//! use std::sync::Arc;
+//! use vak::integrations::mcp::create_vak_mcp_server;
+//! use vak::kernel::{Kernel, KernelConfig};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let config = McpConfig::default();
-//! let server = McpServer::new(config);
-//!
-//! // Register VAK tools
-//! server.register_simple_tool(
-//!     "verify_plan",
-//!     "Verify an agent's proposed plan",
-//!     serde_json::json!({"type": "object"}),
-//! ).await;
-//! server.register_simple_tool(
-//!     "execute_skill",
-//!     "Execute a WASM skill",
-//!     serde_json::json!({"type": "object"}),
-//! ).await;
+//! // `execute_skill` runs skills through this kernel: its policy, audit
+//! // log, skill registry and sandbox.
+//! let kernel = Arc::new(Kernel::new(KernelConfig::default()).await?);
+//! let server = create_vak_mcp_server(kernel).await;
 //!
 //! // Start the server
 //! server.serve_stdio().await?;
@@ -54,12 +46,16 @@
 //! - Gap Analysis Phase 5.1: MCP Server Implementation
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
+
+use crate::kernel::types::{AgentId, SessionId, ToolRequest as KernelToolRequest};
+use crate::kernel::Kernel;
 
 // ============================================================================
 // Error Types
@@ -811,8 +807,53 @@ impl ToolHandler for VerifyPlanToolHandler {
     }
 }
 
-/// VAK execute_skill tool handler - integrates with the SkillRegistry
-pub struct ExecuteSkillToolHandler;
+/// The `execute_skill` tool: runs a skill through [`Kernel::execute`].
+///
+/// The kernel's agent registry, policy decision point, audit log and skill
+/// registry (signed skills only, unless configured otherwise) decide whether
+/// the call runs, and its sandbox runs it. The answer carries the skill's
+/// result and the kernel's receipt, or says why nothing ran. (Finding I3:
+/// this tool used to report success without running anything, after loading
+/// unsigned skills from `./skills` outside the kernel.)
+///
+/// The Datalog safety engine is consulted first, as before, and can only
+/// refuse a call the kernel would otherwise decide.
+///
+/// MCP clients name agents with free-form strings. A string that is a UUID
+/// is used as the [`AgentId`]; any other string, including the default
+/// "anonymous", is mapped to a fixed UUID derived from it
+/// ([`mcp_agent_id`]), so the kernel's per-agent budgets and audit records
+/// follow the name. Each call is its own session.
+#[derive(Debug, Clone)]
+pub struct ExecuteSkillToolHandler {
+    kernel: Arc<Kernel>,
+}
+
+impl ExecuteSkillToolHandler {
+    /// A handler that runs skills on `kernel`.
+    #[must_use]
+    pub fn new(kernel: Arc<Kernel>) -> Self {
+        Self { kernel }
+    }
+}
+
+/// The [`AgentId`] the MCP server uses for an agent named `name`: `name`
+/// itself if it is a UUID, otherwise a version 8 UUID from the first 16
+/// bytes of SHA-256 over a fixed prefix and `name`.
+///
+/// The mapping is part of the audit record: changing the prefix would give
+/// every named agent a new identity, cutting it off from its earlier
+/// entries and budgets.
+#[must_use]
+pub fn mcp_agent_id(name: &str) -> AgentId {
+    if let Ok(id) = AgentId::parse(name) {
+        return id;
+    }
+    let digest = Sha256::digest(format!("vak.mcp.agent:{name}").as_bytes());
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    AgentId::from_uuid(uuid::Builder::from_custom_bytes(bytes).into_uuid())
+}
 
 #[async_trait::async_trait]
 impl ToolHandler for ExecuteSkillToolHandler {
@@ -829,64 +870,57 @@ impl ToolHandler for ExecuteSkillToolHandler {
         let params: ExecuteSkillArgs =
             serde_json::from_value(args).map_err(|e| McpError::InvalidParams(e.to_string()))?;
 
+        let failed = |text: String| {
+            Ok(ToolCallResult {
+                content: vec![ContentItem::Text { text }],
+                is_error: true,
+            })
+        };
+
         // Safety check before execution
         let mut safety_engine = crate::reasoner::datalog::SafetyEngine::new();
-        let agent_id = if params.agent_id.is_empty() {
+        let agent_name = if params.agent_id.is_empty() {
             "anonymous"
         } else {
             &params.agent_id
         };
 
         let verdict =
-            safety_engine.check_action_with_agent("execute_skill", &params.skill_id, agent_id);
+            safety_engine.check_action_with_agent("execute_skill", &params.skill_id, agent_name);
 
         if verdict.is_violation() {
             let violations = verdict.violations().unwrap_or(&[]);
             let details: Vec<String> = violations.iter().map(|v| v.description.clone()).collect();
-            return Ok(ToolCallResult {
-                content: vec![ContentItem::Text {
-                    text: format!(
-                        "Skill execution blocked by safety engine: {}",
-                        details.join("; ")
-                    ),
-                }],
-                is_error: true,
-            });
+            return failed(format!(
+                "Skill execution blocked by safety engine: {}",
+                details.join("; ")
+            ));
         }
 
-        // Attempt to load skill from registry
-        let skills_dir = std::path::PathBuf::from("./skills");
-        if skills_dir.exists() {
-            let mut registry = crate::sandbox::SkillRegistry::new_permissive_dev(skills_dir);
-            if let Ok(_ids) = registry.load_all_skills() {
-                if let Some(skill) = registry.get_skill_by_name(&params.skill_id) {
-                    let input_str = serde_json::to_string_pretty(&params.input).unwrap_or_default();
-                    return Ok(ToolCallResult {
-                        content: vec![ContentItem::Text {
-                            text: format!(
-                                "Skill '{}' (v{}) dispatched for execution.\n\
-                                 Description: {}\n\
-                                 Input: {}",
-                                skill.name, skill.version, skill.description, input_str,
-                            ),
-                        }],
-                        is_error: false,
-                    });
-                }
+        let agent = mcp_agent_id(agent_name);
+        let session = SessionId::new();
+        let request = KernelToolRequest::new(params.skill_id.clone(), params.input);
+        let outcome = self.kernel.execute(&agent, &session, request).await;
+        self.kernel.end_session(&session).await;
+
+        match outcome {
+            Ok(response) if response.success => {
+                let text = serde_json::to_string_pretty(&serde_json::json!({
+                    "result": response.result,
+                    "receipt": response.receipt,
+                }))?;
+                Ok(ToolCallResult {
+                    content: vec![ContentItem::Text { text }],
+                    is_error: false,
+                })
             }
+            Ok(response) => failed(format!(
+                "Skill '{}' failed: {}",
+                params.skill_id,
+                response.error.unwrap_or_default()
+            )),
+            Err(e) => failed(format!("Skill '{}' did not run: {e}", params.skill_id)),
         }
-
-        // Fallback: report skill execution with the provided input
-        let input_str = serde_json::to_string_pretty(&params.input).unwrap_or_default();
-        Ok(ToolCallResult {
-            content: vec![ContentItem::Text {
-                text: format!(
-                    "Skill '{}' executed successfully (agent: {}).\nInput: {}",
-                    params.skill_id, agent_id, input_str,
-                ),
-            }],
-            is_error: false,
-        })
     }
 
     fn definition(&self) -> McpTool {
@@ -919,8 +953,9 @@ impl ToolHandler for ExecuteSkillToolHandler {
 // Factory Functions
 // ============================================================================
 
-/// Create a fully configured MCP server with VAK tools
-pub async fn create_vak_mcp_server() -> McpServer {
+/// Create a fully configured MCP server with VAK tools. `execute_skill`
+/// runs skills through `kernel`.
+pub async fn create_vak_mcp_server(kernel: Arc<Kernel>) -> McpServer {
     let config = McpConfig::default();
     let server = McpServer::new(config);
 
@@ -929,7 +964,7 @@ pub async fn create_vak_mcp_server() -> McpServer {
         .register_tool_handler(Arc::new(VerifyPlanToolHandler))
         .await;
     server
-        .register_tool_handler(Arc::new(ExecuteSkillToolHandler))
+        .register_tool_handler(Arc::new(ExecuteSkillToolHandler::new(kernel)))
         .await;
 
     // Register VAK resources
@@ -988,7 +1023,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_tools_list() {
-        let server = create_vak_mcp_server().await;
+        let kernel = Kernel::new(crate::kernel::KernelConfig::default())
+            .await
+            .unwrap();
+        let server = create_vak_mcp_server(Arc::new(kernel)).await;
 
         let request = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),

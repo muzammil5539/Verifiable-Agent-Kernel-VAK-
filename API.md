@@ -1467,14 +1467,19 @@ let tools: Vec<ToolDefinition> = agent.available_tools();
 
 **Module:** `vak::integrations`
 
-JSON-RPC Model Context Protocol server.
+JSON-RPC Model Context Protocol server. `create_vak_mcp_server` registers the VAK
+tools; its `execute_skill` runs each call through `Kernel::execute` on the kernel it is
+given, and answers with the skill's result and the kernel's receipt, or an error result
+if the kernel refused or the skill failed. MCP agent names map to agent IDs with
+`mcp_agent_id`.
 
 ```rust
-use vak::integrations::McpServer;
+use std::sync::Arc;
+use vak::integrations::mcp::create_vak_mcp_server;
 
-let server = McpServer::new(kernel);
-server.register_tool(McpTool { /* ... */ })?;
-server.start("0.0.0.0:3000").await?;
+let kernel = Arc::new(Kernel::new(KernelConfig::default()).await?);
+let server = create_vak_mcp_server(kernel).await;
+server.serve_stdio().await?;
 ```
 
 ### LangChainAdapter

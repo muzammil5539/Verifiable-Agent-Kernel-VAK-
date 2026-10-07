@@ -85,7 +85,7 @@ stub or a placeholder.
 | S2 | Sycophancy detection | It measures entropy of the *final* votes. Unanimity is not sycophancy; the literature measures **opinion change after exposure to peers** (§4.7). | `src/swarm/sycophancy.rs:286-320` | S2 |
 | I1 | MCP server | Pinned to protocol `2024-11-05`. The current spec is `2026-07-28`, which uses a stateless core, header routing and hardened OAuth. | `src/integrations/mcp.rs:420` | S3 |
 | I2 | A2A protocol with signed messages | An in-process message bus, not the A2A v1.0 HTTP/JSON-RPC protocol. The `signature` field is never set or checked. | `src/swarm/a2a.rs:200` | S2 |
-| I3 | MCP `execute_skill` runs a sandboxed skill | Nothing runs. For any skill name it returns `is_error: false` with "Skill '…' executed successfully", the same fake success as K1. When `./skills` exists it loads skills with `new_permissive_dev` (unsigned allowed), outside the kernel's pipeline. Found during slice 1c; not yet fixed. | `src/integrations/mcp.rs:860,884` | S1 |
+| I3 | MCP `execute_skill` runs a sandboxed skill | Nothing ran. For any skill name it returned `is_error: false` with "Skill '…' executed successfully", the same fake success as K1. When `./skills` existed it loaded skills with `new_permissive_dev` (unsigned allowed), outside the kernel's pipeline. Found during slice 1c. **Fixed:** `ExecuteSkillToolHandler` holds a `Kernel` and runs every call through `Kernel::execute`, so the kernel's policy, audit log, signed-skill registry and sandbox apply; a refused, unknown or failed skill is `is_error: true`, and a successful one returns the kernel's receipt (`tests/mcp_execute_skill.rs`). `create_vak_mcp_server` takes the kernel. | `src/integrations/mcp.rs` (`ExecuteSkillToolHandler`) | S1 |
 | I4 | The Python SDK's `Kernel` enforces policy and audits | `vak.Kernel` (`PyKernel`) doesn't use `vak::kernel::Kernel`. It has its own `PolicyEngine` and `AuditLogger`, and `execute_tool` returns `success: "true"` with an echo of its arguments without running anything: the same fake success as K1. Found during slice 1e; not yet fixed. | `src/python.rs:324,526-576` | S1 |
 | D1 | Security audit status table: "✅ Audited" | No external audit is referenced anywhere in the repo. | `src/lib.rs:88-95` | S2 |
 
@@ -452,8 +452,8 @@ Phase 1 keeps one crate but gates heavy and experimental modules behind features
 Departures from the plan above, with reasons:
 
 - `integrations` is off by default: all three adapters embed the `reasoner` (the MCP server
-  uses the Datalog engine; LangChain and AutoGPT use the PRM), and the MCP server carries
-  finding I3.
+  uses the Datalog engine; LangChain and AutoGPT use the PRM). The MCP server carried
+  finding I3 until it was routed through `Kernel::execute`.
 - There is no `sqlite` feature. Since slice 1e (ADR 0007) the kernel's own durable log can
   be SQLite (`SqliteAuditLog`), so `rusqlite` belongs to the core.
 - `rs_merkle` was a dependency no module used. It is removed.
