@@ -151,17 +151,6 @@ class _AgentContext:
         """Evaluate a policy in this agent's context."""
         return self._kernel.evaluate_policy(self._agent_id, action, context)
 
-    def create_audit_entry(
-        self,
-        action: str,
-        resource: str,
-        **kwargs: Any,
-    ) -> str:
-        """Create an audit entry in this agent's context."""
-        return self._kernel.create_audit_entry(
-            self._agent_id, action, resource, **kwargs
-        )
-
     # Memory convenience methods
 
     def store_memory(

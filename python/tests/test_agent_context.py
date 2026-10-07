@@ -73,23 +73,9 @@ class TestAgentContext:
         )
         assert result == expected_decision
 
-    def test_create_audit_entry(self, agent_context, mock_kernel, agent_id):
-        """Test that create_audit_entry delegates correctly to the kernel."""
-        # Setup
-        action = "access"
-        resource = "db"
-        details = {"key": "val"}
-        expected_entry_id = "audit-456"
-        mock_kernel.create_audit_entry.return_value = expected_entry_id
-
-        # Execute
-        result = agent_context.create_audit_entry(action, resource, details=details)
-
-        # Verify
-        mock_kernel.create_audit_entry.assert_called_once_with(
-            agent_id, action, resource, details=details
-        )
-        assert result == expected_entry_id
+    def test_has_no_create_audit_entry(self, agent_context):
+        """Only calls through the kernel write its audit log (ADR 0011)."""
+        assert not hasattr(agent_context, "create_audit_entry")
 
     def test_store_memory(self, agent_context, mock_kernel):
         """Test that store_memory delegates correctly to the kernel."""

@@ -179,13 +179,16 @@ request path. In order of leverage:
       `Kernel::execute` on the kernel `create_vak_mcp_server` is given; a refused,
       unknown or failed skill is an error result.
 
-- [ ] **The Python SDK's native `Kernel` is not the kernel** (finding I4).
-      `execute_tool` now runs through `Kernel::execute` and fails closed, in the
-      stub too (ADR 0011). Still to do: move `evaluate_policy`, the audit-log
-      methods (with the kernel's receipts and inclusion proofs) and the skill
-      registry methods onto the kernel, then remove `PyKernel`'s own
-      `PolicyEngine` and `AuditLogger` (`docs/adr/0007`). That also clears the 49
-      Python tests that fail against the native module.
+- [x] **The Python SDK's native `Kernel` is not the kernel** (finding I4, ADR
+      0011). Every SDK answer about policy, tools, skills or the audit log comes
+      from the Rust kernel; methods with no kernel equivalent are removed;
+      without the native module those methods raise. The whole Python suite runs
+      against the native module in CI.
+
+- [ ] **Per-call memory limits.** `ToolRequest` has no memory field, so the
+      Python binding refuses a `memory_limit` below the kernel's per-skill
+      limit rather than enforce it. Add the field (a public-struct change) with
+      the Guard port's per-call constraints, and let the binding pass it.
 
 - [ ] **Python SDK silently substitutes a fake kernel.** `VakKernel` falls back
       to `_StubKernel` — a pure-Python in-memory imitation with no policy

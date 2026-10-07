@@ -8,13 +8,17 @@ when they ``pip install vak`` and define their own policies,
 constraints, skills, and agent configurations.
 
 Sections:
-    1. Kernel configuration with memory and security settings
-    2. Policy rules (Cedar-style ABAC)
-    3. Constraints and safety rules (neuro-symbolic reasoner)
-    4. Skill registration (WASM sandboxed tools)
-    5. Agent registration and tool execution
+    1. Kernel configuration: the security settings the kernel enforces
+    2. Policy rules evaluated in Python with the standalone PolicyEngine
+    3. Constraints and safety rules, checked in Python (the kernel doesn't
+       enforce them)
+    4. WASM skills, loaded into the kernel from signed manifests
+    5. Agent registration and tool execution through the kernel
     6. Swarm configuration (multi-agent consensus)
     7. Audit trail querying
+
+Policy decisions, tool runs and audit records come from the Rust kernel in
+the native module (ADR 0011). Build it first with ``maturin develop``.
 
 Run with:
     python examples/llm_project_example.py
@@ -41,8 +45,11 @@ config = KernelConfig(
         enable_sandboxing=True,
         default_policy_effect="deny",       # deny by default — explicit allow
         signature_verification=True,         # enabled by default for security
-        max_memory_bytes=256 * 1024 * 1024,  # 256 MB per tool
+        # Memory per skill. The kernel takes no per-call limit, so agents
+        # must not ask for less than this (AgentConfig defaults to 128 MiB).
+        max_memory_bytes=128 * 1024 * 1024,
         sandbox_timeout_ms=10000,            # 10 s per tool call
+        blocked_tools=["system_info"],       # the kernel refuses these
     ),
     audit=AuditConfig(
         enabled=True,
@@ -140,8 +147,11 @@ rules = [
     ),
 ]
 
-kernel.load_policies(rules)
-print(f"Loaded {len(rules)} policy rules")
+# The kernel's own policy comes from its configuration: the allowed and
+# blocked tools above, or YAML/Cedar policy files (policy.policy_paths).
+# These Python rules are evaluated with the standalone PolicyEngine in
+# section 8; the kernel doesn't consult them.
+print(f"Defined {len(rules)} policy rules for the standalone engine")
 
 # =============================================================================
 # 4. Define constraints and safety rules (reasoner)
@@ -149,8 +159,19 @@ print(f"Loaded {len(rules)} policy rules")
 
 from vak.reasoner import Constraint, SafetyRule, ReasonerConfig, PRMConfig
 
-# Add individual constraints
-kernel.add_constraint(
+# Constraints and safety rules live in a ReasonerConfig and are checked in
+# Python when you ask. The kernel doesn't enforce them.
+reasoner = ReasonerConfig(
+    prm=PRMConfig(
+        enabled=True,
+        threshold=0.7,
+        score_components=["logic", "safety", "relevance"],
+    ),
+    enable_formal_verification=True,
+    enable_tree_search=False,
+)
+
+reasoner.add_constraint(
     Constraint(
         name="max-steps",
         kind="max_steps",
@@ -159,7 +180,7 @@ kernel.add_constraint(
     )
 )
 
-kernel.add_constraint(
+reasoner.add_constraint(
     Constraint(
         name="no-secrets",
         kind="forbidden_files",
@@ -168,7 +189,7 @@ kernel.add_constraint(
     )
 )
 
-kernel.add_constraint(
+reasoner.add_constraint(
     Constraint(
         name="budget-cap",
         kind="max_budget",
@@ -178,7 +199,7 @@ kernel.add_constraint(
 )
 
 # Add safety rules
-kernel.add_safety_rule(
+reasoner.add_safety_rule(
     SafetyRule(
         name="no-delete",
         description="Block all file deletion operations",
@@ -188,7 +209,7 @@ kernel.add_safety_rule(
     )
 )
 
-kernel.add_safety_rule(
+reasoner.add_safety_rule(
     SafetyRule(
         name="warn-external-api",
         description="Warn when calling external APIs",
@@ -198,20 +219,6 @@ kernel.add_safety_rule(
     )
 )
 
-# Or configure the whole reasoner at once
-reasoner = ReasonerConfig(
-    constraints=kernel.reasoner.constraints,       # keep what we added
-    safety_rules=kernel.reasoner.safety_rules,     # keep what we added
-    prm=PRMConfig(
-        enabled=True,
-        threshold=0.7,
-        score_components=["logic", "safety", "relevance"],
-    ),
-    enable_formal_verification=True,
-    enable_tree_search=False,
-)
-kernel.configure_reasoner(reasoner)
-
 print(f"Configured reasoner: {len(reasoner.constraints)} constraints, "
       f"{len(reasoner.safety_rules)} safety rules, PRM={'on' if reasoner.prm.enabled else 'off'}")
 
@@ -219,54 +226,15 @@ print(f"Configured reasoner: {len(reasoner.constraints)} constraints, "
 # 5. Register WASM skills (sandboxed tools)
 # =============================================================================
 
-from vak.skills import SkillManifest, SkillPermissions
+# Skills are loaded into the kernel from their manifest files, verified as at
+# startup: signed by a trusted publisher unless signature_verification is
+# off. Loading authorizes no one; the kernel's policy still decides each call.
+from pathlib import Path
 
-# A calculator skill — low risk, no file/network access
-calculator_skill = SkillManifest(
-    id="calculator",
-    name="Calculator",
-    version="1.0.0",
-    description="Arithmetic operations in a sandboxed environment",
-    actions=["add", "subtract", "multiply", "divide"],
-    risk_level="low",
-    permissions=SkillPermissions(
-        deny_network=True,
-        deny_read_files=["*"],
-        deny_write_files=["*"],
-        max_memory_bytes=16 * 1024 * 1024,   # 16 MB
-        max_execution_ms=1000,
-    ),
-)
-
-# A code analyzer skill — can read source files
-analyzer_skill = SkillManifest(
-    id="code-analyzer",
-    name="Code Analyzer",
-    version="2.1.0",
-    description="Static analysis of source code for vulnerabilities",
-    wasm_path="skills/code_analyzer.wasm",
-    actions=["analyze", "lint", "format"],
-    risk_level="medium",
-    permissions=SkillPermissions(
-        allow_read_files=["*.py", "*.js", "*.ts", "*.rs"],
-        deny_write_files=["*"],
-        deny_network=True,
-        max_memory_bytes=64 * 1024 * 1024,   # 64 MB
-        max_execution_ms=30000,
-    ),
-    input_schema={
-        "type": "object",
-        "properties": {
-            "file_path": {"type": "string"},
-            "language": {"type": "string", "enum": ["python", "javascript", "typescript", "rust"]},
-        },
-        "required": ["file_path"],
-    },
-)
-
-kernel.register_skill(calculator_skill)
-kernel.register_skill(analyzer_skill)
-print(f"Registered skills: {kernel.list_skills()}")
+manifest = Path("skills/calculator/skill.yaml")
+if manifest.exists():
+    print(f"Loaded skill: {kernel.load_skill(manifest)}")
+print(f"Kernel skills: {kernel.list_skills()}")
 
 # =============================================================================
 # 6. Register agents and execute tools
@@ -282,7 +250,7 @@ admin_agent = AgentConfig(
     role="admin",
     trusted=True,
     capabilities=["*"],
-    allowed_tools=["calculator", "code-analyzer"],
+    allowed_tools=["echo", "calculator", "code-analyzer", "system_info"],
 )
 kernel.register_agent(admin_agent)
 
@@ -293,49 +261,42 @@ analyst_agent = AgentConfig(
     role="analyst",
     trusted=False,
     capabilities=["data.read", "compute.basic"],
-    allowed_tools=["calculator"],
+    allowed_tools=["echo"],
 )
 kernel.register_agent(analyst_agent)
 
 print(f"Registered agents: {kernel.list_agents()}")
 
-# Execute a tool as the admin
+# Execute a tool as the admin. The tool gets {"action": ..., "params": ...}.
 response = kernel.execute_tool(
     agent_id="admin-bot",
-    tool_id="calculator",
-    action="add",
-    parameters={"a": 42, "b": 58},
+    tool_id="echo",
+    action="summarize",
+    parameters={"report": "q4"},
 )
-print(f"\nAdmin calculator: success={response.success}, result={response.result}")
+print(f"\nAdmin echo: success={response.success}, result={response.result}")
+print(f"Receipt: decision leaf {response.receipt['decision_leaf']}, "
+      f"outcome leaf {response.receipt['outcome_leaf']}")
 
-# Execute a tool as the analyst
-response = kernel.execute_tool(
-    agent_id="analyst-bot",
-    tool_id="calculator",
-    action="multiply",
-    parameters={"a": 7, "b": 6},
-)
-print(f"Analyst calculator: success={response.success}, result={response.result}")
-
-# Demonstrate safety rule blocking
-print("\nTesting safety rule (file.delete should be blocked):")
+# The analyst's own scope is ["echo"]: the kernel refuses anything else.
+print("\nAnalyst calling a tool outside its scope:")
 try:
-    kernel.execute_tool(
-        agent_id="admin-bot",
-        tool_id="code-analyzer",
-        action="delete",     # matches "file.delete" pattern? No, but "tool.delete"
-        parameters={"file": "important.py"},
-    )
-    print("  Tool executed (action didn't match safety pattern)")
+    kernel.execute_tool("analyst-bot", "calculator", "multiply", {"a": 7, "b": 6})
 except PolicyViolationError as exc:
-    print(f"  Blocked by safety rule: {exc.decision.reason}")
+    print(f"  Refused by the kernel [{exc.decision.policy_id}]: {exc.decision.reason}")
+
+# system_info is blocked in the kernel's configuration.
+try:
+    kernel.execute_tool("admin-bot", "system_info", "read", {})
+except PolicyViolationError as exc:
+    print(f"  Refused by the kernel [{exc.decision.policy_id}]: {exc.decision.reason}")
 
 # =============================================================================
 # 7. Check constraints
 # =============================================================================
 
 # Simulate checking constraints against current execution state
-results = kernel.check_constraints({
+results = reasoner.check_constraints({
     "step_count": 42,
     "budget_spent": 12.50,
     "target_file": "app.py",
@@ -348,7 +309,7 @@ for r in results:
     print(f"  [{status}] {r.constraint_name}{msg}")
 
 # Check with a violation
-results = kernel.check_constraints({
+results = reasoner.check_constraints({
     "step_count": 150,        # exceeds max_steps=100
     "budget_spent": 75.0,     # exceeds budget_cap=50
     "target_file": ".env",    # forbidden file
@@ -392,11 +353,11 @@ temp_agent = AgentConfig(
     agent_id="temp-worker",
     name="Temporary Worker",
     capabilities=["compute.basic"],
-    allowed_tools=["calculator"],
+    allowed_tools=["echo"],
 )
 
 with kernel.session(temp_agent) as k:
-    resp = k.execute_tool("temp-worker", "calculator", "add", {"a": 1, "b": 1})
+    resp = k.execute_tool("temp-worker", "echo", "add", {"a": 1, "b": 1})
     print(f"\nSession tool call: {resp.result}")
 # temp-worker is automatically unregistered here
 
@@ -439,23 +400,14 @@ print(f"\nSwarm config: protocol={swarm.protocol.value}, "
       f"token_budget={swarm.voting.token_budget}")
 
 # =============================================================================
-# 11. Custom policy hooks (Python callbacks)
+# 11. Audit trail
 # =============================================================================
 
-def rate_limit_hook(agent_id: str, action: str, context: dict) -> None:
-    """
-    Return a PolicyDecision to override, or None to fall through to rules.
-
-    This hook could check Redis, a rate limiter, an external auth service, etc.
-    """
-    if context.get("request_count", 0) > 1000:
-        return deny(
-            policy_id="rate-limit",
-            reason=f"Agent {agent_id} exceeded 1000 requests",
-        )
-    return None
-
-kernel.add_policy_hook(rate_limit_hook)
+# Every call above, refused or run, is in the kernel's hash-chained log.
+for entry in kernel.get_audit_logs(agent_id="analyst-bot"):
+    print(f"  {entry.level.value:7} {entry.action}: {entry.policy_decision.effect.value}")
+print(f"Audit chain verifies: {kernel.verify_audit_chain()}")
+print(f"Signed tree head: {kernel.export_audit_receipt()['head']}")
 
 # =============================================================================
 # Cleanup

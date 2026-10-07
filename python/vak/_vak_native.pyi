@@ -192,157 +192,94 @@ class AuditEntry:
 
 
 class Kernel:
-    """The VAK Kernel — the central coordinator for policy, audit, and tools.
-
-    The kernel manages agent registration, ABAC policy evaluation,
-    WASM-sandboxed tool execution, and cryptographic audit logging.
+    """The VAK kernel: every method answers from one Rust ``Kernel``, its
+    policy decision point, audit log and skill registry (ADR 0011). The
+    binding keeps no policy engine, audit log or skill registry of its own.
 
     Example::
 
         from vak._vak_native import Kernel
 
         kernel = Kernel.default()
-        assert kernel.is_initialized()
-
         kernel.register_agent("agent-1", "My Agent", {"role": "analyst"})
-        decision = kernel.evaluate_policy("agent-1", "read", {"resource": "/data"})
+        decision = kernel.evaluate_policy("agent-1", "echo", {})
+        result = kernel.execute_tool("echo", "agent-1", "say", {}, 5000, 128 << 20)
     """
 
     # -- Lifecycle --------------------------------------------------------
 
     @staticmethod
     def default() -> "Kernel":
-        """Create a kernel with default configuration.
-
-        Returns:
-            A fully initialised ``Kernel`` instance.
-
-        Raises:
-            RuntimeError: If kernel initialisation fails.
-        """
+        """A kernel with the default configuration, skills getting 128 MiB."""
         ...
 
     @staticmethod
     def from_config(path: str) -> "Kernel":
-        """Create a kernel from a YAML/JSON configuration file.
-
-        Args:
-            path: Filesystem path to the configuration file.
-
-        Returns:
-            A configured ``Kernel`` instance.
+        """A kernel configured by the file at ``path`` (YAML, JSON or TOML).
 
         Raises:
-            RuntimeError: If the file cannot be read or parsed.
+            ValueError: If the file can't be read or parsed. There is no
+                fallback to the default configuration.
+        """
+        ...
+
+    @staticmethod
+    def from_settings(settings: Dict[str, Any]) -> "Kernel":
+        """A kernel with the default configuration and these settings.
+
+        Keys: ``name``, ``allowed_tools`` (non-empty replaces the default
+        allowlist), ``blocked_tools``, ``default_decision`` ("allow" or
+        "deny"), ``policy_enabled``, ``policy_paths``, ``enable_sandboxing``,
+        ``allow_unsigned_skills``, ``timeout_ms``, ``skill_memory_mb``,
+        ``max_requests_per_minute``, ``audit_log_path``.
+
+        Raises:
+            ValueError: For an unknown key or a wrong type: no setting is
+                silently dropped.
         """
         ...
 
     def is_initialized(self) -> bool:
-        """Return ``True`` if the kernel has been successfully initialised."""
+        """Return ``True`` until ``shutdown``."""
         ...
 
     def shutdown(self) -> None:
-        """Gracefully shut down the kernel, flushing audit logs.
-
-        After shutdown, the kernel cannot be used until reinitialised.
-        """
+        """End every registered agent's session and stop answering."""
         ...
 
-    # -- Agent Management -------------------------------------------------
+    # -- Agents -----------------------------------------------------------
 
-    def register_agent(
-        self, agent_id: str, name: str, config: Dict[str, Any]
-    ) -> None:
-        """Register a new agent with the kernel.
-
-        Args:
-            agent_id: Unique identifier for the agent.
-            name: Human-readable agent name.
-            config: Agent attributes (role, department, clearance, etc.).
-
-        Raises:
-            ValueError: If ``agent_id`` is already registered.
-            RuntimeError: If the kernel is not initialised.
-        """
+    def register_agent(self, agent_id: str, name: str, config: Dict[str, Any]) -> None:
+        """Register an agent. ``config["allowed_tools"]``, if not empty,
+        limits it to those tools; ``config["role"]`` and
+        ``config["attributes"]`` become attributes policy can read."""
         ...
 
     def unregister_agent(self, agent_id: str) -> None:
-        """Remove a previously registered agent.
-
-        Args:
-            agent_id: The agent to unregister.
+        """Unregister an agent and end its session.
 
         Raises:
-            ValueError: If the agent is not found.
-            RuntimeError: If the kernel is not initialised.
+            ValueError: If the agent is not registered.
         """
         ...
 
     # -- Policy -----------------------------------------------------------
 
     def evaluate_policy(
-        self,
-        agent_id: str,
-        action: str,
-        context: Dict[str, Any],
+        self, agent_id: str, action: str, context: Dict[str, Any]
     ) -> Dict[str, str]:
-        """Evaluate an ABAC policy for the given action.
-
-        Args:
-            agent_id: The agent requesting the action.
-            action: The action to evaluate (e.g. ``"read"``, ``"write"``).
-            context: Context attributes including ``"resource"`` key.
+        """Ask the kernel whether the agent may call the tool ``action`` with
+        ``context`` as its parameters. Nothing runs or is recorded.
 
         Returns:
-            A dict with ``"effect"``, ``"policy_id"``, and ``"reason"`` keys.
+            ``{"effect": "allow" | "deny", "policy_id": ..., "reason": ...}``.
 
         Raises:
-            RuntimeError: If the kernel is not initialised.
             ValueError: If the agent is not registered.
         """
         ...
 
-    def add_policy_rule(self, rule_dict: Dict[str, Any]) -> None:
-        """Add a new policy rule to the engine.
-
-        Args:
-            rule_dict: A dictionary describing the rule (effect, action,
-                resource patterns, conditions, etc.).
-
-        Raises:
-            ValueError: If the rule dictionary is malformed.
-            RuntimeError: If the kernel is not initialised.
-        """
-        ...
-
-    def validate_policy_config(self) -> List[str]:
-        """Validate the current policy configuration.
-
-        Returns:
-            A list of warning messages. An empty list means valid.
-
-        Raises:
-            RuntimeError: If the kernel is not initialised.
-        """
-        ...
-
-    def has_allow_policies(self) -> bool:
-        """Return ``True`` if at least one ``allow`` rule is defined.
-
-        Raises:
-            RuntimeError: If the kernel is not initialised.
-        """
-        ...
-
-    def policy_rule_count(self) -> int:
-        """Return the number of loaded policy rules.
-
-        Raises:
-            RuntimeError: If the kernel is not initialised.
-        """
-        ...
-
-    # -- Tool / Skill Execution -------------------------------------------
+    # -- Tools and skills -------------------------------------------------
 
     def execute_tool(
         self,
@@ -361,176 +298,74 @@ class Kernel:
         call stops at ``timeout_ms`` or the kernel's own limit, whichever is
         sooner.
 
-        Args:
-            tool_id: The tool or skill to run.
-            agent_id: The agent requesting execution (registered here).
-            action: The operation to perform (skill-specific).
-            params: Input parameters for the tool.
-            timeout_ms: Time limit for this call, in milliseconds.
-            memory_limit: Memory limit in bytes. The kernel gives every skill
-                128 MiB and takes no per-call limit, so a smaller value is
-                refused.
-
         Returns:
-            A dictionary with ``"request_id"`` (str), ``"success"`` (bool),
-            ``"result"`` (the tool's output), ``"error"`` (str or None),
-            ``"execution_time_ms"`` (int) and ``"receipt"`` (the kernel's
-            audit receipt). A tool that ran and failed has ``success`` False.
+            ``request_id`` (str), ``success`` (bool), ``result`` (the tool's
+            output), ``error`` (str or None), ``execution_time_ms`` (int)
+            and ``receipt`` (the kernel's audit receipt).
 
         Raises:
             PermissionError: The kernel's policy refused the call; ``args``
                 is ``(policy_id, reason)``. Nothing ran.
             ValueError: The agent is not registered, or ``memory_limit`` is
-                below 128 MiB. Nothing ran.
-            RuntimeError: The kernel is not initialised, or refused the call
-                for another reason (an unknown tool, say). Nothing ran.
+                below what the kernel gives every skill. Nothing ran.
+            RuntimeError: The kernel refused the call for another reason (an
+                unknown tool, say). Nothing ran.
         """
         ...
 
     def list_tools(self) -> List[str]:
-        """List all enabled tool/skill IDs.
+        """The kernel's tools: built-ins, host handlers and loaded skills."""
+        ...
 
-        Returns:
-            A list of tool identifier strings.
+    def list_skills(self) -> List[str]:
+        """The names of the loaded WASM skills."""
+        ...
+
+    def load_skill(self, manifest_path: str) -> str:
+        """Load a WASM skill from its manifest file, verified as at startup.
+        Returns its name. Loading authorizes no one to call it.
+
+        Raises:
+            ValueError: If the manifest or module can't be read or doesn't
+                verify. Nothing is loaded.
         """
         ...
 
-    def register_skill(
-        self,
-        skill_id: str,
-        name: str,
-        description: str,
-        version: str,
-    ) -> None:
-        """Register a new skill/tool with the kernel.
+    def get_skill(self, name: str) -> Optional[Dict[str, Any]]:
+        """The manifest of the loaded skill called ``name``, or None."""
+        ...
 
-        Args:
-            skill_id: Unique skill identifier.
-            name: Human-readable name.
-            description: What the skill does.
-            version: Semantic version string.
+    # -- Audit log --------------------------------------------------------
 
-        Raises:
-            RuntimeError: If the kernel is not initialised.
+    def get_audit_logs(self, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """The kernel's audit entries, oldest first. ``filters`` may set
+        ``agent_id``, ``action`` (a tool), ``level``, ``limit`` (default
+        100) and ``offset``.
+
+        Each entry has ``entry_id``, ``timestamp``, ``level`` (derived:
+        "warning" for a refusal, "error" for a failed run, else "info"),
+        ``agent_id``, ``action`` and ``resource`` (the tool),
+        ``policy_decision``, ``details`` (``kind`` "decision" or "outcome",
+        ``leaf_index``, ``session_id``, ``hash``, ``previous_hash``,
+        ``outcome``) and ``parent_entry_id`` (an outcome's decision).
         """
         ...
 
-    def unregister_skill(self, skill_id: str) -> None:
-        """Remove a previously registered skill.
-
-        Args:
-            skill_id: The skill to remove.
-
-        Raises:
-            ValueError: If the skill is not found.
-            RuntimeError: If the kernel is not initialised.
-        """
-        ...
-
-    def set_skill_enabled(self, skill_id: str, enabled: bool) -> None:
-        """Enable or disable a registered skill.
-
-        Args:
-            skill_id: The skill to modify.
-            enabled: ``True`` to enable, ``False`` to disable.
-
-        Raises:
-            ValueError: If the skill is not found.
-            RuntimeError: If the kernel is not initialised.
-        """
-        ...
-
-    def get_skill_info(
-        self, skill_id: str
-    ) -> Optional[Dict[str, str]]:
-        """Return metadata about a skill, or ``None`` if not found.
-
-        Args:
-            skill_id: The skill to query.
-
-        Returns:
-            A dict with ``"id"``, ``"name"``, ``"description"``,
-            ``"version"``, and ``"enabled"`` keys, or ``None``.
-
-        Raises:
-            RuntimeError: If the kernel is not initialised.
-        """
-        ...
-
-    # -- Audit ------------------------------------------------------------
-
-    def get_audit_logs(
-        self, filters: Dict[str, Any]
-    ) -> List[Dict[str, str]]:
-        """Query audit log entries matching the given filters.
-
-        Args:
-            filters: Key-value filter criteria. Supported keys:
-                ``"agent_id"``, ``"limit"``.
-
-        Returns:
-            A list of matching audit entries as dictionaries.
-
-        Raises:
-            RuntimeError: If the kernel is not initialised.
-        """
-        ...
-
-    def get_audit_entry(
-        self, entry_id: str
-    ) -> Optional[Dict[str, str]]:
-        """Retrieve a single audit entry by its ID.
-
-        Args:
-            entry_id: The numeric entry ID as a string.
-
-        Returns:
-            The entry as a dictionary, or ``None`` if not found.
-
-        Raises:
-            RuntimeError: If the kernel is not initialised.
-            ValueError: If ``entry_id`` is not a valid ID.
-        """
-        ...
-
-    def create_audit_entry(
-        self, entry_data: Dict[str, Any]
-    ) -> str:
-        """Create a new audit entry and return its ID.
-
-        Args:
-            entry_data: Entry fields including ``"agent_id"``, ``"action"``,
-                ``"resource"``.
-
-        Returns:
-            The unique ID of the newly created entry.
-
-        Raises:
-            RuntimeError: If the kernel is not initialised.
-        """
+    def get_audit_entry(self, entry_id: str) -> Optional[Dict[str, Any]]:
+        """The audit entry with this id, as in ``get_audit_logs``, or None."""
         ...
 
     def verify_audit_chain(self) -> bool:
-        """Verify the integrity of the entire audit hash chain.
-
-        Returns:
-            ``True`` if the chain is intact and tamper-free.
-
-        Raises:
-            RuntimeError: If the kernel is not initialised.
-        """
+        """Whether no audit entry has been altered, reordered or spliced in."""
         ...
 
-    def get_audit_root_hash(self) -> Optional[str]:
-        """Return the current root hash of the audit chain.
+    def get_audit_root_hash(self) -> str:
+        """The audit Merkle tree's root, as hex (RFC 9162)."""
+        ...
 
-        Returns:
-            The hex-encoded hash of the last entry, or ``None``
-            if the chain is empty.
-
-        Raises:
-            RuntimeError: If the kernel is not initialised.
-        """
+    def export_audit_receipt(self) -> Dict[str, Any]:
+        """The kernel's signed audit tree head: ``head`` (``size``, ``root``),
+        ``timestamp_ms``, ``signature`` and ``public_key``."""
         ...
 
     # -- Misc -------------------------------------------------------------

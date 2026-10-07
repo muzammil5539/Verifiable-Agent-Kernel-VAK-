@@ -1,9 +1,12 @@
 """
 VAK Neuro-Symbolic Reasoner
 
-Configure the verification and safety layer for your AI agents.
-The reasoner mediates between the LLM (neural) and execution (symbolic),
-enforcing formal constraints and scoring reasoning quality.
+Constraints, safety rules and PRM settings, evaluated in Python when you
+call ``ReasonerConfig.check_constraints`` or ``check_safety``. The kernel
+does not enforce them (ADR 0011): ``VakKernel`` takes no reasoner
+configuration, and its decisions come from its own policy. To stop an agent
+from calling a tool, configure the kernel (blocked tools, an agent's
+``allowed_tools``, policy files).
 
 Components:
     - **Constraints**: Formal rules that actions must satisfy (max steps, forbidden files, etc.).

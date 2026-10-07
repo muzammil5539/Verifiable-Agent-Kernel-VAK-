@@ -166,6 +166,23 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- **Breaking:** the Python SDK answers only from the kernel (finding I4, ADR 0011).
+  - **What goes through the kernel.** `evaluate_policy`, `list_tools`, the audit-log
+    methods (`get_audit_logs`, `get_audit_entry`, `verify_audit_chain`,
+    `get_audit_root_hash`, `export_audit_receipt`) and skills (`load_skill`,
+    `list_skills`, `get_skill`) read the Rust kernel's policy decision point, audit log
+    and skill registry.
+  - **What reaches the kernel's configuration.** `KernelConfig` security and policy
+    settings, through the new native `Kernel.from_settings`, which rejects unknown keys.
+    `register_agent` passes `allowed_tools` as the agent's scope, and `role` and
+    `attributes` for policy.
+  - **Removed from `VakKernel`.** `create_audit_entry`, `add_policy_hook`,
+    `remove_policy_hook`, `load_policies`, `policy_engine`, `add_safety_rule`,
+    `add_constraint`, `check_constraints`, `configure_reasoner`, `reasoner` and
+    `register_skill`. They answered from engines the kernel never consulted.
+  - **Without the native module,** these methods raise. The stub is deleted.
+  - **Defaults.** `ToolRequest.memory_limit_bytes` defaults to 128 MiB.
+  - **Bug fix.** `get_audit_logs` compares naive time bounds as local time.
 - **Breaking:** the Python SDK runs tools through `Kernel::execute` (finding I4, ADR
   0011). The native `Kernel.execute_tool` returned `success: "true"` without running
   anything, and so did the stub the SDK falls back to without the native module.

@@ -41,7 +41,9 @@ class ToolRequest:
     action: str
     parameters: dict[str, Any] = field(default_factory=dict)
     timeout_ms: int = 5000
-    memory_limit_bytes: int = 64 * 1024 * 1024  # 64 MB default
+    # 128 MiB, as AgentConfig and the native kernel's per-skill limit: the
+    # kernel refuses a call that asks for less than it enforces.
+    memory_limit_bytes: int = 128 * 1024 * 1024
     request_id: str | None = None
 
 

@@ -47,15 +47,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 #[cfg(feature = "python")]
-use crate::kernel::types::{AgentId, KernelError, SessionId, ToolRequest};
+use crate::kernel::types::{AgentId, KernelError, PolicyDecision, SessionId, ToolRequest};
 #[cfg(feature = "python")]
 use crate::kernel::{AgentRecord, Kernel, KernelConfig};
-
-#[cfg(feature = "python")]
-use crate::policy::{PolicyContext, PolicyEngine, PolicyRule};
-
-#[cfg(feature = "python")]
-use crate::audit::{AuditDecision, AuditLogger};
 
 /// Python-visible risk level classification for tools and operations.
 ///
@@ -324,61 +318,52 @@ fn py_to_json(obj: Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
     )))
 }
 
-/// The memory limit, in MiB, the native kernel puts on every WASM skill:
+/// The memory limit, in MiB, [`PyKernel::default`] gives every WASM skill:
 /// the Python SDK's default `memory_limit_bytes` for an agent.
 ///
 /// The kernel takes no per-call memory limit, so `execute_tool` refuses a
-/// call that asks for less than this rather than run it under a looser
-/// limit than asked.
+/// call that asks for less than the kernel enforces rather than run it
+/// under a looser limit than asked.
 #[cfg(feature = "python")]
 pub const NATIVE_SKILL_MEMORY_MB: u64 = 128;
 
-/// An agent registered with the native kernel: its ID there, and the session
-/// its calls run in.
+/// An agent registered with the native kernel: the kernel's identity for
+/// it, and the session its calls run in.
 #[cfg(feature = "python")]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct NativeAgent {
     id: AgentId,
     session: SessionId,
 }
 
-/// Python wrapper for the VAK Kernel
+/// Python wrapper for the VAK Kernel.
 ///
-/// `execute_tool` runs every call through [`Kernel::execute`]: the kernel's
-/// policy decision point, audit log, skill registry and sandbox decide and
-/// run it (finding I4). The policy engine and audit logger held here serve
-/// `evaluate_policy` and the audit-log methods, which don't use the kernel
-/// yet.
+/// Every method that answers with a policy decision, an audit record or a
+/// skill answers from one [`Kernel`]: its policy decision point, its audit
+/// log and its skill registry (finding I4, ADR 0011). The binding keeps no
+/// policy engine, audit log or skill registry of its own.
 #[cfg(feature = "python")]
 #[pyclass(name = "Kernel")]
 #[derive(Debug)]
 pub struct PyKernel {
     initialized: bool,
-    agents: HashMap<String, HashMap<String, String>>,
-    policy_engine: PolicyEngine,
-    audit_logger: AuditLogger,
-    /// Registry of available tools/skills
-    skill_registry: HashMap<String, SkillInfo>,
-    /// The kernel `execute_tool` runs calls through.
+    /// The kernel every method answers from.
     kernel: Arc<Kernel>,
     /// Runs the kernel's async API under Python's synchronous calls.
     runtime: Arc<tokio::runtime::Runtime>,
-    /// The kernel's identity for each agent registered here.
-    native_agents: HashMap<String, NativeAgent>,
+    /// Agents registered here, by the ID Python knows them by.
+    agents: HashMap<String, NativeAgent>,
 }
 
-/// Starts a runtime and, on it, a kernel with the default configuration,
-/// except that skills get [`NATIVE_SKILL_MEMORY_MB`] of memory.
+/// Starts a runtime and, on it, a kernel configured by `config`.
 #[cfg(feature = "python")]
-fn native_kernel() -> PyResult<(Arc<tokio::runtime::Runtime>, Arc<Kernel>)> {
+fn native_kernel(config: KernelConfig) -> PyResult<(Arc<tokio::runtime::Runtime>, Arc<Kernel>)> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .thread_name("vak-python")
         .enable_all()
         .build()
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to start the kernel runtime: {e}")))?;
-    let mut config = KernelConfig::default();
-    config.resources.max_memory_mb = NATIVE_SKILL_MEMORY_MB;
     let kernel = runtime
         .block_on(Kernel::new(config))
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to start the kernel: {e}")))?;
@@ -393,67 +378,260 @@ fn json_to_py<'py>(py: Python<'py>, value: &serde_json::Value) -> PyResult<Bound
     py.import("json")?.call_method1("loads", (text,))
 }
 
-/// Information about a registered skill/tool
+/// A kernel policy decision as the SDK's dict: `effect` ("allow" or
+/// "deny"), `policy_id` and `reason`. An allow names the decision point
+/// that made it; a denial names the policy it violated, if the decision
+/// point said.
 #[cfg(feature = "python")]
-#[derive(Clone, Debug)]
-pub struct SkillInfo {
-    /// Unique identifier for the skill
-    pub id: String,
-    /// Human-readable name
-    pub name: String,
-    /// Description of what the skill does
-    pub description: String,
-    /// Version string
-    pub version: String,
-    /// Whether the skill is currently enabled
-    pub enabled: bool,
+fn decision_json(decision: &PolicyDecision, decided_by: &str) -> serde_json::Value {
+    let (effect, policy_id, reason) = match decision {
+        PolicyDecision::Allow { reason, .. } => ("allow", decided_by.to_string(), reason.clone()),
+        PolicyDecision::Deny {
+            reason,
+            violated_policies,
+        } => (
+            "deny",
+            violated_policies
+                .as_ref()
+                .and_then(|ids| ids.first().cloned())
+                .unwrap_or_else(|| decided_by.to_string()),
+            reason.clone(),
+        ),
+        PolicyDecision::Inadmissible { reason } => ("deny", decided_by.to_string(), reason.clone()),
+    };
+    serde_json::json!({"effect": effect, "policy_id": policy_id, "reason": reason})
+}
+
+#[cfg(feature = "python")]
+impl PyKernel {
+    fn from_kernel(runtime: Arc<tokio::runtime::Runtime>, kernel: Arc<Kernel>) -> Self {
+        Self {
+            initialized: true,
+            kernel,
+            runtime,
+            agents: HashMap::new(),
+        }
+    }
+
+    fn ensure_initialized(&self) -> PyResult<()> {
+        if self.initialized {
+            Ok(())
+        } else {
+            Err(PyRuntimeError::new_err("Kernel not initialized"))
+        }
+    }
+
+    fn agent(&self, agent_id: &str) -> PyResult<NativeAgent> {
+        self.agents
+            .get(agent_id)
+            .cloned()
+            .ok_or_else(|| PyValueError::new_err(format!("Agent not found: {agent_id}")))
+    }
+
+    /// The ID Python knows a kernel agent by, or the kernel's own.
+    fn python_agent_id(&self, id: &AgentId) -> String {
+        self.agents
+            .iter()
+            .find(|(_, agent)| agent.id == *id)
+            .map_or_else(|| id.to_string(), |(name, _)| name.clone())
+    }
+
+    /// A kernel audit entry as the SDK's dict.
+    ///
+    /// Every entry is a tool call: `action` and `resource` are the tool. A
+    /// decision entry has `kind` "decision"; an outcome entry has `kind`
+    /// "outcome", its decision's id as `parent_entry_id`, and what happened
+    /// in `details.outcome`. `level` is derived: "warning" for a refusal,
+    /// "error" for a tool that ran and failed, "info" otherwise.
+    fn entry_json(
+        &self,
+        entries: &[crate::kernel::types::AuditEntry],
+        index: usize,
+        decided_by: &str,
+    ) -> serde_json::Value {
+        let entry = &entries[index];
+        let (kind, level, parent) = match &entry.outcome {
+            Some(outcome) => (
+                "outcome",
+                if outcome.success { "info" } else { "error" },
+                usize::try_from(outcome.decision_leaf)
+                    .ok()
+                    .and_then(|leaf| entries.get(leaf))
+                    .map(|decision| decision.audit_id.to_string()),
+            ),
+            None => (
+                "decision",
+                if entry.decision.is_allowed() {
+                    "info"
+                } else {
+                    "warning"
+                },
+                None,
+            ),
+        };
+        serde_json::json!({
+            "entry_id": entry.audit_id.to_string(),
+            "timestamp": entry.timestamp.to_rfc3339(),
+            "level": level,
+            "agent_id": self.python_agent_id(&entry.agent_id),
+            "action": entry.action,
+            "resource": entry.action,
+            "policy_decision": decision_json(&entry.decision, decided_by),
+            "details": {
+                "kind": kind,
+                "leaf_index": index,
+                "kernel_agent_id": entry.agent_id.to_string(),
+                "session_id": entry.session_id.to_string(),
+                "hash": entry.hash,
+                "previous_hash": entry.previous_hash,
+                "outcome": entry.outcome,
+            },
+            "parent_entry_id": parent,
+        })
+    }
 }
 
 #[cfg(feature = "python")]
 #[pymethods]
 impl PyKernel {
-    /// Create a new kernel with default configuration
+    /// A kernel with the default configuration, except that WASM skills get
+    /// [`NATIVE_SKILL_MEMORY_MB`] of memory.
     #[staticmethod]
     fn default() -> PyResult<Self> {
-        let mut skill_registry = HashMap::new();
-
-        // Register default built-in skills
-        skill_registry.insert(
-            "calculator".to_string(),
-            SkillInfo {
-                id: "calculator".to_string(),
-                name: "Calculator".to_string(),
-                description: "Basic arithmetic operations".to_string(),
-                version: "1.0.0".to_string(),
-                enabled: true,
-            },
-        );
-
-        let (runtime, kernel) = native_kernel()?;
-        Ok(Self {
-            initialized: true,
-            agents: HashMap::new(),
-            policy_engine: PolicyEngine::new(),
-            audit_logger: AuditLogger::new(),
-            skill_registry,
-            kernel,
-            runtime,
-            native_agents: HashMap::new(),
-        })
+        let mut config = KernelConfig::default();
+        config.resources.max_memory_mb = NATIVE_SKILL_MEMORY_MB;
+        let (runtime, kernel) = native_kernel(config)?;
+        Ok(Self::from_kernel(runtime, kernel))
     }
 
-    /// Create a kernel from a configuration file
+    /// A kernel configured by the file at `path` (YAML, JSON or TOML, as
+    /// `KernelConfig::from_file` reads): its policies, skills and limits.
+    ///
+    /// # Errors
+    ///
+    /// `ValueError` if the file can't be read or parsed. There is no
+    /// fallback to the default configuration.
     #[staticmethod]
     fn from_config(path: &str) -> PyResult<Self> {
-        let mut kernel = Self::default()?;
+        let config = KernelConfig::from_file(path).map_err(|e| {
+            PyValueError::new_err(format!("Failed to load kernel config '{path}': {e}"))
+        })?;
+        let (runtime, kernel) = native_kernel(config)?;
+        Ok(Self::from_kernel(runtime, kernel))
+    }
 
-        // Try to load policy rules from config
-        if let Err(e) = kernel.policy_engine.load_rules(path) {
-            // Log warning but don't fail - use default policies
-            tracing::warn!("Failed to load policy rules from {}: {}", path, e);
+    /// A kernel with the default configuration and these settings from the
+    /// SDK's `KernelConfig`, as a dict. Each key that is present is applied:
+    ///
+    /// - `name`
+    /// - `allowed_tools` (a non-empty list replaces the default allowlist of
+    ///   built-in tools), `blocked_tools`
+    /// - `default_decision` ("allow" or "deny"), `policy_enabled`,
+    ///   `policy_paths` (YAML policy files)
+    /// - `enable_sandboxing`, `allow_unsigned_skills`
+    /// - `timeout_ms` (the kernel's time limit), `skill_memory_mb`
+    /// - `max_requests_per_minute`
+    /// - `audit_log_path`
+    ///
+    /// # Errors
+    ///
+    /// `ValueError` for an unknown key or a value of the wrong type, so a
+    /// setting is never silently dropped.
+    #[staticmethod]
+    fn from_settings(settings: Bound<'_, PyDict>) -> PyResult<Self> {
+        let settings = py_to_json(settings.as_any().clone())?;
+        let serde_json::Value::Object(settings) = settings else {
+            return Err(PyValueError::new_err("settings must be a dict"));
+        };
+        let mut config = KernelConfig::default();
+        config.resources.max_memory_mb = NATIVE_SKILL_MEMORY_MB;
+
+        let bad = |key: &str, want: &str| {
+            PyValueError::new_err(format!("setting '{key}' must be {want}"))
+        };
+        let strings = |key: &str, value: &serde_json::Value| -> PyResult<Vec<String>> {
+            value
+                .as_array()
+                .and_then(|items| {
+                    items
+                        .iter()
+                        .map(|i| i.as_str().map(str::to_string))
+                        .collect()
+                })
+                .ok_or_else(|| bad(key, "a list of strings"))
+        };
+        for (key, value) in &settings {
+            match key.as_str() {
+                "name" => {
+                    config.name = value
+                        .as_str()
+                        .ok_or_else(|| bad(key, "a string"))?
+                        .to_string();
+                }
+                "allowed_tools" => {
+                    let tools = strings(key, value)?;
+                    if !tools.is_empty() {
+                        config.security.allowed_tools = tools;
+                    }
+                }
+                "blocked_tools" => config.security.blocked_tools = strings(key, value)?,
+                "default_decision" => {
+                    config.policy.default_decision = match value.as_str() {
+                        Some("allow") => crate::kernel::DefaultPolicyDecision::Allow,
+                        Some("deny") => crate::kernel::DefaultPolicyDecision::Deny,
+                        _ => return Err(bad(key, "\"allow\" or \"deny\"")),
+                    };
+                }
+                "policy_enabled" => {
+                    config.policy.enabled = value.as_bool().ok_or_else(|| bad(key, "a bool"))?;
+                }
+                "policy_paths" => {
+                    config.policy.policy_paths =
+                        strings(key, value)?.into_iter().map(Into::into).collect();
+                }
+                "enable_sandboxing" => {
+                    config.security.enable_sandboxing =
+                        value.as_bool().ok_or_else(|| bad(key, "a bool"))?;
+                }
+                "allow_unsigned_skills" => {
+                    config.security.allow_unsigned_skills =
+                        value.as_bool().ok_or_else(|| bad(key, "a bool"))?;
+                }
+                "timeout_ms" => {
+                    let ms = value
+                        .as_u64()
+                        .filter(|ms| *ms > 0)
+                        .ok_or_else(|| bad(key, "a positive integer"))?;
+                    config.max_execution_time = std::time::Duration::from_millis(ms);
+                }
+                "skill_memory_mb" => {
+                    config.resources.max_memory_mb = value
+                        .as_u64()
+                        .filter(|mb| *mb > 0)
+                        .ok_or_else(|| bad(key, "a positive integer"))?;
+                }
+                "max_requests_per_minute" => {
+                    let rate = value
+                        .as_u64()
+                        .and_then(|n| u32::try_from(n).ok())
+                        .filter(|n| *n > 0)
+                        .ok_or_else(|| bad(key, "a positive integer"))?;
+                    config.security.enable_rate_limiting = true;
+                    config.security.max_requests_per_minute = rate;
+                }
+                "audit_log_path" => {
+                    config.audit.log_path =
+                        Some(value.as_str().ok_or_else(|| bad(key, "a string"))?.into());
+                }
+                other => {
+                    return Err(PyValueError::new_err(format!(
+                        "unknown kernel setting '{other}'"
+                    )));
+                }
+            }
         }
-
-        Ok(kernel)
+        let (runtime, kernel) = native_kernel(config)?;
+        Ok(Self::from_kernel(runtime, kernel))
     }
 
     /// Check if the kernel is initialized
@@ -464,152 +642,103 @@ impl PyKernel {
     /// Shutdown the kernel
     fn shutdown(&mut self) {
         self.initialized = false;
-        for agent in self.native_agents.drain().map(|(_, agent)| agent) {
+        for agent in self.agents.drain().map(|(_, agent)| agent) {
             self.runtime
                 .block_on(self.kernel.end_session(&agent.session));
         }
-        self.agents.clear();
-        self.policy_engine = PolicyEngine::new();
-        self.audit_logger = AuditLogger::new();
-        self.skill_registry.clear();
     }
 
-    /// Register an agent with the kernel
+    /// Register an agent with the kernel.
+    ///
+    /// The kernel knows the agent by an ID of its own. From `config`:
+    /// `allowed_tools`, if not empty, limits the agent to those tools;
+    /// `role` and `attributes` become attributes policy can read
+    /// (`principal.role`, `principal.<key>`). Re-registering an agent
+    /// replaces it.
     fn register_agent(
         &mut self,
         agent_id: &str,
         name: &str,
         config: Bound<'_, PyDict>,
     ) -> PyResult<()> {
-        if !self.initialized {
-            return Err(PyRuntimeError::new_err("Kernel not initialized"));
+        self.ensure_initialized()?;
+        let config = py_to_json(config.as_any().clone())?;
+
+        let mut record = AgentRecord::new(AgentId::new(), name);
+        if let Some(tools) = config.get("allowed_tools").and_then(|v| v.as_array()) {
+            if !tools.is_empty() {
+                let tools: Vec<String> = tools
+                    .iter()
+                    .map(|t| {
+                        t.as_str().map(str::to_string).ok_or_else(|| {
+                            PyValueError::new_err("allowed_tools must be a list of strings")
+                        })
+                    })
+                    .collect::<PyResult<_>>()?;
+                record = record.with_allowed_tools(tools);
+            }
+        }
+        if let Some(role) = config.get("role").and_then(|v| v.as_str()) {
+            record = record.with_attribute("role", role);
+        }
+        if let Some(attributes) = config.get("attributes").and_then(|v| v.as_object()) {
+            for (key, value) in attributes {
+                record = record.with_attribute(key.clone(), value.clone());
+            }
         }
 
-        // Convert Python dictionary to JSON string for internal storage
-        let config_val = py_to_json(config.as_any().clone())?;
-        let config_json = serde_json::to_string(&config_val).map_err(|e| {
-            PyValueError::new_err(format!("Failed to serialize agent config to JSON: {}", e))
-        })?;
-
-        let mut agent_data = HashMap::new();
-        agent_data.insert("name".to_string(), name.to_string());
-        agent_data.insert("config".to_string(), config_json);
-
-        // The kernel knows the agent by an ID of its own.
         let native = NativeAgent {
-            id: AgentId::new(),
+            id: record.id,
             session: SessionId::new(),
         };
         self.runtime
-            .block_on(
-                self.kernel
-                    .register_agent(AgentRecord::new(native.id, name)),
-            )
+            .block_on(self.kernel.register_agent(record))
             .map_err(|e| PyRuntimeError::new_err(format!("The kernel refused the agent: {e}")))?;
-        if let Some(old) = self.native_agents.insert(agent_id.to_string(), native) {
+        if let Some(old) = self.agents.insert(agent_id.to_string(), native) {
             self.runtime.block_on(self.kernel.end_session(&old.session));
         }
-
-        self.agents.insert(agent_id.to_string(), agent_data);
         Ok(())
     }
 
     /// Unregister an agent
     fn unregister_agent(&mut self, agent_id: &str) -> PyResult<()> {
-        if !self.initialized {
-            return Err(PyRuntimeError::new_err("Kernel not initialized"));
-        }
-
-        if self.agents.remove(agent_id).is_none() {
-            return Err(PyValueError::new_err(format!(
-                "Agent not found: {}",
-                agent_id
-            )));
-        }
-        if let Some(native) = self.native_agents.remove(agent_id) {
-            self.runtime
-                .block_on(self.kernel.end_session(&native.session));
-        }
+        self.ensure_initialized()?;
+        let agent = self
+            .agents
+            .remove(agent_id)
+            .ok_or_else(|| PyValueError::new_err(format!("Agent not found: {agent_id}")))?;
+        self.runtime
+            .block_on(self.kernel.end_session(&agent.session));
         Ok(())
     }
 
-    /// Evaluate a policy for an action
-    fn evaluate_policy(
+    /// Ask the kernel whether `agent_id` may call the tool `action` with
+    /// `context` as its parameters ([`Kernel::evaluate_policy`]).
+    ///
+    /// This is the Decide stage of `execute_tool` alone: nothing runs and
+    /// nothing is recorded. `execute_tool` sends a tool
+    /// `{"action": ..., "params": ...}`, so to ask about exactly that call,
+    /// pass those as `context`.
+    ///
+    /// Returns a dict with `effect` ("allow" or "deny"), `policy_id` and
+    /// `reason`.
+    fn evaluate_policy<'py>(
         &mut self,
+        py: Python<'py>,
         agent_id: &str,
         action: &str,
-        context: Bound<'_, PyDict>,
-    ) -> PyResult<HashMap<String, String>> {
-        if !self.initialized {
-            return Err(PyRuntimeError::new_err("Kernel not initialized"));
-        }
-
-        // Check if agent is registered
-        if !self.agents.contains_key(agent_id) && agent_id != "system" {
-            return Err(PyValueError::new_err(format!(
-                "Agent not found: {}",
-                agent_id
-            )));
-        }
-
-        // Convert Python dictionary to serde_json::Value map
-        let mut context_attrs = HashMap::new();
-        for (k, v) in context.iter() {
-            let key = k.extract::<String>()?;
-            let value = py_to_json(v)?;
-            context_attrs.insert(key, value);
-        }
-
-        // Build policy context
-        let agent_config = self.agents.get(agent_id);
-        let role = agent_config
-            .and_then(|c| c.get("role"))
-            .map(|r| r.to_string())
-            .unwrap_or_else(|| "default".to_string());
-
-        let policy_context = PolicyContext {
-            agent_id: agent_id.to_string(),
-            role,
-            attributes: context_attrs.clone(),
-            environment: HashMap::new(),
-        };
-
-        // Get resource from context
-        let resource = context_attrs
-            .get("resource")
-            .and_then(|v| v.as_str())
-            .unwrap_or("*")
-            .to_string();
-
-        // Evaluate using real policy engine
+        context: Bound<'py, PyDict>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.ensure_initialized()?;
+        let agent = self.agent(agent_id)?;
+        let request = ToolRequest::new(action, py_to_json(context.as_any().clone())?);
         let decision = self
-            .policy_engine
-            .evaluate(&resource, action, &policy_context);
-
-        // Log to audit trail
-        let audit_decision = if decision.allowed {
-            AuditDecision::Allowed
-        } else {
-            AuditDecision::Denied
-        };
-        self.audit_logger
-            .log(agent_id, action, &resource, audit_decision)
-            .map_err(|e| PyRuntimeError::new_err(format!("Audit log unavailable: {e}")))?;
-
-        let mut result = HashMap::new();
-        result.insert(
-            "effect".to_string(),
-            if decision.allowed { "allow" } else { "deny" }.to_string(),
-        );
-        result.insert(
-            "policy_id".to_string(),
-            decision
-                .matched_rule
-                .unwrap_or_else(|| "default".to_string()),
-        );
-        result.insert("reason".to_string(), decision.reason);
-
-        Ok(result)
+            .runtime
+            .block_on(self.kernel.evaluate_policy(&agent.id, &request));
+        json_to_py(
+            py,
+            &decision_json(&decision, self.kernel.policy_decision_point().name()),
+        )
     }
 
     /// Execute a tool through the kernel ([`Kernel::execute`]).
@@ -630,7 +759,7 @@ impl PyKernel {
     /// - `PermissionError` with args `(policy_id, reason)` if the kernel's
     ///   policy refuses it;
     /// - `ValueError` if the agent isn't registered, or if `memory_limit` is
-    ///   below the [`NATIVE_SKILL_MEMORY_MB`] the kernel enforces;
+    ///   below the memory the kernel gives every skill;
     /// - `RuntimeError` if the kernel refuses it for any other reason, such
     ///   as an unknown tool.
     #[allow(clippy::too_many_arguments)]
@@ -644,21 +773,13 @@ impl PyKernel {
         timeout_ms: u64,
         memory_limit: u64,
     ) -> PyResult<Bound<'py, PyDict>> {
-        if !self.initialized {
-            return Err(PyRuntimeError::new_err("Kernel not initialized"));
-        }
+        self.ensure_initialized()?;
+        let agent = self.agent(agent_id)?;
 
-        let Some(agent) = self.native_agents.get(agent_id).copied() else {
+        let kernel_mb = self.kernel.config().resources.max_memory_mb;
+        if memory_limit < kernel_mb.saturating_mul(1024 * 1024) {
             return Err(PyValueError::new_err(format!(
-                "Agent not found: {}",
-                agent_id
-            )));
-        };
-
-        let floor = NATIVE_SKILL_MEMORY_MB * 1024 * 1024;
-        if memory_limit < floor {
-            return Err(PyValueError::new_err(format!(
-                "memory_limit of {memory_limit} bytes is below the {NATIVE_SKILL_MEMORY_MB} MiB \
+                "memory_limit of {memory_limit} bytes is below the {kernel_mb} MiB \
                  the kernel gives every skill; it can't run a call under a tighter limit, \
                  so nothing ran"
             )));
@@ -675,21 +796,6 @@ impl PyKernel {
         let (kernel, runtime) = (Arc::clone(&self.kernel), Arc::clone(&self.runtime));
         let outcome =
             py.detach(move || runtime.block_on(kernel.execute(&agent.id, &agent.session, request)));
-
-        // The SDK's own audit trail records what the kernel decided.
-        let decision = match &outcome {
-            Ok(_) => AuditDecision::Allowed,
-            Err(KernelError::PolicyViolation { .. }) => AuditDecision::Denied,
-            Err(e) => AuditDecision::Error(e.to_string()),
-        };
-        self.audit_logger
-            .log(
-                agent_id,
-                format!("tool.execute:{}", tool_id),
-                action,
-                decision,
-            )
-            .map_err(|e| PyRuntimeError::new_err(format!("Audit log unavailable: {e}")))?;
 
         let response = match outcome {
             Ok(response) => response,
@@ -717,273 +823,175 @@ impl PyKernel {
         Ok(result)
     }
 
-    /// List available tools from the skill registry
-    fn list_tools(&self) -> Vec<String> {
-        self.skill_registry
-            .values()
-            .filter(|skill| skill.enabled)
-            .map(|skill| skill.id.clone())
+    /// The kernel's tools: built-ins, registered host handlers and loaded
+    /// WASM skills ([`Kernel::list_tools`]).
+    fn list_tools(&self) -> PyResult<Vec<String>> {
+        self.ensure_initialized()?;
+        Ok(self.runtime.block_on(self.kernel.list_tools()))
+    }
+
+    /// The loaded WASM skills' names.
+    fn list_skills(&self) -> PyResult<Vec<String>> {
+        self.ensure_initialized()?;
+        #[cfg(feature = "wasm")]
+        {
+            let kernel = &self.kernel;
+            Ok(self.runtime.block_on(async {
+                let mut skills = Vec::new();
+                for tool in kernel.list_tools().await {
+                    if kernel.skill_manifest(&tool).await.is_some() {
+                        skills.push(tool);
+                    }
+                }
+                skills
+            }))
+        }
+        #[cfg(not(feature = "wasm"))]
+        Ok(Vec::new())
+    }
+
+    /// Load a WASM skill from its manifest file ([`Kernel::load_skill`]),
+    /// verified as at startup. Returns its name. Loading authorizes no one;
+    /// the kernel's policy still decides every call.
+    ///
+    /// # Errors
+    ///
+    /// `ValueError` if the manifest or module can't be read or doesn't
+    /// verify. Nothing is loaded.
+    fn load_skill(&self, manifest_path: &str) -> PyResult<String> {
+        self.ensure_initialized()?;
+        #[cfg(feature = "wasm")]
+        {
+            self.runtime
+                .block_on(self.kernel.load_skill(std::path::Path::new(manifest_path)))
+                .map_err(|e| PyValueError::new_err(e.to_string()))
+        }
+        #[cfg(not(feature = "wasm"))]
+        Err(PyRuntimeError::new_err(format!(
+            "cannot load '{manifest_path}': this build has no WASM sandbox (feature `wasm`)"
+        )))
+    }
+
+    /// The manifest of the loaded skill called `name`, as a dict, or None.
+    fn get_skill<'py>(&self, py: Python<'py>, name: &str) -> PyResult<Option<Bound<'py, PyAny>>> {
+        self.ensure_initialized()?;
+        #[cfg(feature = "wasm")]
+        {
+            match self.runtime.block_on(self.kernel.skill_manifest(name)) {
+                Some(manifest) => {
+                    let value = serde_json::to_value(&manifest).map_err(|e| {
+                        PyValueError::new_err(format!("Failed to serialize manifest: {e}"))
+                    })?;
+                    Ok(Some(json_to_py(py, &value)?))
+                }
+                None => Ok(None),
+            }
+        }
+        #[cfg(not(feature = "wasm"))]
+        {
+            let _ = (py, name);
+            Ok(None)
+        }
+    }
+
+    /// The kernel's audit log, as dicts, oldest first.
+    ///
+    /// `filters` may set `agent_id`, `action` (a tool name), `level`,
+    /// `limit` (default 100) and `offset`.
+    fn get_audit_logs<'py>(
+        &self,
+        py: Python<'py>,
+        filters: Bound<'py, PyDict>,
+    ) -> PyResult<Vec<Bound<'py, PyAny>>> {
+        self.ensure_initialized()?;
+        let filters = py_to_json(filters.as_any().clone())?;
+        let wanted = |key: &str| {
+            filters
+                .get(key)
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        };
+        let (agent, action, level) = (wanted("agent_id"), wanted("action"), wanted("level"));
+        let count = |key: &str, default: usize| {
+            filters
+                .get(key)
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|n| usize::try_from(n).ok())
+                .unwrap_or(default)
+        };
+        let (limit, offset) = (count("limit", 100), count("offset", 0));
+
+        let entries = self.runtime.block_on(self.kernel.get_audit_log());
+        let decided_by = self.kernel.policy_decision_point().name();
+        (0..entries.len())
+            .map(|i| self.entry_json(&entries, i, decided_by))
+            .filter(|e| {
+                agent.as_deref().is_none_or(|a| e["agent_id"] == a)
+                    && action.as_deref().is_none_or(|a| e["action"] == a)
+                    && level.as_deref().is_none_or(|l| e["level"] == l)
+            })
+            .skip(offset)
+            .take(limit)
+            .map(|e| json_to_py(py, &e))
             .collect()
     }
 
-    /// Register a new skill/tool with the kernel
-    fn register_skill(
-        &mut self,
-        skill_id: &str,
-        name: &str,
-        description: &str,
-        version: &str,
-    ) -> PyResult<()> {
-        if !self.initialized {
-            return Err(PyRuntimeError::new_err("Kernel not initialized"));
-        }
-
-        self.skill_registry.insert(
-            skill_id.to_string(),
-            SkillInfo {
-                id: skill_id.to_string(),
-                name: name.to_string(),
-                description: description.to_string(),
-                version: version.to_string(),
-                enabled: true,
-            },
-        );
-
-        Ok(())
+    /// The kernel audit entry with this id, as a dict, or None.
+    fn get_audit_entry<'py>(
+        &self,
+        py: Python<'py>,
+        entry_id: &str,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        self.ensure_initialized()?;
+        let entries = self.runtime.block_on(self.kernel.get_audit_log());
+        let decided_by = self.kernel.policy_decision_point().name();
+        entries
+            .iter()
+            .position(|e| e.audit_id.to_string() == entry_id)
+            .map(|i| json_to_py(py, &self.entry_json(&entries, i, decided_by)))
+            .transpose()
     }
 
-    /// Unregister a skill/tool from the kernel
-    fn unregister_skill(&mut self, skill_id: &str) -> PyResult<()> {
-        if !self.initialized {
-            return Err(PyRuntimeError::new_err("Kernel not initialized"));
-        }
-
-        if self.skill_registry.remove(skill_id).is_none() {
-            return Err(PyValueError::new_err(format!(
-                "Skill not found: {}",
-                skill_id
-            )));
-        }
-
-        Ok(())
-    }
-
-    /// Enable or disable a skill
-    fn set_skill_enabled(&mut self, skill_id: &str, enabled: bool) -> PyResult<()> {
-        if !self.initialized {
-            return Err(PyRuntimeError::new_err("Kernel not initialized"));
-        }
-
-        match self.skill_registry.get_mut(skill_id) {
-            Some(skill) => {
-                skill.enabled = enabled;
-                Ok(())
-            }
-            None => Err(PyValueError::new_err(format!(
-                "Skill not found: {}",
-                skill_id
-            ))),
-        }
-    }
-
-    /// Get detailed information about a specific skill
-    fn get_skill_info(&self, skill_id: &str) -> PyResult<Option<HashMap<String, String>>> {
-        if !self.initialized {
-            return Err(PyRuntimeError::new_err("Kernel not initialized"));
-        }
-
-        Ok(self.skill_registry.get(skill_id).map(|skill| {
-            let mut info = HashMap::new();
-            info.insert("id".to_string(), skill.id.clone());
-            info.insert("name".to_string(), skill.name.clone());
-            info.insert("description".to_string(), skill.description.clone());
-            info.insert("version".to_string(), skill.version.clone());
-            info.insert("enabled".to_string(), skill.enabled.to_string());
-            info
-        }))
-    }
-
-    /// Get audit logs
-    fn get_audit_logs(&self, filters: Bound<'_, PyDict>) -> PyResult<Vec<HashMap<String, String>>> {
-        if !self.initialized {
-            return Err(PyRuntimeError::new_err("Kernel not initialized"));
-        }
-
-        // Convert Python dictionary to serde_json::Value map
-        let mut filters_map = HashMap::new();
-        for (k, v) in filters.iter() {
-            let key = k.extract::<String>()?;
-            let value = py_to_json(v)?;
-            filters_map.insert(key, value);
-        }
-
-        let limit = filters_map
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(100) as usize;
-
-        let agent_filter = filters_map.get("agent_id").and_then(|v| v.as_str());
-
-        // Get audit entries from logger
-        let mut results = Vec::new();
-        let entries = self
-            .audit_logger
-            .load_all_entries()
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-
-        for entry in entries {
-            if let Some(agent) = agent_filter {
-                if entry.agent_id != agent {
-                    continue;
-                }
-            }
-
-            let mut entry_map = HashMap::new();
-            entry_map.insert("entry_id".to_string(), entry.id.to_string());
-            entry_map.insert("timestamp".to_string(), entry.timestamp.to_string());
-            entry_map.insert("agent_id".to_string(), entry.agent_id.clone());
-            entry_map.insert("action".to_string(), entry.action.clone());
-            entry_map.insert("resource".to_string(), entry.resource.clone());
-            entry_map.insert("decision".to_string(), entry.decision.to_string());
-            entry_map.insert("hash".to_string(), entry.hash.clone());
-
-            results.push(entry_map);
-
-            if results.len() >= limit {
-                break;
-            }
-        }
-
-        Ok(results)
-    }
-
-    /// Get a specific audit entry
-    fn get_audit_entry(&self, entry_id: &str) -> PyResult<Option<HashMap<String, String>>> {
-        if !self.initialized {
-            return Err(PyRuntimeError::new_err("Kernel not initialized"));
-        }
-
-        let id: u64 = entry_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid entry ID"))?;
-
-        if let Some(entry) = self
-            .audit_logger
-            .get_entry(id)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
-        {
-            let mut entry_map = HashMap::new();
-            entry_map.insert("entry_id".to_string(), entry.id.to_string());
-            entry_map.insert("timestamp".to_string(), entry.timestamp.to_string());
-            entry_map.insert("agent_id".to_string(), entry.agent_id.clone());
-            entry_map.insert("action".to_string(), entry.action.clone());
-            entry_map.insert("resource".to_string(), entry.resource.clone());
-            entry_map.insert("decision".to_string(), entry.decision.to_string());
-            entry_map.insert("hash".to_string(), entry.hash.clone());
-            entry_map.insert("prev_hash".to_string(), entry.prev_hash.clone());
-            return Ok(Some(entry_map));
-        }
-
-        Ok(None)
-    }
-
-    /// Create an audit entry
-    fn create_audit_entry(&mut self, entry_data: Bound<'_, PyDict>) -> PyResult<String> {
-        if !self.initialized {
-            return Err(PyRuntimeError::new_err("Kernel not initialized"));
-        }
-
-        // Convert Python dictionary to serde_json::Value map
-        let mut entry_map = HashMap::new();
-        for (k, v) in entry_data.iter() {
-            let key = k.extract::<String>()?;
-            let value = py_to_json(v)?;
-            entry_map.insert(key, value);
-        }
-
-        let agent_id = entry_map
-            .get("agent_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-        let action = entry_map
-            .get("action")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-        let resource = entry_map
-            .get("resource")
-            .and_then(|v| v.as_str())
-            .unwrap_or("*");
-
-        let entry = self
-            .audit_logger
-            .log(agent_id, action, resource, AuditDecision::Allowed)
-            .map_err(|e| PyRuntimeError::new_err(format!("Audit log unavailable: {e}")))?;
-        Ok(entry.id.to_string())
-    }
-
-    /// Verify the integrity of the audit chain
+    /// Whether the kernel's audit chain verifies: no entry altered,
+    /// reordered or spliced in ([`Kernel::verify_audit_chain`]).
     fn verify_audit_chain(&self) -> PyResult<bool> {
-        if !self.initialized {
-            return Err(PyRuntimeError::new_err("Kernel not initialized"));
-        }
-
-        Ok(self.audit_logger.verify_chain().is_ok())
+        self.ensure_initialized()?;
+        Ok(self
+            .runtime
+            .block_on(self.kernel.verify_audit_chain())
+            .is_ok())
     }
 
-    /// Get the audit chain's current root hash
-    fn get_audit_root_hash(&self) -> PyResult<Option<String>> {
-        if !self.initialized {
-            return Err(PyRuntimeError::new_err("Kernel not initialized"));
-        }
-
-        Ok(self.audit_logger.last_entry().map(|e| e.hash.clone()))
+    /// The root of the kernel's audit Merkle tree, as hex (RFC 9162; the
+    /// SHA-256 of nothing for an empty log).
+    fn get_audit_root_hash(&self) -> PyResult<String> {
+        self.ensure_initialized()?;
+        Ok(self
+            .runtime
+            .block_on(self.kernel.audit_tree_head())
+            .head
+            .root
+            .to_hex())
     }
 
-    /// Add a policy rule
-    fn add_policy_rule(&mut self, rule_dict: Bound<'_, PyDict>) -> PyResult<()> {
-        if !self.initialized {
-            return Err(PyRuntimeError::new_err("Kernel not initialized"));
-        }
-
-        let rule_val = py_to_json(rule_dict.as_any().clone())?;
-        let rule: PolicyRule = serde_json::from_value(rule_val)
-            .map_err(|e| PyValueError::new_err(format!("Invalid rule: {}", e)))?;
-
-        self.policy_engine.add_rule(rule);
-        Ok(())
-    }
-
-    /// Validate the policy configuration and return any warnings (Issue #19)
-    fn validate_policy_config(&self) -> PyResult<Vec<String>> {
-        if !self.initialized {
-            return Err(PyRuntimeError::new_err("Kernel not initialized"));
-        }
-        Ok(self.policy_engine.validate_config())
-    }
-
-    /// Check if any allow rules are defined
-    fn has_allow_policies(&self) -> PyResult<bool> {
-        if !self.initialized {
-            return Err(PyRuntimeError::new_err("Kernel not initialized"));
-        }
-        Ok(self.policy_engine.has_allow_rules())
-    }
-
-    /// Get the number of loaded policy rules
-    fn policy_rule_count(&self) -> PyResult<usize> {
-        if !self.initialized {
-            return Err(PyRuntimeError::new_err("Kernel not initialized"));
-        }
-        Ok(self.policy_engine.rule_count())
+    /// The kernel's signed audit tree head, as a dict: the tree's `size`
+    /// and `root`, `timestamp_ms`, the Ed25519 `signature` and the
+    /// `public_key` that verifies it ([`Kernel::audit_tree_head`]).
+    /// Anyone holding one can later demand proof that the log only grew.
+    fn export_audit_receipt<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.ensure_initialized()?;
+        let head = self.runtime.block_on(self.kernel.audit_tree_head());
+        let value = serde_json::to_value(&head)
+            .map_err(|e| PyValueError::new_err(format!("Failed to serialize tree head: {e}")))?;
+        json_to_py(py, &value)
     }
 
     fn __repr__(&self) -> String {
         format!(
-            "Kernel(initialized={}, agents={}, skills={}, audit_entries={})",
+            "Kernel(initialized={}, agents={}, policy={})",
             self.initialized,
             self.agents.len(),
-            self.skill_registry.len(),
-            self.audit_logger.count().unwrap_or(0)
+            self.kernel.policy_decision_point().name()
         )
     }
 }
@@ -1151,8 +1159,13 @@ mod tests {
         assert!(kernel.is_initialized());
     }
 
+    fn get(dict: &Bound<'_, PyAny>, key: &str) -> serde_json::Value {
+        py_to_json(dict.get_item(key).unwrap()).unwrap()
+    }
+
     /// A registered agent's call runs through `Kernel::execute`: the tool
-    /// runs, and the kernel records the decision and the outcome.
+    /// runs, and the kernel records the decision and the outcome, which the
+    /// audit-log methods then read back.
     #[test]
     fn execute_tool_runs_through_the_kernel() {
         Python::initialize();
@@ -1168,25 +1181,96 @@ mod tests {
             let result = kernel
                 .execute_tool(py, "echo", "agent-1", "say", params, 5_000, 128 << 20)
                 .unwrap();
-            assert!(result
-                .get_item("success")
-                .unwrap()
-                .unwrap()
-                .extract::<bool>()
-                .unwrap());
-            let echoed = py_to_json(result.get_item("result").unwrap().unwrap()).unwrap();
+            let result = result.as_any();
+            assert_eq!(get(result, "success"), serde_json::json!(true));
             assert_eq!(
-                echoed,
+                get(result, "result"),
                 serde_json::json!({"action": "say", "params": {"text": "hello"}})
             );
-            let receipt = result.get_item("receipt").unwrap().unwrap();
-            assert!(!receipt.is_none(), "the kernel's receipt comes back");
+            assert_eq!(get(result, "receipt")["outcome_leaf"], 1);
+
+            // The audit-log methods read the kernel's log.
+            let logs = kernel.get_audit_logs(py, PyDict::new(py)).unwrap();
+            assert_eq!(logs.len(), 2, "a decision leaf and an outcome leaf");
+            let (decision, outcome) = (
+                py_to_json(logs[0].clone()).unwrap(),
+                py_to_json(logs[1].clone()).unwrap(),
+            );
+            assert_eq!(decision["agent_id"], "agent-1");
+            assert_eq!(decision["action"], "echo");
+            assert_eq!(decision["policy_decision"]["effect"], "allow");
+            assert_eq!(outcome["details"]["kind"], "outcome");
+            assert_eq!(outcome["parent_entry_id"], decision["entry_id"]);
+            let entry_id = decision["entry_id"].as_str().unwrap();
+            assert!(kernel.get_audit_entry(py, entry_id).unwrap().is_some());
+            assert!(kernel.verify_audit_chain().unwrap());
+
+            // The root and the receipt are the kernel's signed tree head.
+            let head = kernel.runtime.block_on(kernel.kernel.audit_tree_head());
+            assert_eq!(
+                kernel.get_audit_root_hash().unwrap(),
+                head.head.root.to_hex()
+            );
+            let receipt = kernel.export_audit_receipt(py).unwrap();
+            assert_eq!(get(&receipt, "head")["size"], 2);
+            let native = kernel.agents["agent-1"].clone();
+            let log = kernel.runtime.block_on(kernel.kernel.get_audit_log());
+            assert!(log.iter().all(|entry| entry.agent_id == native.id));
+        });
+    }
+
+    /// `evaluate_policy` is the kernel's Decide stage: the same answer
+    /// `execute_tool` gets, without running or recording anything.
+    #[test]
+    fn evaluate_policy_asks_the_kernel() {
+        Python::initialize();
+
+        Python::attach(|py| {
+            let mut kernel = PyKernel::default().unwrap();
+            let config = PyDict::new(py);
+            config
+                .set_item("allowed_tools", vec!["calculator"])
+                .unwrap();
+            kernel.register_agent("narrow", "Narrow", config).unwrap();
+            kernel
+                .register_agent("agent-1", "Agent One", PyDict::new(py))
+                .unwrap();
+            let ask = |kernel: &mut PyKernel, agent: &str, tool: &str| {
+                py_to_json(
+                    kernel
+                        .evaluate_policy(py, agent, tool, PyDict::new(py))
+                        .unwrap(),
+                )
+                .unwrap()
+            };
+
+            assert_eq!(ask(&mut kernel, "agent-1", "echo")["effect"], "allow");
+            let unknown = ask(&mut kernel, "agent-1", "no_such_tool");
+            assert_eq!(unknown["effect"], "deny");
+            assert!(!unknown["reason"].as_str().unwrap().is_empty());
+            // allowed_tools reaches the kernel as the agent's scope, which
+            // execute_tool enforces at admission.
+            let narrowed = kernel
+                .execute_tool(
+                    py,
+                    "echo",
+                    "narrow",
+                    "say",
+                    PyDict::new(py),
+                    5_000,
+                    128 << 20,
+                )
+                .unwrap_err();
+            assert!(
+                narrowed.is_instance_of::<PyPermissionError>(py),
+                "{narrowed}"
+            );
+            assert!(kernel
+                .evaluate_policy(py, "nobody", "echo", PyDict::new(py))
+                .is_err());
 
             let log = kernel.runtime.block_on(kernel.kernel.get_audit_log());
-            let native = kernel.native_agents["agent-1"];
-            assert_eq!(log.len(), 2, "a decision leaf and an outcome leaf");
-            assert!(log.iter().all(|entry| entry.agent_id == native.id));
-            assert!(log[1].outcome.as_ref().unwrap().success);
+            assert_eq!(log.len(), 1, "only the executed call is recorded");
         });
     }
 
@@ -1221,12 +1305,97 @@ mod tests {
 
             // A built-in that ran and failed reports failure.
             let failed = run(&mut kernel, "calculator", "agent-1", 128 << 20).unwrap();
-            assert!(!failed
-                .get_item("success")
-                .unwrap()
-                .unwrap()
-                .extract::<bool>()
-                .unwrap());
+            assert_eq!(get(failed.as_any(), "success"), serde_json::json!(false));
+        });
+    }
+
+    /// Skills come from the kernel's registry, verified as at startup.
+    #[cfg(feature = "wasm")]
+    #[test]
+    fn skills_are_the_kernels() {
+        Python::initialize();
+
+        Python::attach(|py| {
+            let kernel = PyKernel::default().unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(
+                dir.path().join("echo.wat"),
+                "(module (memory (export \"memory\") 1))",
+            )
+            .unwrap();
+            let manifest = dir.path().join("skill.yaml");
+            std::fs::write(
+                &manifest,
+                "name: py_skill\nversion: \"1.0.0\"\ndescription: x\n\
+                 input_schema: {type: object}\noutput_schema: {type: object}\n\
+                 wasm_path: echo.wat\n",
+            )
+            .unwrap();
+
+            // The default kernel takes signed skills only.
+            let rejected = kernel.load_skill(manifest.to_str().unwrap()).unwrap_err();
+            assert!(rejected.is_instance_of::<PyValueError>(py), "{rejected}");
+            assert!(kernel.get_skill(py, "py_skill").unwrap().is_none());
+            assert!(kernel.list_skills().unwrap().is_empty());
+            assert!(kernel.list_tools().unwrap().contains(&"echo".to_string()));
+        });
+    }
+
+    /// The SDK's settings reach the kernel's policy; a setting it can't
+    /// apply is an error, not silently dropped.
+    #[test]
+    fn settings_configure_the_kernel() {
+        Python::initialize();
+
+        Python::attach(|py| {
+            let settings = PyDict::new(py);
+            settings.set_item("allowed_tools", vec!["echo"]).unwrap();
+            settings
+                .set_item("blocked_tools", vec!["calculator"])
+                .unwrap();
+            settings.set_item("timeout_ms", 2_000).unwrap();
+            let mut kernel = PyKernel::from_settings(settings).unwrap();
+            assert_eq!(kernel.kernel.config().max_execution_time.as_millis(), 2_000);
+            kernel
+                .register_agent("agent-1", "Agent One", PyDict::new(py))
+                .unwrap();
+            let effect = |kernel: &mut PyKernel, tool: &str| {
+                py_to_json(
+                    kernel
+                        .evaluate_policy(py, "agent-1", tool, PyDict::new(py))
+                        .unwrap(),
+                )
+                .unwrap()["effect"]
+                    .clone()
+            };
+            assert_eq!(effect(&mut kernel, "echo"), "allow");
+            assert_eq!(effect(&mut kernel, "calculator"), "deny");
+            assert_eq!(
+                effect(&mut kernel, "data_processor"),
+                "deny",
+                "not allowlisted"
+            );
+
+            let unknown = PyDict::new(py);
+            unknown.set_item("cache_ttl_seconds", 5).unwrap();
+            let refused = PyKernel::from_settings(unknown).unwrap_err();
+            assert!(
+                refused.to_string().contains("unknown kernel setting"),
+                "{refused}"
+            );
+            let wrong = PyDict::new(py);
+            wrong.set_item("default_decision", "maybe").unwrap();
+            assert!(PyKernel::from_settings(wrong).is_err());
+        });
+    }
+
+    #[test]
+    fn a_config_file_that_does_not_load_is_an_error() {
+        Python::initialize();
+
+        Python::attach(|_py| {
+            let missing = PyKernel::from_config("/nonexistent/kernel.yaml").unwrap_err();
+            assert!(missing.to_string().contains("Failed to load kernel config"));
         });
     }
 

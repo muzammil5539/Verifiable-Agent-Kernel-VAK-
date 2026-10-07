@@ -10,7 +10,10 @@ Quick Start::
     kernel = VakKernel.from_config("config/kernel.yaml")
     agent = AgentConfig(agent_id="my-agent", name="My Agent")
     kernel.register_agent(agent)
-    response = kernel.execute_tool("my-agent", "calculator", "add", {"a": 1, "b": 2})
+    response = kernel.execute_tool("my-agent", "echo", "say", {"text": "hello"})
+
+Policy, tools, skills and the audit log go through the Rust kernel in the
+native module (ADR 0011); build it with ``maturin develop``.
 
 Modular Imports::
 

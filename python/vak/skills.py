@@ -1,9 +1,13 @@
 """
 VAK Skills (WASM Tools)
 
-Define and register WASM-sandboxed skills (tools) for your agents.
-Each skill runs in an isolated WebAssembly sandbox with explicit
-permissions, providing security guarantees that host-executed code cannot.
+Describe WASM-sandboxed skills (tools) for your agents. Each skill runs in
+an isolated WebAssembly sandbox with explicit permissions.
+
+The kernel loads skills from their manifest files, verified as at startup
+(signed by a trusted publisher unless signature checking is off), with
+``VakKernel.load_skill(path)``. ``VakKernel.get_skill`` returns a loaded
+skill's manifest as a ``SkillManifest``.
 
 Example::
 
@@ -22,7 +26,8 @@ Example::
         actions=["analyze", "lint", "format"],
     )
 
-    kernel.register_skill(manifest)
+    name = kernel.load_skill("skills/analyzer/skill.yaml")
+    assert kernel.get_skill(name) is not None
 """
 
 from __future__ import annotations

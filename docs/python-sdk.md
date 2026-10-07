@@ -64,11 +64,11 @@ agent = AgentConfig(
 )
 kernel.register_agent(agent)
 
-# 3. Evaluate a policy
+# 3. Ask the kernel whether the agent may call a tool (nothing runs)
 decision = kernel.evaluate_policy(
     agent_id="analyst-001",
-    action="read",
-    context={"resource": "/data/reports/q4.csv"},
+    action="echo",
+    context={"action": "say", "params": {"text": "hello"}},
 )
 print(f"Policy: {decision.effect}")  # PolicyEffect.ALLOW or .DENY
 
@@ -90,6 +90,26 @@ for entry in logs:
 # 6. Shutdown
 kernel.shutdown()
 ```
+
+### Where answers come from
+
+Policy decisions, tool results, skills and audit records come from the Rust
+kernel in the native module (ADR 0011). Without the module, those methods
+raise `VakError` (`execute_tool` raises `ToolExecutionError`); nothing answers
+in the kernel's place.
+
+- **Policy** comes from the kernel's configuration. That is either
+  `KernelConfig`'s security and policy settings (allowed and blocked tools, the
+  default decision, policy files, signature checking) or a kernel config file
+  passed to `VakKernel.from_config`.
+- **Not on the kernel.** There are no Python policy hooks, Python policy rules
+  (`load_policies`) or safety rules on the kernel. `PolicyEngine` and
+  `ReasonerConfig` remain as standalone Python evaluators that the kernel
+  doesn't consult.
+- **Skills** are loaded with `load_skill(manifest_path)`, verified as the
+  kernel verifies them at startup.
+- **Memory and voting** are Python, in this process, with or without the native
+  module.
 
 ### How `execute_tool` runs a tool
 
@@ -138,8 +158,8 @@ The `agent_context()` method gives a scoped context for an already-registered ag
 kernel.register_agent(AgentConfig(agent_id="bot", name="Bot"))
 
 with kernel.agent_context("bot") as ctx:
-    decision = ctx.evaluate_policy("read", {"resource": "/data"})
-    result = ctx.execute_tool("calculator", "add", {"a": 1, "b": 2})
+    decision = ctx.evaluate_policy("echo")
+    result = ctx.execute_tool("echo", "add", {"a": 1, "b": 2})
 ```
 
 ---
@@ -223,7 +243,7 @@ assert isinstance(item, MemoryItem)
 result = kernel.retrieve_memory("api-key-hash")
 print(result.content)  # "abc123"
 
-# Search by keyword (stub uses keyword matching, native uses vector search)
+# Search by keyword (key or content contains the query; not vector search)
 results = kernel.search_semantic("api", top_k=5)
 ```
 
@@ -293,25 +313,31 @@ print(f"Risk level: {analysis['risk_level']}")            # "critical", "high", 
 
 ## Audit Chain Verification
 
-The audit system uses SHA-256 hash chaining to create tamper-evident logs.
+The audit log is the kernel's: an RFC 9162 Merkle tree with a hash chain,
+written only by calls the kernel mediates. Each call leaves a decision entry
+and, if it ran, an outcome entry. The SDK cannot add entries of its own
+(ADR 0011).
 
 ```python
 kernel = VakKernel.default()
+kernel.register_agent(AgentConfig(agent_id="agent-1", name="Agent One"))
 
-# Create audit entries (each entry is hash-chained)
-kernel.create_audit_entry("agent-1", "file.read", "/data/report.csv")
-kernel.create_audit_entry("agent-1", "compute.run", "model-training")
+# Calls through the kernel are recorded: decision, then outcome
+kernel.execute_tool("agent-1", "echo", "read", {"path": "/data/report.csv"})
+
+for entry in kernel.get_audit_logs(agent_id="agent-1"):
+    print(entry.details["kind"], entry.action, entry.policy_decision.effect.value)
 
 # Verify chain integrity
 assert kernel.verify_audit_chain()  # True if no tampering
 
-# Get current root hash
+# The Merkle tree's root
 root = kernel.get_audit_root_hash()
 print(f"Root hash: {root}")  # SHA-256 hex string
 
-# Export a cryptographic receipt
+# The kernel's signed tree head
 receipt = kernel.export_audit_receipt()
-print(f"Receipt: {receipt['receipt_id']}, entries: {receipt['entry_count']}")
+print(f"Entries: {receipt['head']['size']}, signed by {receipt['public_key']}")
 ```
 
 ---

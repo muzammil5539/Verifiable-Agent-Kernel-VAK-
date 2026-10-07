@@ -1,100 +1,151 @@
-# The Python binding runs tools through the kernel
+# The Python SDK answers only from the kernel
 
 Finding I4 in `docs/architecture-v2.md` was that the Python SDK's native `Kernel` was
-not the kernel. `PyKernel` held a `PolicyEngine` and an `AuditLogger` of its own. Its
-`execute_tool` returned `success: "true"` and an echo of its arguments without running
-anything. The pure-Python stub, which the SDK falls back to when the native module
-fails to import, did the same. So a Python caller could be told a tool ran when
-nothing ran it. That is the failure K1 fixed in the kernel, and "no fake success" in
-CLAUDE.md forbids it.
+not the kernel.
+
+- **Its own engine and log.** `PyKernel` held a `PolicyEngine`, an `AuditLogger` and a
+  skill registry of names, all of its own. None of them were the kernel's.
+- **Fake success.** Its `execute_tool` returned `success: "true"` and an echo of its
+  arguments without running anything. The pure-Python stub, which the SDK fell back to
+  when the native module failed to import, did the same, and allowed every policy
+  question.
+- **More engines on top.** The SDK added its own policy hooks, rule engine and safety
+  rules.
+
+So a Python caller could be told a tool ran when nothing ran it, and could get a policy
+decision or audit record from an engine the kernel never consulted. That is the failure
+K1 fixed in the kernel, and "no fake success" in CLAUDE.md forbids it.
 
 ## Decisions
 
-**`PyKernel::execute_tool` calls `Kernel::execute`.**
+**Every answer about policy, tools, skills or the audit log comes from one Rust
+`Kernel`.** `PyKernel` owns a kernel and a two-worker Tokio runtime, and blocks on the
+kernel's async API (with the GIL released while a tool runs). It keeps no policy engine,
+audit log or skill registry of its own.
 
-- **The kernel and runtime.** `PyKernel` owns a kernel and a two-worker Tokio runtime,
-  and blocks on `Kernel::execute` with the GIL released.
-- **Agents.** Each agent registered from Python gets a kernel `AgentId` and a session,
-  and is registered in the kernel's agent registry. Unregistering ends the session.
-- **What the kernel does.** Its policy decides, its audit log records the decision
-  before the tool runs and the outcome after, and its sandbox runs skills. The
-  response carries the kernel's receipt.
-- **Exceptions.** A policy refusal raises `PermissionError(policy_id, reason)`, which
-  the SDK maps to `PolicyViolationError`. Any other refusal raises `RuntimeError`,
-  which the SDK maps to `ToolExecutionError`. A tool that ran and failed returns
-  `success: False`.
-- **Types.** `success` is a `bool`. It was the string `"true"`, which is truthy in
-  Python whatever it says.
+| SDK method | Kernel |
+|---|---|
+| `execute_tool` | `Kernel::execute`: admit, budget, decide, record, run, record the outcome, receipt |
+| `evaluate_policy(agent, tool, params)` | `Kernel::evaluate_policy`, the Decide stage alone |
+| `register_agent` | `Kernel::register_agent`: `allowed_tools` becomes the agent's own scope; `role` and `attributes` become attributes policy can read |
+| `list_tools` | `Kernel::list_tools` |
+| `load_skill`, `list_skills`, `get_skill` | `Kernel::load_skill` (verified as at startup), `skill_manifest` |
+| `get_audit_logs`, `get_audit_entry` | `Kernel::get_audit_log` |
+| `verify_audit_chain` | `Kernel::verify_audit_chain` |
+| `get_audit_root_hash`, `export_audit_receipt` | `Kernel::audit_tree_head`, signed |
+| `VakKernel(config=KernelConfig(...))` | `Kernel.from_settings`: allowlist, blocklist, default decision, policy files, signature checking, time and memory limits, rate limit, audit log path |
+| `VakKernel.from_config(path)` | `KernelConfig::from_file`; an unreadable file is an error, not a fallback |
 
-**A tool gets `{"action": action, "params": params}`.** The Python call names a tool,
-an action and parameters; a kernel tool takes one JSON value. This is the shape the
-shipped WASM skills take. The built-in calculator wants `operation` and `operands`, so
-a Python call with `action="add"` fails there, with an error, rather than being
-translated.
+**Settings are never silently dropped.**
+
+- `from_settings` rejects an unknown key.
+- A config file given together with non-default `KernelConfig` settings is an error,
+  because one would be ignored.
+- The SDK's two default-decision settings allow by default only if both say "allow".
+
+**Methods with no kernel equivalent are removed:**
+
+- **Removed from `VakKernel`:** `create_audit_entry`, `add_policy_hook`,
+  `remove_policy_hook`, `load_policies`, the `policy_engine` property,
+  `add_safety_rule`, `add_constraint`, `check_constraints`, `configure_reasoner`, the
+  `reasoner` property, and `register_skill(SkillManifest)` (replaced by
+  `load_skill(path)`).
+- **Removed from the agent context:** `create_audit_entry`.
+- **Why `create_audit_entry` has no equivalent.** The kernel's log records only calls it
+  mediated (ADR 0007), so an entry the SDK writes would claim the kernel attested
+  something it never saw.
+- **Why hooks, rules and safety rules have no equivalent.** They were Python engines
+  deciding instead of the kernel's policy decision point, and their denials never
+  reached the kernel's log.
+- **What remains in Python.** `PolicyEngine` and `ReasonerConfig` remain as standalone
+  evaluators, and say the kernel doesn't consult them.
+
+A missing method is honest; a method that answers from the wrong engine is not.
+
+**Without the native module, nothing answers in the kernel's place.**
+
+- The stub is deleted.
+- `execute_tool` raises `ToolExecutionError`.
+- Policy, tools, skills and audit methods raise `VakError`.
+- Agent bookkeeping still works.
+
+**A tool gets `{"action": action, "params": params}`.**
+
+- **The mismatch.** The Python call names a tool, an action and parameters; a kernel
+  tool takes one JSON value.
+- **The shape chosen.** It is the shape the shipped WASM skills take, and `echo`
+  returns it.
+- **Built-ins that want another shape fail, with an error.** The calculator wants
+  `operation` and `operands`. The call isn't translated.
+
+**Audit entries become the SDK's `AuditEntry` faithfully.**
+
+- **Fields.** Every entry is a tool call: `action` and `resource` are the tool.
+  `details` carries the kind (decision or outcome), the leaf index, the session, the
+  hashes and the outcome. An outcome's `parent_entry_id` is its decision.
+- **Level.** The kernel has no level, so the SDK derives one: WARNING for a refusal,
+  ERROR for a failed run, INFO otherwise.
 
 **Limits are never looser than asked.**
 
-- **Time.** `timeout_ms` reaches the kernel as `ToolRequest::timeout_ms`, which the
-  kernel now applies when it is the tighter limit.
-- **Memory.** The kernel takes no per-call memory limit. So the native kernel gives
-  every skill 128 MiB, the SDK's default for an agent, and `execute_tool` refuses a
-  `memory_limit` below that, with an error that says nothing ran.
+- **Time.** `timeout_ms` reaches the kernel as `ToolRequest::timeout_ms`, applied when
+  tighter than the kernel's.
+- **Memory.** The kernel takes no per-call memory limit. So `execute_tool` refuses a
+  `memory_limit` below what the kernel gives every skill (128 MiB by default, the SDK's
+  default for agents and requests), with an error that says nothing ran.
 
-**Without the native module, `execute_tool` fails.**
+**Memory and voting stay in Python.**
 
-- The stub's `execute_tool` raises.
-- `VakKernel.execute_tool` raises `ToolExecutionError` when there is no kernel to run
-  the call.
-- Tests of the SDK's own logic around a call use an explicit test double
-  (`python/tests/conftest.py`, the `fake_tools` fixture). It is labelled as fake and
-  exists only in the tests.
+- **In both modes.** `vak._local` runs them the same way with or without the native
+  module. They decide no policy, write no audit record and run no tool.
+- **Docstrings changed.** They no longer claim vector search or kernel enforcement.
 
-**The bindings' tests run.**
+**The bindings and the SDK are tested on the native module.**
 
-- **Linking.** PyO3's `extension-module` feature, deprecated in 0.29, kept libpython
-  out of the link, so `cargo test --features python` could not link. It now comes from
-  `pyproject.toml`'s maturin features instead of `Cargo.toml`, and the Rust tests in
-  `src/python.rs` run, two of them through `Kernel::execute`.
-- **CI.** CI runs them, then builds the module with maturin and runs
-  `python/tests/test_native_kernel.py` with `VAK_REQUIRE_NATIVE` set, so a missing
-  module fails rather than skips.
+- **Linking.** PyO3's deprecated `extension-module` feature comes from `pyproject.toml`'s
+  maturin features, not `Cargo.toml`, so `cargo test --features python` links.
+- **Rust tests.** The tests in `src/python.rs` drive every wrapped method through the
+  kernel.
+- **CI.** CI runs those, then builds the module and runs the whole Python suite with
+  `VAK_REQUIRE_NATIVE` set. In that mode a test that needs the kernel fails instead of
+  skipping.
+- **Without the module.** The stub-mode run (every Python version) skips the tests that
+  need the kernel and checks that kernel methods raise.
 
 ## Consequences
 
-- **Still outside the kernel.** `evaluate_policy`, the audit-log methods,
-  `add_policy_rule` and the skill registry methods still use `PyKernel`'s own engine
-  and logger. A call through `VakKernel.execute_tool` is therefore decided twice:
-  - first by the SDK's policy hooks and `evaluate_policy`;
-  - then by the kernel.
-
-  Either can refuse it. Neither can let through what the other refuses. Moving those
-  methods onto the kernel is the rest of I4.
-- **The SDK's own audit trail is kept.** It now records the kernel's decision for each
-  call (allowed, denied, or the error). Before, it recorded "allowed" before anything
-  was decided.
-- **Native-mode tests still fail.** 49 Python tests fail against the native module.
-  63 did before this change; the 14 that needed a tool to run now use the test double.
-  The 49 fail because the SDK and the native module disagree in ways that predate this
-  change:
-  - the module's own policy engine denies registration by default;
-  - several of its methods return different fields than the SDK reads.
-
-  The stub-mode suite, which CI runs on every Python version, passes.
-- **Breaking:**
-  - `execute_tool` returns typed values.
-  - It raises where it used to report success.
-  - It needs `memory_limit` of at least 128 MiB.
-  - Without the native module, tools don't run.
+- **The 49 Python tests that failed against the native module are resolved.**
+  - **Behaviour that no longer exists.** Tests of the Python policy engine, policy
+    hooks, `create_audit_entry`, the stub's audit chain and its default-allow are
+    deleted.
+  - **Rewritten against the kernel.** Agent management, policy evaluation, tool
+    execution, audit and the end-to-end scenarios now check what the kernel decided,
+    ran and recorded.
+  - **Fixed earlier.** Memory and voting were fixed by `vak._local`.
+- **Breaking.**
+  - The removed methods, and `VakKernel.policy_engine` and `.reasoner`.
+  - `evaluate_policy` asks about a tool, not an arbitrary action.
+  - Kernel methods raise without the native module.
+  - `execute_tool` returns typed values and raises where it used to report success.
+  - `ToolRequest.memory_limit_bytes` defaults to 128 MiB (was 64), so a default request
+    isn't refused.
+  - `register_agent` no longer asks the SDK's policy for "agent.register"; registration
+    isn't a policy decision.
 
 ## Considered options
 
-**Failing `execute_tool` closed until the binding could wrap the kernel.** That was the
-fallback if wrapping didn't fit in one slice. It did fit, so the binding runs tools.
+**Keeping the stub's answers for development.** A development mode that reports success
+for tools that didn't run, or allows every policy question, is the bug this ADR is about.
+If it shipped, it would be one `ImportError` away from production.
 
-**Keeping the stub's success for development.** A development mode that reports
-success for tools that didn't run is the bug this ADR is about. If it shipped, it would
-be one `ImportError` away from production. Tests that need a tool to "run" say so with a
-fixture.
+**Running Python policy hooks inside the kernel's decision point.** That would put
+arbitrary Python into the Decide stage, called from the kernel's runtime threads. It
+would also need a port for a GIL-holding decision point. Policy belongs in the kernel's
+configuration (ADR 0001, 0008).
+
+**An SDK-writable audit log.** Appending application events to the transparency log
+would mix the kernel's attestations of mediated calls with claims it can't check
+(ADR 0007).
 
 **A per-call memory limit in the kernel.** `ToolRequest` has no memory field, and adding
 one changes a public struct that downstream code builds with a literal. Refusing a

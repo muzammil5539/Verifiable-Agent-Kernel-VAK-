@@ -1,587 +1,329 @@
-from typing import Optional
 """
-Tests for VAK Kernel functionality.
+Tests for VakKernel.
 
-Tests the core kernel class and its operations.
+Policy decisions, tool results, skills and audit records come from the
+Rust kernel (ADR 0011). Tests of those use the ``native`` fixture; tests
+of what happens without the native module use ``no_native``. Agent
+bookkeeping and the error types work either way.
 """
 
 import pytest
-from datetime import datetime
 
 from vak import (
-    VakKernel,
     AgentConfig,
-    AuditLevel,
+    AgentNotFoundError,
+    KernelConfig,
     PolicyDecision,
     PolicyEffect,
+    PolicyViolationError,
+    ToolExecutionError,
     ToolRequest,
     ToolResponse,
     VakError,
-    PolicyViolationError,
-    AgentNotFoundError,
-    ToolExecutionError,
+    VakKernel,
 )
+from vak.config import SecurityConfig
+
+
+def kernel_with(*agents, config=None):
+    """An initialized kernel with ``agents`` (ids) registered."""
+    kernel = VakKernel(config=config)
+    kernel.initialize()
+    for agent_id in agents:
+        kernel.register_agent(AgentConfig(agent_id=agent_id, name=agent_id))
+    return kernel
 
 
 class TestVakKernelCreation:
-    """Tests for kernel creation and initialization."""
+    """Kernel creation and lifecycle."""
 
     def test_create_default_kernel(self):
-        """Test creating kernel with default configuration."""
         kernel = VakKernel.default()
         assert kernel.is_initialized
 
     def test_create_kernel_not_initialized(self):
-        """Test that kernel is not initialized before initialize() call."""
         kernel = VakKernel()
         assert not kernel.is_initialized
 
     def test_initialize_kernel(self):
-        """Test explicit initialization."""
         kernel = VakKernel()
         kernel.initialize()
         assert kernel.is_initialized
 
     def test_double_initialize_is_idempotent(self):
-        """Test that calling initialize() twice is safe."""
         kernel = VakKernel()
         kernel.initialize()
-        kernel.initialize()  # Should not raise
+        kernel.initialize()
         assert kernel.is_initialized
 
     def test_shutdown_kernel(self):
-        """Test kernel shutdown."""
         kernel = VakKernel.default()
         kernel.shutdown()
         assert not kernel.is_initialized
 
     def test_shutdown_clears_agents(self):
-        """Test that shutdown clears registered agents."""
-        kernel = VakKernel.default()
-        agent = AgentConfig(agent_id="test-agent", name="Test")
-        kernel.register_agent(agent)
+        kernel = kernel_with("test-agent")
         kernel.shutdown()
-        
-        # Re-initialize and verify agent is gone
         kernel.initialize()
         assert "test-agent" not in kernel.list_agents()
 
+    def test_kernel_has_config_path(self):
+        kernel = VakKernel("/path/to/config.yaml")
+        assert kernel.config_path is not None
+
+    def test_a_config_file_that_does_not_load_is_an_error(self, native):
+        with pytest.raises(VakError, match="Failed to initialize kernel"):
+            VakKernel.from_config("/nonexistent/kernel.yaml")
+
+    def test_a_config_file_and_settings_together_are_an_error(self, native):
+        config = KernelConfig(security=SecurityConfig(blocked_tools=["echo"]))
+        kernel = VakKernel("/some/kernel.yaml", config=config)
+        with pytest.raises(VakError, match="not both"):
+            kernel.initialize()
+
 
 class TestAgentManagement:
-    """Tests for agent registration and management."""
+    """Agent registration and bookkeeping."""
 
     def test_register_agent(self):
-        """Test registering an agent."""
-        kernel = VakKernel.default()
-        agent = AgentConfig(
-            agent_id="test-agent",
-            name="Test Agent",
-            description="A test agent"
-        )
-        kernel.register_agent(agent)
+        kernel = kernel_with("test-agent")
         assert "test-agent" in kernel.list_agents()
 
     def test_get_registered_agent(self):
-        """Test retrieving a registered agent."""
         kernel = VakKernel.default()
-        agent = AgentConfig(
-            agent_id="test-agent",
-            name="Test Agent",
-            capabilities=["testing"]
+        kernel.register_agent(
+            AgentConfig(agent_id="test-agent", name="Test Agent", capabilities=["testing"])
         )
-        kernel.register_agent(agent)
-        
         retrieved = kernel.get_agent("test-agent")
         assert retrieved.agent_id == "test-agent"
         assert retrieved.name == "Test Agent"
         assert "testing" in retrieved.capabilities
 
     def test_get_unregistered_agent_raises(self):
-        """Test that getting an unregistered agent raises."""
         kernel = VakKernel.default()
         with pytest.raises(AgentNotFoundError) as exc_info:
             kernel.get_agent("nonexistent")
         assert exc_info.value.agent_id == "nonexistent"
 
     def test_unregister_agent(self):
-        """Test unregistering an agent."""
-        kernel = VakKernel.default()
-        agent = AgentConfig(agent_id="test-agent", name="Test")
-        kernel.register_agent(agent)
+        kernel = kernel_with("test-agent")
         kernel.unregister_agent("test-agent")
         assert "test-agent" not in kernel.list_agents()
 
     def test_unregister_nonexistent_agent_raises(self):
-        """Test that unregistering nonexistent agent raises."""
         kernel = VakKernel.default()
         with pytest.raises(AgentNotFoundError):
             kernel.unregister_agent("nonexistent")
 
     def test_list_agents_empty(self):
-        """Test listing agents when none registered."""
-        kernel = VakKernel.default()
-        assert kernel.list_agents() == []
+        assert VakKernel.default().list_agents() == []
 
     def test_list_agents_multiple(self):
-        """Test listing multiple registered agents."""
-        kernel = VakKernel.default()
-        for i in range(3):
-            agent = AgentConfig(agent_id=f"agent-{i}", name=f"Agent {i}")
-            kernel.register_agent(agent)
-        
-        agents = kernel.list_agents()
-        assert len(agents) == 3
-        assert "agent-0" in agents
-        assert "agent-1" in agents
-        assert "agent-2" in agents
+        kernel = kernel_with("agent-0", "agent-1", "agent-2")
+        assert sorted(kernel.list_agents()) == ["agent-0", "agent-1", "agent-2"]
+
+
+@pytest.mark.usefixtures("no_native")
+class TestWithoutTheNativeKernel:
+    """Without the native module nothing answers in the kernel's place:
+    nothing runs, nothing is decided, and there is no audit log."""
+
+    def test_execute_tool_fails_closed(self):
+        kernel = kernel_with("test-agent")
+        assert not kernel.has_native_kernel
+        with pytest.raises(ToolExecutionError, match="nothing ran"):
+            kernel.execute_tool("test-agent", "echo", "say", {"text": "hi"})
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            lambda k: k.evaluate_policy("test-agent", "echo"),
+            lambda k: k.list_tools(),
+            lambda k: k.list_skills(),
+            lambda k: k.get_skill("anything"),
+            lambda k: k.load_skill("skill.yaml"),
+            lambda k: k.get_audit_logs(),
+            lambda k: k.get_audit_entry("anything"),
+            lambda k: k.verify_audit_chain(),
+            lambda k: k.get_audit_root_hash(),
+            lambda k: k.export_audit_receipt(),
+        ],
+    )
+    def test_kernel_answers_raise(self, call):
+        kernel = kernel_with("test-agent")
+        with pytest.raises(VakError, match="needs the native kernel"):
+            call(kernel)
 
 
 class TestPolicyEvaluation:
-    """Tests for policy evaluation."""
+    """evaluate_policy is the kernel's Decide stage."""
 
-    def test_evaluate_policy_default_allow(self):
-        """Test that default policy allows actions (stub mode)."""
-        kernel = VakKernel.default()
-        decision = kernel.evaluate_policy(
-            agent_id="system",
-            action="test.action"
-        )
-        # In stub mode, default is allow
+    def test_a_builtin_tool_is_allowed_by_default(self, native):
+        decision = kernel_with("agent").evaluate_policy("agent", "echo")
+        assert isinstance(decision, PolicyDecision)
         assert decision.is_allowed()
 
-    def test_evaluate_policy_with_context(self):
-        """Test policy evaluation with context."""
-        kernel = VakKernel.default()
-        decision = kernel.evaluate_policy(
-            agent_id="system",
-            action="tool.execute",
-            context={"tool_id": "calculator", "amount": 500}
-        )
-        assert isinstance(decision, PolicyDecision)
+    def test_an_unknown_tool_is_denied_by_default(self, native):
+        decision = kernel_with("agent").evaluate_policy("agent", "no_such_tool")
+        assert decision.is_denied()
+        assert decision.reason
 
-    def test_custom_policy_hook_deny(self):
-        """Test custom policy hook that denies."""
-        kernel = VakKernel.default()
-        
-        def deny_dangerous(agent_id: str, action: str, context: dict) -> Optional[PolicyDecision]:
-            if action.startswith("dangerous."):
-                return PolicyDecision(
-                    effect=PolicyEffect.DENY,
-                    policy_id="custom-deny",
-                    reason="Dangerous action blocked"
-                )
-            return None
-        
-        kernel.add_policy_hook(deny_dangerous)
-        
-        # Normal action allowed
-        normal_decision = kernel.evaluate_policy("agent", "normal.action")
-        assert normal_decision.is_allowed()
-        
-        # Dangerous action denied
-        dangerous_decision = kernel.evaluate_policy("agent", "dangerous.delete")
-        assert dangerous_decision.is_denied()
+    def test_settings_reach_the_kernel(self, native):
+        config = KernelConfig(security=SecurityConfig(blocked_tools=["calculator"]))
+        kernel = kernel_with("agent", config=config)
+        assert kernel.evaluate_policy("agent", "echo").is_allowed()
+        assert kernel.evaluate_policy("agent", "calculator").is_denied()
 
-    def test_remove_policy_hook(self):
-        """Test removing a policy hook."""
-        kernel = VakKernel.default()
-        
-        def deny_all(agent_id: str, action: str, context: dict) -> Optional[PolicyDecision]:
-            return PolicyDecision(
-                effect=PolicyEffect.DENY,
-                policy_id="deny-all",
-                reason="All denied"
-            )
-        
-        kernel.add_policy_hook(deny_all)
-        
-        # Should be denied
-        decision1 = kernel.evaluate_policy("agent", "test")
-        assert decision1.is_denied()
-        
-        # Remove hook
-        kernel.remove_policy_hook(deny_all)
-        
-        # Should be allowed now
-        decision2 = kernel.evaluate_policy("agent", "test")
-        assert decision2.is_allowed()
+    def test_an_unregistered_agent_raises(self, native):
+        with pytest.raises(AgentNotFoundError):
+            kernel_with().evaluate_policy("nobody", "echo")
+
+    def test_evaluating_records_nothing(self, native):
+        kernel = kernel_with("agent")
+        kernel.evaluate_policy("agent", "echo")
+        assert kernel.get_audit_logs() == []
 
 
 class TestToolExecution:
-    """Tests for tool execution."""
+    """execute_tool runs through Kernel::execute."""
 
-    @pytest.mark.usefixtures("fake_tools")
-    def test_execute_tool_basic(self):
-        """Test basic tool execution."""
-        kernel = VakKernel.default()
-        agent = AgentConfig(agent_id="test-agent", name="Test")
-        kernel.register_agent(agent)
-        
-        response = kernel.execute_tool(
-            agent_id="test-agent",
-            tool_id="calculator",
-            action="add",
-            parameters={"a": 1, "b": 2}
-        )
-        
+    def test_execute_tool_basic(self, native):
+        kernel = kernel_with("test-agent")
+        response = kernel.execute_tool("test-agent", "echo", "say", {"text": "hi"})
         assert isinstance(response, ToolResponse)
-        assert response.success
+        assert response.success is True
+        assert response.result == {"action": "say", "params": {"text": "hi"}}
+        assert response.receipt["decision_leaf"] == 0
+        assert response.receipt["outcome_leaf"] == 1
 
-    @pytest.mark.usefixtures("no_native")
-    def test_execute_tool_without_native_kernel_fails_closed(self):
-        """Without the native kernel nothing runs, and nothing says it did."""
-        kernel = VakKernel.default()
-        kernel.register_agent(AgentConfig(agent_id="test-agent", name="Test"))
-
-        with pytest.raises(ToolExecutionError, match="nothing ran"):
-            kernel.execute_tool(
-                agent_id="test-agent",
-                tool_id="calculator",
-                action="add",
-                parameters={"a": 1, "b": 2},
-            )
-
-    @pytest.mark.usefixtures("fake_tools")
-    def test_a_kernel_refusal_is_a_policy_violation(self):
-        """The native kernel's refusal, PermissionError(policy_id, reason),
-        reaches the caller as a PolicyViolationError."""
-        kernel = VakKernel.default()
-        kernel.register_agent(AgentConfig(agent_id="test-agent", name="Test"))
-
-        def refuse(*_args):
-            raise PermissionError("forbid-shell", "shell is blocked")
-
-        kernel._native_kernel.execute_tool = refuse
-        with pytest.raises(PolicyViolationError) as refused:
-            kernel.execute_tool(agent_id="test-agent", tool_id="shell", action="run")
-        assert refused.value.decision.policy_id == "forbid-shell"
-        assert refused.value.decision.reason == "shell is blocked"
-
-        def refuse_tersely(*_args):
-            raise PermissionError("blocked")
-
-        kernel._native_kernel.execute_tool = refuse_tersely
-        with pytest.raises(PolicyViolationError) as refused:
-            kernel.execute_tool(agent_id="test-agent", tool_id="shell", action="run")
-        assert refused.value.decision.policy_id == "kernel"
-        assert refused.value.decision.reason == "blocked"
-
-    @pytest.mark.usefixtures("fake_tools")
-    def test_a_failed_tool_is_not_a_success(self):
-        """A tool that ran and failed comes back with success False."""
-        kernel = VakKernel.default()
-        kernel.register_agent(AgentConfig(agent_id="test-agent", name="Test"))
-        kernel._native_kernel.execute_tool = lambda *_args: {
-            "request_id": "r-1",
-            "success": False,
-            "result": None,
-            "error": "Missing 'operation' parameter",
-            "execution_time_ms": 1,
-        }
-        response = kernel.execute_tool(agent_id="test-agent", tool_id="calculator", action="add")
-        assert not response.success
-        assert response.error == "Missing 'operation' parameter"
-
-    def test_execute_tool_unregistered_agent(self):
-        """Test that executing for unregistered agent raises."""
-        kernel = VakKernel.default()
-        
+    def test_execute_tool_unregistered_agent(self, native):
         with pytest.raises(AgentNotFoundError):
-            kernel.execute_tool(
-                agent_id="nonexistent",
-                tool_id="calculator",
-                action="add"
-            )
+            kernel_with().execute_tool("nonexistent", "echo", "say")
 
-    @pytest.mark.usefixtures("fake_tools")
-    def test_execute_tool_custom_timeout(self):
-        """Test tool execution with custom timeout."""
+    def test_a_kernel_refusal_is_a_policy_violation(self, native):
+        kernel = kernel_with("test-agent")
+        with pytest.raises(PolicyViolationError) as refused:
+            kernel.execute_tool("test-agent", "no_such_tool", "run")
+        assert refused.value.decision.is_denied()
+        assert refused.value.decision.reason
+
+    def test_an_agents_own_scope_is_enforced(self, native):
         kernel = VakKernel.default()
-        agent = AgentConfig(agent_id="test-agent", name="Test")
-        kernel.register_agent(agent)
-        
-        response = kernel.execute_tool(
-            agent_id="test-agent",
-            tool_id="slow_tool",
-            action="process",
-            timeout_ms=30000
+        kernel.register_agent(
+            AgentConfig(agent_id="narrow", name="Narrow", allowed_tools=["calculator"])
         )
-        
+        with pytest.raises(PolicyViolationError) as refused:
+            kernel.execute_tool("narrow", "echo", "say")
+        assert refused.value.decision.policy_id == "agent.scope"
+
+    def test_a_failed_tool_is_not_a_success(self, native):
+        # The built-in calculator wants "operation" and "operands".
+        response = kernel_with("test-agent").execute_tool("test-agent", "calculator", "add")
+        assert response.success is False
+        assert response.error
+
+    def test_a_memory_limit_below_the_kernels_is_refused(self, native):
+        kernel = kernel_with("test-agent")
+        with pytest.raises(ToolExecutionError, match="nothing ran"):
+            kernel.execute_tool("test-agent", "echo", "say", memory_limit_bytes=1024 * 1024)
+
+    def test_execute_tool_custom_timeout(self, native):
+        response = kernel_with("test-agent").execute_tool(
+            "test-agent", "echo", "say", timeout_ms=30000
+        )
         assert response.success
 
-    @pytest.mark.usefixtures("fake_tools")
-    def test_execute_tool_request_object(self):
-        """Test executing with ToolRequest object."""
-        kernel = VakKernel.default()
-        agent = AgentConfig(agent_id="test-agent", name="Test")
-        kernel.register_agent(agent)
-        
+    def test_execute_tool_request_object(self, native):
+        kernel = kernel_with("test-agent")
         request = ToolRequest(
-            tool_id="calculator",
-            agent_id="test-agent",
-            action="multiply",
-            parameters={"a": 3, "b": 4}
+            tool_id="echo", agent_id="test-agent", action="say", parameters={"n": 1}
         )
-        
         response = kernel.execute_tool_request(request)
         assert response.success
+        assert response.result == {"action": "say", "params": {"n": 1}}
 
-    def test_list_tools(self):
-        """Test listing available tools."""
-        kernel = VakKernel.default()
-        tools = kernel.list_tools()
-        # In stub mode, may return empty or predefined tools
-        assert isinstance(tools, list)
-
-
-class TestAuditLogging:
-    """Tests for audit logging functionality."""
-
-    def test_create_audit_entry(self):
-        """Test creating an audit entry."""
-        kernel = VakKernel.default()
-        
-        entry_id = kernel.create_audit_entry(
-            agent_id="test-agent",
-            action="test.action",
-            resource="test-resource"
-        )
-        
-        assert entry_id is not None
-        assert len(entry_id) > 0
-
-    def test_create_audit_entry_with_level(self):
-        """Test creating audit entry with specific level."""
-        kernel = VakKernel.default()
-        
-        entry_id = kernel.create_audit_entry(
-            agent_id="test-agent",
-            action="dangerous.action",
-            resource="sensitive-resource",
-            level=AuditLevel.WARNING
-        )
-        
-        assert entry_id is not None
-
-    def test_create_audit_entry_with_details(self):
-        """Test creating audit entry with details."""
-        kernel = VakKernel.default()
-        
-        entry_id = kernel.create_audit_entry(
-            agent_id="test-agent",
-            action="data.modify",
-            resource="database",
-            details={"rows_affected": 5, "table": "users"}
-        )
-        
-        assert entry_id is not None
-
-    def test_create_hierarchical_audit_entry(self):
-        """Test creating a child audit entry."""
-        kernel = VakKernel.default()
-        
-        parent_id = kernel.create_audit_entry(
-            agent_id="test-agent",
-            action="workflow.start",
-            resource="workflow-1"
-        )
-        
-        child_id = kernel.create_audit_entry(
-            agent_id="test-agent",
-            action="workflow.step",
-            resource="workflow-1",
-            parent_entry_id=parent_id
-        )
-        
-        assert child_id != parent_id
-
-    def test_get_audit_logs_empty(self):
-        """Test getting audit logs when empty."""
-        kernel = VakKernel.default()
-        logs = kernel.get_audit_logs()
-        # May return empty in stub mode
-        assert isinstance(logs, list)
-
-    def test_get_audit_logs_with_filters(self):
-        """Test getting audit logs with filters."""
-        kernel = VakKernel.default()
-        logs = kernel.get_audit_logs(
-            agent_id="specific-agent",
-            level=AuditLevel.WARNING,
-            limit=10
-        )
-        assert isinstance(logs, list)
+    def test_list_tools(self, native):
+        tools = kernel_with().list_tools()
+        assert {"echo", "calculator", "data_processor", "system_info"} <= set(tools)
 
 
 class TestAgentContext:
-    """Tests for agent context manager."""
+    """The agent context acts as its agent."""
 
     def test_agent_context_basic(self):
-        """Test using agent context manager."""
-        kernel = VakKernel.default()
-        agent = AgentConfig(agent_id="test-agent", name="Test")
-        kernel.register_agent(agent)
-        
+        kernel = kernel_with("test-agent")
         with kernel.agent_context("test-agent") as ctx:
             assert ctx.agent_id == "test-agent"
 
-    @pytest.mark.usefixtures("fake_tools")
-    def test_agent_context_execute_tool(self):
-        """Test executing tool within agent context."""
-        kernel = VakKernel.default()
-        agent = AgentConfig(agent_id="test-agent", name="Test")
-        kernel.register_agent(agent)
-        
+    def test_agent_context_execute_tool(self, native):
+        kernel = kernel_with("test-agent")
         with kernel.agent_context("test-agent") as ctx:
-            response = ctx.execute_tool(
-                tool_id="calculator",
-                action="add",
-                parameters={"a": 1, "b": 2}
-            )
-            assert response.success
+            assert ctx.execute_tool("echo", "say", {"a": 1}).success
 
-    def test_agent_context_evaluate_policy(self):
-        """Test evaluating policy within agent context."""
-        kernel = VakKernel.default()
-        agent = AgentConfig(agent_id="test-agent", name="Test")
-        kernel.register_agent(agent)
-        
+    def test_agent_context_evaluate_policy(self, native):
+        kernel = kernel_with("test-agent")
         with kernel.agent_context("test-agent") as ctx:
-            decision = ctx.evaluate_policy("test.action")
-            assert isinstance(decision, PolicyDecision)
-
-    def test_agent_context_create_audit_entry(self):
-        """Test creating audit entry within agent context."""
-        kernel = VakKernel.default()
-        agent = AgentConfig(agent_id="test-agent", name="Test")
-        kernel.register_agent(agent)
-        
-        with kernel.agent_context("test-agent") as ctx:
-            entry_id = ctx.create_audit_entry(
-                action="test.action",
-                resource="test-resource"
-            )
-            assert entry_id is not None
+            assert ctx.evaluate_policy("echo").is_allowed()
 
     def test_agent_context_unregistered_raises(self):
-        """Test that context for unregistered agent raises."""
         kernel = VakKernel.default()
-        
         with pytest.raises(AgentNotFoundError):
             with kernel.agent_context("nonexistent"):
                 pass
 
 
 class TestErrorHandling:
-    """Tests for error handling."""
+    """Error types."""
 
     def test_operation_without_initialization_raises(self):
-        """Test that operations without initialization raise."""
         kernel = VakKernel()
-        # Don't call initialize()
-        
         with pytest.raises(VakError, match="not initialized"):
             kernel.register_agent(AgentConfig(agent_id="a", name="A"))
 
     def test_vak_error_base_class(self):
-        """Test VakError as base exception."""
         error = VakError("Test error")
         assert str(error) == "Test error"
         assert isinstance(error, Exception)
 
     def test_policy_violation_error(self):
-        """Test PolicyViolationError contains decision."""
         decision = PolicyDecision(
-            effect=PolicyEffect.DENY,
-            policy_id="strict-policy",
-            reason="Action not permitted"
+            effect=PolicyEffect.DENY, policy_id="strict-policy", reason="Action not permitted"
         )
         error = PolicyViolationError(decision)
-        
         assert error.decision == decision
         assert "Action not permitted" in str(error)
 
     def test_agent_not_found_error(self):
-        """Test AgentNotFoundError contains agent_id."""
         error = AgentNotFoundError("missing-agent")
-        
         assert error.agent_id == "missing-agent"
         assert "missing-agent" in str(error)
 
     def test_tool_execution_error(self):
-        """Test ToolExecutionError contains tool_id and error."""
         error = ToolExecutionError("broken-tool", "Internal error")
-        
         assert error.tool_id == "broken-tool"
         assert error.error == "Internal error"
         assert "broken-tool" in str(error)
 
 
-class TestKernelRepr:
-    """Tests for kernel string representations."""
+class TestRemovedMethods:
+    """Methods that answered from an engine other than the kernel are gone
+    (ADR 0011): a missing method is honest, a wrong answer is not."""
 
-    def test_kernel_has_config_path(self):
-        """Test kernel stores config path."""
-        kernel = VakKernel("/path/to/config.yaml")
-        assert kernel.config_path is not None
-
-
-class TestPolicyHookChain:
-    """Tests for policy hook chaining."""
-
-    def test_multiple_hooks_first_wins(self):
-        """Test that first returning hook wins."""
-        kernel = VakKernel.default()
-        
-        def hook1(agent_id: str, action: str, context: dict) -> Optional[PolicyDecision]:
-            if action == "test":
-                return PolicyDecision(
-                    effect=PolicyEffect.ALLOW,
-                    policy_id="hook1",
-                    reason="Hook 1 allowed"
-                )
-            return None
-        
-        def hook2(agent_id: str, action: str, context: dict) -> Optional[PolicyDecision]:
-            return PolicyDecision(
-                effect=PolicyEffect.DENY,
-                policy_id="hook2",
-                reason="Hook 2 denied"
-            )
-        
-        kernel.add_policy_hook(hook1)
-        kernel.add_policy_hook(hook2)
-        
-        # First hook should win for "test" action
-        decision = kernel.evaluate_policy("agent", "test")
-        assert decision.policy_id == "hook1"
-        
-        # Second hook wins for other actions
-        decision = kernel.evaluate_policy("agent", "other")
-        assert decision.policy_id == "hook2"
-
-    def test_hook_returns_none_continues_chain(self):
-        """Test that returning None continues to next hook."""
-        kernel = VakKernel.default()
-        
-        call_count = {"hook1": 0, "hook2": 0}
-        
-        def hook1(agent_id: str, action: str, context: dict) -> Optional[PolicyDecision]:
-            call_count["hook1"] += 1
-            return None  # Pass to next
-        
-        def hook2(agent_id: str, action: str, context: dict) -> Optional[PolicyDecision]:
-            call_count["hook2"] += 1
-            return PolicyDecision(
-                effect=PolicyEffect.ALLOW,
-                policy_id="hook2",
-                reason="Hook 2"
-            )
-        
-        kernel.add_policy_hook(hook1)
-        kernel.add_policy_hook(hook2)
-        
-        kernel.evaluate_policy("agent", "action")
-        
-        assert call_count["hook1"] == 1
-        assert call_count["hook2"] == 1
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "create_audit_entry",
+            "add_policy_hook",
+            "remove_policy_hook",
+            "load_policies",
+            "policy_engine",
+            "add_safety_rule",
+            "add_constraint",
+            "check_constraints",
+            "configure_reasoner",
+            "reasoner",
+            "register_skill",
+        ],
+    )
+    def test_is_not_on_the_kernel(self, name):
+        assert not hasattr(VakKernel, name)

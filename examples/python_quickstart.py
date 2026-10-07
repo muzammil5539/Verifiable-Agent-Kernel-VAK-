@@ -98,6 +98,7 @@ def main():
             "compute.basic",  # Can perform basic computations
         ],
         allowed_tools=[
+            "echo",           # Access to the echo tool
             "calculator",     # Access to calculator tool
             "data_processor", # Access to data processing tool
             "file_reader",    # Access to file reading tool
@@ -136,12 +137,14 @@ def main():
     print("Step 3: Executing Tools")
     print("-" * 40)
     
-    # Example 3a: Execute a calculator tool
-    print("\n3a. Calculator Tool:")
+    # Example 3a: Execute a tool through the kernel. The tool gets
+    # {"action": action, "params": parameters}, the shape WASM skills take;
+    # the built-in echo tool returns it.
+    print("\n3a. Echo Tool:")
     
     response = kernel.execute_tool(
         agent_id="data-processor-001",
-        tool_id="calculator",
+        tool_id="echo",
         action="add",
         parameters={
             "a": 42,
@@ -155,11 +158,13 @@ def main():
     print(f"  Result: {response.result}")
     print(f"  Execution Time: {response.execution_time_ms:.2f}ms")
     
-    # Example 3b: Execute using ToolRequest object
-    print("\n3b. Data Processor Tool (using ToolRequest):")
+    # Example 3b: Execute using a ToolRequest object. Its memory limit
+    # defaults to the 128 MiB the kernel gives every skill; the kernel takes
+    # no tighter per-call limit, so it refuses one.
+    print("\n3b. Echo Tool (using ToolRequest):")
     
     request = ToolRequest(
-        tool_id="data_processor",
+        tool_id="echo",
         agent_id="data-processor-001",
         action="summarize",
         parameters={
@@ -167,7 +172,6 @@ def main():
             "metrics": ["mean", "sum", "count"],
         },
         timeout_ms=10000,
-        memory_limit_bytes=64 * 1024 * 1024,  # 64 MB
     )
     
     response = kernel.execute_tool_request(request)
@@ -193,15 +197,12 @@ def main():
     print("Step 4: Policy Evaluation")
     print("-" * 40)
     
-    # Manually evaluate a policy decision
+    # Ask the kernel whether the agent may call a tool, with the parameters
+    # execute_tool would send it. Nothing runs and nothing is recorded.
     decision = kernel.evaluate_policy(
         agent_id="data-processor-001",
-        action="tool.execute",
-        context={
-            "tool_id": "calculator",
-            "action": "multiply",
-            "parameters": {"a": 10, "b": 20},
-        },
+        action="calculator",
+        context={"action": "multiply", "params": {"a": 10, "b": 20}},
     )
     
     print(f"  Effect: {decision.effect.value}")
@@ -303,58 +304,23 @@ def main():
     print()
 
     # =========================================================================
-    # Step 7: Custom Policy Hooks
+    # Step 7: Asking the Kernel
     # =========================================================================
-    
-    print("Step 7: Custom Policy Hooks")
+
+    print("Step 7: Asking the Kernel")
     print("-" * 40)
-    
-    # Define a custom policy hook
-    def my_policy_hook(
-        agent_id: str,
-        action: str,
-        context: dict[str, Any]
-    ) -> PolicyDecision | None:
-        """
-        Custom policy hook that denies all actions containing 'dangerous'.
 
-        Returns None to continue to next hook/native engine,
-        or a PolicyDecision to use that decision.
-        """
-        # Check if the action contains 'dangerous'
-        if "dangerous" in action.lower():
-            return deny(
-                policy_id="custom-dangerous-block",
-                reason="Actions containing 'dangerous' are blocked by custom hook",
-            )
-
-        # Check tool_id in context if present
-        tool_id = context.get("tool_id", "")
-        if tool_id == "nuclear_launcher":
-            return deny(
-                policy_id="custom-nuclear-block",
-                reason="Nuclear launcher tool is forbidden",
-            )
-
-        # Return None to continue evaluation
-        return None
-    
-    # Add the custom policy hook
-    kernel.add_policy_hook(my_policy_hook)
-    print("  ✓ Custom policy hook added")
-    
-    # Test the custom hook
-    decision = kernel.evaluate_policy(
-        agent_id="data-processor-001",
-        action="dangerous_operation",
-        context={},
-    )
-    print(f"  Testing 'dangerous_operation': {decision.effect.value}")
-    print(f"    Reason: {decision.reason}")
-    
-    # Remove the hook when done
-    kernel.remove_policy_hook(my_policy_hook)
-    print("  ✓ Custom policy hook removed")
+    # evaluate_policy is the kernel's Decide stage alone: nothing runs and
+    # nothing is recorded. The kernel's policy comes from its configuration
+    # (allowed and blocked tools, policy files), not from Python callbacks.
+    for tool in ["echo", "nuclear_launcher"]:
+        decision = kernel.evaluate_policy(
+            agent_id="data-processor-001",
+            action=tool,
+            context={},
+        )
+        print(f"  May data-processor-001 call '{tool}'? {decision.effect.value}")
+        print(f"    Reason: {decision.reason}")
     print()
 
     # =========================================================================
