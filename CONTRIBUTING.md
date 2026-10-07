@@ -47,7 +47,7 @@ Thank you for your interest in contributing to the Verifiable Agent Kernel (VAK)
    cargo fmt --all
    cargo clippy --all-targets --all-features -- -D warnings
    cargo test --features full
-   cargo tarpaulin --config tarpaulin.toml --fail-under 80
+   make coverage-check   # cargo-llvm-cov; see docs/adr/0012
    ```
 5. Commit with a descriptive message (see commit conventions below).
 6. Push and create a pull request against `main`.

@@ -336,8 +336,7 @@ VAK/
 ├── scripts/                      # Tooling scripts
 │   └── perf-profile.sh          # Performance profiling suite
 │
-├── Makefile                      # Development task automation
-├── tarpaulin.toml                # Code coverage configuration
+├── Makefile                      # Development task automation (incl. coverage)
 │
 └── benches/                      # Performance benchmarks
 ```
@@ -748,8 +747,8 @@ cargo test --features full
 # Run specific test suite
 cargo test --package vak --lib policy
 
-# Run with coverage
-cargo tarpaulin --config tarpaulin.toml --out Html
+# Run with coverage (cargo-llvm-cov; report in coverage/)
+make coverage
 
 # Run integration tests
 cargo test --test '*' --features full --verbose

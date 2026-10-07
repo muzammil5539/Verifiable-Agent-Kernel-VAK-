@@ -44,9 +44,10 @@ cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo clippy -- -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic  # security-focused
 
-# Coverage
-cargo tarpaulin --config tarpaulin.toml --out Html --out Xml --output-dir coverage/
-cargo tarpaulin --config tarpaulin.toml --fail-under 80   # CI gate, 80% minimum
+# Coverage: cargo-llvm-cov (docs/adr/0012), not tarpaulin; needs
+# `cargo install cargo-llvm-cov` and `rustup component add llvm-tools-preview`
+make coverage         # run the tests with coverage; HTML and Cobertura reports in coverage/
+make coverage-check   # the same, then fail under 80% line coverage (the CI gate)
 
 # Security
 cargo audit --deny warnings

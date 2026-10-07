@@ -45,7 +45,7 @@ This skill provides instructions for running tests to verify the correctness and
 -   Python 3.9+
 -   `cargo-nextest` (optional, for faster execution): `cargo install cargo-nextest`
 -   `pytest` (`pip install pytest pytest-asyncio pytest-cov`)
--   `cargo-tarpaulin` (`cargo install cargo-tarpaulin`)
+-   `cargo-llvm-cov` (`cargo install cargo-llvm-cov`, `rustup component add llvm-tools-preview`)
 
 ## Instructions
 
@@ -112,8 +112,8 @@ cargo bench --bench audit_benchmarks
 ### Coverage Reports
 
 ```bash
-# Rust coverage
-cargo tarpaulin --out Html --output-dir coverage/
+# Rust coverage (cargo-llvm-cov, docs/adr/0012)
+make coverage
 
 # Python coverage
 pytest --cov=vak --cov-report=html python/tests/

@@ -68,7 +68,7 @@ removal can be a separate decision.
   `vak::reasoner::zk_proof` needs `experimental-zk`.
 - `cargo test` with default features no longer runs the gated modules' tests. Use
   `cargo test --features full` (or `make test`). `make test-core` runs the core alone.
-- Coverage (`tarpaulin.toml`) measures with `full`, so the 80% gate covers the same code
-  as before.
+- Coverage measures with `full` (`make coverage`; ADR 0012), so the 80% gate covers the
+  same code as before.
 - `cargo clippy --all-targets --features full -- -D warnings` reports the same 24 lints
   as before this change, all in modules it didn't touch.

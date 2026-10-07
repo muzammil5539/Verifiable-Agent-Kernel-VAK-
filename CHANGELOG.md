@@ -78,6 +78,11 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
   `CustomHandlerRegistry::{register_arc, register_new}`.
 
 ### Changed
+- Coverage is measured with cargo-llvm-cov, not tarpaulin (ADR 0012). Tarpaulin's
+  ptrace engine reported Wasmtime's signal-based traps as a segfault, so the job never
+  finished. `make coverage` and `make coverage-check` run it; it needs
+  `llvm-tools-preview`. The floor stays at 80% of lines, and the first measurement is
+  75.09%, so the job now fails on the floor (`TODO.md`). `tarpaulin.toml` is removed.
 - **Breaking:** Wasmtime 49.0.2 (was 41.0.4), for the 16 advisories in finding K11
   (ADR 0010). Default features are off: Cranelift is the only compiler, and Winch, the
   component model, GC, threads and WASI aren't compiled in. `cargo deny check` passes.

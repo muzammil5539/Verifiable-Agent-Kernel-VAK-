@@ -220,6 +220,13 @@ request path. In order of leverage:
       status updates because nothing ran it. If CI already exists
       (`.github/workflows/ci.yml` is referenced in prior notes), verify it
       is *required* for merge, not merely present.
+- [ ] **Line coverage is 75.09% against the 80% floor.** The Code Coverage
+      job crashed under tarpaulin before it reached the floor. It runs under
+      cargo-llvm-cov now (ADR 0012) and fails on the floor, which is kept at
+      80%. Missed lines by module: memory 1,818; audit 1,704; sandbox 1,535;
+      reasoner 1,475; integrations 1,146; policy 894; kernel 879; llm 609;
+      swarm 465; dashboard 365; tools 286. About 2,250 more covered lines
+      reach 80%. `make coverage` writes the per-file report to `coverage/`.
 - [ ] **Do not restore aggregate "N% complete" framing** in this file, the
       README, or CHANGELOG until every P0/P1 item above is closed and verified
       by a test that exercises `Kernel::execute`. Track items as done/open;

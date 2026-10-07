@@ -104,13 +104,21 @@ clippy-security:
 # Coverage
 # ===========================================================================
 
-## Run code coverage with tarpaulin
-coverage:
-	cargo tarpaulin --config tarpaulin.toml --out Html --out Xml --output-dir coverage/
+# Coverage is cargo-llvm-cov's (docs/adr/0012). It measures the vak crate with
+# `full`, not its tests, benches or examples. Debug info is off: coverage comes
+# from LLVM's instrumentation, and debug info would multiply the build's size.
+COVERAGE_ENV := CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+COVERAGE_IGNORE := --ignore-filename-regex '/(tests|benches|examples)/'
 
-## Run coverage and enforce 80% threshold
-coverage-check:
-	cargo tarpaulin --config tarpaulin.toml --fail-under 80
+## Run the tests with coverage; HTML and Cobertura reports go to coverage/
+coverage:
+	$(COVERAGE_ENV) cargo llvm-cov --features full --package vak --no-report
+	cargo llvm-cov report $(COVERAGE_IGNORE) --html --output-dir coverage/
+	cargo llvm-cov report $(COVERAGE_IGNORE) --cobertura --output-path coverage/cobertura.xml
+
+## Run coverage and enforce the 80% line-coverage floor
+coverage-check: coverage
+	cargo llvm-cov report $(COVERAGE_IGNORE) --summary-only --fail-under-lines 80
 
 # ===========================================================================
 # Benchmarks
