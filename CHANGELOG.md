@@ -68,6 +68,9 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
   `CustomHandlerRegistry::{register_arc, register_new}`.
 
 ### Changed
+- PyO3 0.29 (was 0.24), for RUSTSEC-2026-0176 and RUSTSEC-2026-0177 (finding K11). The
+  native classes no longer derive `FromPyObject` (`skip_from_py_object`); nothing took
+  them by value.
 - **Toolchain:** the minimum supported Rust is 1.90, the highest among dependencies
   (Wasmtime 41); it was declared as 1.75, which nothing could build. CI tests stable
   and 1.90, and checks formatting and clippy on stable only. The metrics endpoint's

@@ -7,7 +7,7 @@ name = "vak"
 version = "0.1.0"
 description = "Verifiable Agent Kernel - Secure, policy-enforced AI agent execution with audit logging"
 readme = "README.md"
-license = {file = "LICENSE"}
+license = {text = "MIT OR Apache-2.0"}
 requires-python = ">=3.9"
 authors = [
     {name = "VAK Team", email = "team@vak-project.dev"}

@@ -64,7 +64,7 @@ use crate::audit::{AuditDecision, AuditLogger};
 ///     require_human_approval()
 /// ```
 #[cfg(feature = "python")]
-#[pyclass(name = "RiskLevel")]
+#[pyclass(name = "RiskLevel", skip_from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyRiskLevel;
 
@@ -94,7 +94,7 @@ impl PyRiskLevel {
 
 /// Python wrapper for PolicyDecision
 #[cfg(feature = "python")]
-#[pyclass(name = "PolicyDecision")]
+#[pyclass(name = "PolicyDecision", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyPolicyDecision {
     /// The effect of the decision (allow/deny)
@@ -142,7 +142,7 @@ impl PyPolicyDecision {
 
 /// Python wrapper for ToolResponse
 #[cfg(feature = "python")]
-#[pyclass(name = "ToolResponse")]
+#[pyclass(name = "ToolResponse", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyToolResponse {
     /// Unique request identifier
@@ -193,7 +193,7 @@ impl PyToolResponse {
 
 /// Python wrapper for AuditEntry
 #[cfg(feature = "python")]
-#[pyclass(name = "AuditEntry")]
+#[pyclass(name = "AuditEntry", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyAuditEntry {
     /// Unique identifier for this audit entry
@@ -242,7 +242,7 @@ fn py_to_json(obj: Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
         return Ok(serde_json::Value::Bool(obj.extract::<bool>()?));
     }
 
-    if let Ok(dict) = obj.downcast::<PyDict>() {
+    if let Ok(dict) = obj.cast::<PyDict>() {
         let mut map = serde_json::Map::new();
         for (k, v) in dict.iter() {
             // Mirror Python's json.dumps behavior: coerce dict keys via str(k)
@@ -262,7 +262,7 @@ fn py_to_json(obj: Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
         return Ok(serde_json::Value::Object(map));
     }
 
-    if let Ok(list) = obj.downcast::<PyList>() {
+    if let Ok(list) = obj.cast::<PyList>() {
         let mut vec = Vec::new();
         for v in list.iter() {
             vec.push(py_to_json(v)?);
@@ -271,7 +271,7 @@ fn py_to_json(obj: Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
     }
 
     // Handle tuples like lists (matching json.dumps behavior)
-    if let Ok(tuple) = obj.downcast::<PyTuple>() {
+    if let Ok(tuple) = obj.cast::<PyTuple>() {
         let mut vec = Vec::new();
         for v in tuple.iter() {
             vec.push(py_to_json(v)?);
@@ -1012,9 +1012,9 @@ mod tests {
 
     #[test]
     fn test_py_kernel_agent_registration() {
-        pyo3::prepare_freethreaded_python();
+        Python::initialize();
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let mut kernel = PyKernel::default().unwrap();
             let empty_dict = PyDict::new(py);
 

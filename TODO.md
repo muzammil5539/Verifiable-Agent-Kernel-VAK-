@@ -99,7 +99,7 @@ that language is exactly how the gap went unnoticed for thirteen sprints.
       instances, and no patched 41.x exists. Move to 49.0.2 or later (or the 36 LTS
       line) and adapt `src/sandbox/` to the API changes. Run `tests/wasm_skills.rs`
       and `tests/signed_skills.rs`, and expect the minimum Rust version to rise. Upgrade
-      PyO3 to 0.29 for its two advisories. `cargo deny check` and `cargo audit`
+      PyO3 to 0.29 for its two advisories (done). `cargo deny check` and `cargo audit`
       (the Security workflow) stay red until then.
 
 - [ ] **ZK proofs are not zero-knowledge.** `src/reasoner/zk_proof.rs::verify_response`
