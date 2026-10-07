@@ -149,6 +149,8 @@ let config: &KernelConfig = kernel.config();
 | `audit_tree_head` | `async fn audit_tree_head(&self) -> SignedTreeHead` | Current Merkle tree head, signed with the kernel's Ed25519 key. |
 | `prove_audit_inclusion` / `prove_audit_consistency` | `async fn(&self, u64, u64) -> Result<_, KernelError>` | RFC 9162 proofs, verifiable without trusting the kernel. |
 | `list_tools` | `async fn list_tools(&self) -> Vec<String>` | Lists built-in tools, registered host handlers and WASM skills. |
+| `load_skill` | `async fn load_skill(&self, manifest: &Path) -> Result<String, KernelError>` | Loads a WASM skill while the kernel runs, verified as at startup (signed unless `security.allow_unsigned_skills`). Authorizes no one; policy still decides each call. Feature `wasm`. |
+| `skill_manifest` | `async fn skill_manifest(&self, name: &str) -> Option<SkillManifest>` | The manifest of a loaded skill. Feature `wasm`. |
 | `active_session_count` | `async fn active_session_count(&self) -> usize` | Returns the number of sessions bound to an agent. |
 | `config` | `fn config(&self) -> &KernelConfig` | Returns kernel configuration reference. |
 
@@ -455,6 +457,7 @@ pub enum KernelError {
     SessionConflict { session_id },               // E013
     RateLimited { reason, retry_after_ms },       // E014
     AuditUnavailable { message },                 // E015
+    SkillRejected { manifest, reason },           // E016
 }
 ```
 
@@ -463,7 +466,7 @@ pub enum KernelError {
 | Method | Return | Description |
 |--------|--------|-------------|
 | `is_recoverable()` | `bool` | `true` for `Timeout`, `ResourceLimitExceeded` and `RateLimited` |
-| `error_code()` | `&str` | Returns code string (E001-E015) |
+| `error_code()` | `&str` | Returns code string (E001-E016) |
 
 ---
 
@@ -1753,6 +1756,7 @@ exports:
 | E013 | `SessionConflict` | No | The session is bound to a different agent |
 | E014 | `RateLimited` | Yes | The agent is over its request budget; retry after `retry_after_ms` |
 | E015 | `AuditUnavailable` | No | The decision couldn't be recorded, so the tool didn't run |
+| E016 | `SkillRejected` | No | A skill manifest or module couldn't be read or didn't verify; nothing was loaded |
 
 ---
 

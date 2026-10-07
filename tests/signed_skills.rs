@@ -261,3 +261,68 @@ async fn a_malformed_trusted_key_is_a_configuration_error() {
         Err(KernelError::InvalidConfiguration { ref message }) if message.contains("trusted_skill_keys")
     ));
 }
+
+/// `Kernel::load_skill` verifies a skill loaded while the kernel runs the
+/// same way as one loaded at startup.
+#[tokio::test]
+async fn a_skill_loaded_while_running_is_verified_then_runs() {
+    let (empty, staged) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    write_skill(staged.path(), &signed_by(&publisher()));
+    let kernel = Kernel::new(config(empty.path(), vec![key_hex(&publisher())]))
+        .await
+        .unwrap();
+    let agent = AgentId::new();
+
+    let before = kernel.execute(&agent, &SessionId::new(), call()).await;
+    assert!(
+        matches!(before, Err(KernelError::ToolNotFound { .. })),
+        "{before:?}"
+    );
+
+    let name = kernel
+        .load_skill(&staged.path().join("skill.yaml"))
+        .await
+        .unwrap();
+    assert_eq!(name, SKILL);
+    let manifest = kernel.skill_manifest(SKILL).await.unwrap();
+    assert_eq!(manifest.signed_by, Some(key_hex(&publisher())));
+
+    let response = kernel
+        .execute(&agent, &SessionId::new(), call())
+        .await
+        .unwrap();
+    assert!(response.success, "{response:?}");
+    assert_eq!(response.result, Some(serde_json::json!({"hello": "world"})));
+}
+
+#[tokio::test]
+async fn an_unsigned_skill_loaded_while_running_is_rejected() {
+    let (empty, staged) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    write_skill(staged.path(), &manifest());
+    let kernel = Kernel::new(config(empty.path(), vec![key_hex(&publisher())]))
+        .await
+        .unwrap();
+
+    let rejected = kernel.load_skill(&staged.path().join("skill.yaml")).await;
+    assert!(
+        matches!(rejected, Err(KernelError::SkillRejected { .. })),
+        "{rejected:?}"
+    );
+    assert!(kernel.skill_manifest(SKILL).await.is_none());
+
+    let call = kernel
+        .execute(&AgentId::new(), &SessionId::new(), call())
+        .await;
+    assert!(
+        matches!(call, Err(KernelError::ToolNotFound { .. })),
+        "{call:?}"
+    );
+    // The lookup's outcome is recorded, and it is a failure.
+    let log = kernel.get_audit_log().await;
+    assert!(
+        log.iter()
+            .filter_map(|entry| entry.outcome.as_ref())
+            .all(|outcome| !outcome.success),
+        "nothing ran"
+    );
+}

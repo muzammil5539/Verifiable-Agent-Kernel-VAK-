@@ -12,6 +12,11 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 `docs/adr/0003-admit-budget-record-outcome-pipeline-stages.md` for the decision records.
 
 ### Added
+- `Kernel::load_skill` and `Kernel::skill_manifest` (feature `wasm`): load a WASM skill
+  while the kernel runs, verified as skills loaded at startup are, and read a loaded
+  skill's manifest. Loading authorizes no one; policy still decides every call.
+  `KernelError::SkillRejected` (E016) when a manifest or module can't be read or
+  doesn't verify.
 - `sandbox::MAX_TABLE_ELEMENTS` (ADR 0010): a skill's tables are capped at 10,000
   elements, at instantiation and on `table.grow`, with either allocator. Tables live in
   host memory, outside the linear-memory limit.

@@ -986,6 +986,30 @@ impl Kernel {
         self.skills.runtime()
     }
 
+    /// Loads a WASM skill from its manifest while the kernel runs, and
+    /// returns its name.
+    ///
+    /// The skill is verified as skills loaded at startup are: signed by a
+    /// key in `security.trusted_skill_keys` unless
+    /// `security.allow_unsigned_skills` is set, and pinned to its module's
+    /// digest (docs/adr/0005). Loading makes the skill exist; it authorizes
+    /// no one to call it. The policy decision point still decides every call.
+    ///
+    /// # Errors
+    ///
+    /// [`KernelError::SkillRejected`] if the manifest or module can't be read
+    /// or doesn't verify. Nothing is loaded.
+    #[cfg(feature = "wasm")]
+    pub async fn load_skill(&self, manifest: &std::path::Path) -> Result<String, KernelError> {
+        self.skills.load(manifest).await
+    }
+
+    /// The manifest of the loaded skill called `name`, if there is one.
+    #[cfg(feature = "wasm")]
+    pub async fn skill_manifest(&self, name: &str) -> Option<crate::sandbox::SkillManifest> {
+        self.skills.manifest(name).await
+    }
+
     /// Runs a WASM skill (see the `skills` module).
     #[cfg(feature = "wasm")]
     async fn execute_wasm_skill(&self, request: &ToolRequest) -> Dispatched {

@@ -11,7 +11,7 @@
 //! - The [`SandboxRuntime`] is built on the first skill call unless one was
 //!   injected, and runs every call on `spawn_blocking` (docs/adr/0004).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tokio::sync::{OnceCell, RwLock};
@@ -22,7 +22,7 @@ use super::types::{KernelError, ToolRequest};
 use super::Dispatched;
 use crate::sandbox::{
     SandboxConfig, SandboxError, SandboxRuntime, SandboxRuntimeConfig, SignatureConfig,
-    SkillRegistry, SkillSignatureVerifier,
+    SkillManifest, SkillRegistry, SkillSignatureVerifier,
 };
 
 /// The kernel's skills: which exist, the runtime they run on, and the limits
@@ -96,6 +96,29 @@ impl Skills {
     /// The runtime, if a skill has run or one was injected.
     pub(super) fn runtime(&self) -> Option<&Arc<SandboxRuntime>> {
         self.runtime.get()
+    }
+
+    /// Loads the skill `manifest` describes into the registry, verified as
+    /// skills loaded at startup are, and returns its name.
+    pub(super) async fn load(&self, manifest: &Path) -> Result<String, KernelError> {
+        let mut registry = self.registry.write().await;
+        let id = registry
+            .load_skill(manifest)
+            .map_err(|e| KernelError::SkillRejected {
+                manifest: manifest.display().to_string(),
+                reason: e.to_string(),
+            })?;
+        let name = registry
+            .get_skill(&id)
+            .map(|skill| skill.name.clone())
+            .unwrap_or_default();
+        info!(skill = %name, manifest = %manifest.display(), "Loaded skill");
+        Ok(name)
+    }
+
+    /// The manifest of the loaded skill called `name`.
+    pub(super) async fn manifest(&self, name: &str) -> Option<SkillManifest> {
+        self.registry.read().await.get_skill_by_name(name).cloned()
     }
 
     /// Names of the loaded skills.

@@ -744,6 +744,16 @@ pub enum KernelError {
         /// Why the append failed.
         message: String,
     },
+
+    /// A skill could not be loaded: its manifest or module couldn't be
+    /// read, or didn't verify.
+    #[error("Skill rejected [{manifest}]: {reason}")]
+    SkillRejected {
+        /// The manifest that was being loaded.
+        manifest: String,
+        /// Why it was rejected.
+        reason: String,
+    },
 }
 
 impl KernelError {
@@ -777,6 +787,7 @@ impl KernelError {
             KernelError::SessionConflict { .. } => "E013",
             KernelError::RateLimited { .. } => "E014",
             KernelError::AuditUnavailable { .. } => "E015",
+            KernelError::SkillRejected { .. } => "E016",
         }
     }
 }
