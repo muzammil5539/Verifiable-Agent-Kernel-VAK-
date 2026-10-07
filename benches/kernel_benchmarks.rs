@@ -17,7 +17,6 @@
 //! - Secrets management with caching (Issue #37)
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use rusqlite::Connection;
 use std::collections::HashMap;
 use tokio::runtime::Runtime;
 
@@ -159,7 +158,7 @@ fn bench_policy_evaluation_scaling(c: &mut Criterion) {
                 resource_pattern: format!("resource-{}/*", i),
                 action_pattern: "*".to_string(),
                 conditions: vec![],
-                priority: (*rule_count - i) as i32,
+                priority: (*rule_count - i),
                 description: None,
             });
         }
@@ -441,7 +440,7 @@ fn bench_policy_validation(c: &mut Criterion) {
             resource_pattern: format!("resource-{}/*", i),
             action_pattern: "*".to_string(),
             conditions: vec![],
-            priority: i as i32,
+            priority: i,
             description: None,
         });
     }
@@ -550,7 +549,7 @@ fn bench_audit_logging_grouped(c: &mut Criterion) {
         for i in 0..10 {
             logger
                 .log(
-                    &format!("agent-{}", i),
+                    format!("agent-{}", i),
                     "read",
                     "/data/file.txt",
                     AuditDecision::Allowed,
@@ -567,7 +566,7 @@ fn bench_audit_logging_grouped(c: &mut Criterion) {
         for i in 0..100 {
             logger
                 .log(
-                    &format!("agent-{}", i),
+                    format!("agent-{}", i),
                     "read",
                     "/data/file.txt",
                     AuditDecision::Allowed,
@@ -630,6 +629,7 @@ fn bench_migrations(c: &mut Criterion) {
     let _ = c;
     #[cfg(feature = "memory")]
     {
+        use rusqlite::Connection;
         use vak::memory::migrations::MigrationRunner;
 
         let mut group = c.benchmark_group("migrations");
@@ -692,8 +692,8 @@ fn bench_knowledge_graph(c: &mut Criterion) {
 
             let mut i = 0u64;
             b.iter(|| {
-                let src = entities[(i as usize) % entities.len()].clone();
-                let tgt = entities[((i as usize) + 1) % entities.len()].clone();
+                let src = entities[(i as usize) % entities.len()];
+                let tgt = entities[((i as usize) + 1) % entities.len()];
                 let _ = black_box(kg.add_relationship(Relationship::new(
                     src,
                     tgt,
@@ -724,15 +724,12 @@ fn bench_knowledge_graph(c: &mut Criterion) {
                 let child = kg
                     .add_entity(Entity::new(format!("child_{}", i), "Child"))
                     .unwrap();
-                let _ = kg.add_relationship(Relationship::new(
-                    root.clone(),
-                    child,
-                    RelationType::HostsService,
-                ));
+                let _ =
+                    kg.add_relationship(Relationship::new(root, child, RelationType::HostsService));
             }
 
             b.iter(|| {
-                black_box(kg.get_related(root.clone(), Some(RelationType::HostsService)));
+                black_box(kg.get_related(root, Some(RelationType::HostsService)));
             })
         });
 
@@ -799,9 +796,9 @@ fn bench_signed_audit(c: &mut Criterion) {
         for i in 0..100 {
             logger
                 .log(
-                    &format!("agent-{}", i % 10),
+                    format!("agent-{}", i % 10),
                     "action",
-                    &format!("/res/{}", i),
+                    format!("/res/{}", i),
                     AuditDecision::Allowed,
                 )
                 .unwrap();
@@ -831,7 +828,7 @@ fn bench_swarm_voting(c: &mut Criterion) {
     let _ = c;
     #[cfg(feature = "swarm")]
     {
-        use vak::swarm::{Proposal, QuadraticVoting, VoteDirection, VotingConfig, VotingSession};
+        use vak::swarm::{Proposal, QuadraticVoting, VotingConfig, VotingSession};
 
         let mut group = c.benchmark_group("swarm_voting");
 
@@ -871,7 +868,7 @@ fn bench_sycophancy_detection(c: &mut Criterion) {
     let _ = c;
     #[cfg(feature = "swarm")]
     {
-        use vak::swarm::{DetectorConfig, SycophancyDetector};
+        use vak::swarm::SycophancyDetector;
 
         let rt = Runtime::new().unwrap();
         let mut group = c.benchmark_group("sycophancy_detection");

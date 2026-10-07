@@ -262,7 +262,7 @@ async fn test_sustained_operation_stability() {
         iterations,
         "All iterations should be accounted for"
     );
-    assert!(log.len() > 0, "At least some operations should succeed");
+    assert!(!log.is_empty(), "At least some operations should succeed");
 }
 
 // ============================================================================
@@ -304,7 +304,7 @@ async fn test_large_audit_chain_handling() {
 
     // Verify chain traversal is still performant
     let start = Instant::now();
-    let count = entries.iter().count();
+    let count = entries.len();
     let read_elapsed = start.elapsed();
 
     assert_eq!(count, chain_size);

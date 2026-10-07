@@ -18,7 +18,9 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        rust: [stable, "1.75"]
+        # Stable, and the minimum supported version: Cargo.toml's
+        # rust-version, which Wasmtime 41 sets at 1.90.
+        rust: [stable, "1.90"]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -36,14 +38,18 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: |
             ${{ runner.os }}-cargo-${{ matrix.rust }}-
 
+      # Formatting and lints change between toolchains, so they are checked
+      # on stable only. The minimum version has to build and pass the tests.
       - name: Check formatting
+        if: matrix.rust == 'stable'
         run: cargo fmt --all -- --check
 
       - name: Run clippy lints
+        if: matrix.rust == 'stable'
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       # Features outside the trusted core are off by default (docs/adr/0006).
@@ -123,7 +129,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-wasm-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-wasm-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Build calculator skill
         run: cargo build -p calculator --target wasm32-unknown-unknown --release
@@ -159,7 +165,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-coverage-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-coverage-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Install cargo-tarpaulin
         run: cargo install cargo-tarpaulin --locked
@@ -221,7 +227,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-bench-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-bench-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Run benchmarks
         run: cargo bench --bench kernel_benchmarks -- --output-format bencher | tee benchmark-results.txt
@@ -251,7 +257,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-proptest-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-proptest-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Run property tests with extended cases
         env:

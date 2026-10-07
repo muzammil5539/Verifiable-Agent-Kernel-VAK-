@@ -237,55 +237,41 @@ impl KernelConfig {
         let mut config = Self::default();
 
         // Load top-level settings
-        if let Ok(name) = std::env::var("VAK_NAME") {
+        if let Some(name) = env_var("VAK_NAME") {
             config.name = name;
         }
-
-        if let Ok(max_agents) = std::env::var("VAK_MAX_CONCURRENT_AGENTS") {
-            if let Ok(n) = max_agents.parse() {
-                config.max_concurrent_agents = n;
-            }
+        if let Some(n) = env_parse("VAK_MAX_CONCURRENT_AGENTS") {
+            config.max_concurrent_agents = n;
         }
-
-        if let Ok(max_exec_secs) = std::env::var("VAK_MAX_EXECUTION_TIME_SECS") {
-            if let Ok(secs) = max_exec_secs.parse() {
-                config.max_execution_time = Duration::from_secs(secs);
-            }
+        if let Some(secs) = env_parse("VAK_MAX_EXECUTION_TIME_SECS") {
+            config.max_execution_time = Duration::from_secs(secs);
         }
 
         // Load security settings
-        if let Ok(sandboxing) = std::env::var("VAK_SECURITY__ENABLE_SANDBOXING") {
-            config.security.enable_sandboxing = sandboxing.to_lowercase() == "true";
+        if let Some(on) = env_bool("VAK_SECURITY__ENABLE_SANDBOXING") {
+            config.security.enable_sandboxing = on;
         }
-
-        if let Ok(signed_requests) = std::env::var("VAK_SECURITY__REQUIRE_SIGNED_REQUESTS") {
-            config.security.require_signed_requests = signed_requests.to_lowercase() == "true";
+        if let Some(on) = env_bool("VAK_SECURITY__REQUIRE_SIGNED_REQUESTS") {
+            config.security.require_signed_requests = on;
         }
-
-        if let Ok(rate_limiting) = std::env::var("VAK_SECURITY__ENABLE_RATE_LIMITING") {
-            config.security.enable_rate_limiting = rate_limiting.to_lowercase() == "true";
+        if let Some(on) = env_bool("VAK_SECURITY__ENABLE_RATE_LIMITING") {
+            config.security.enable_rate_limiting = on;
         }
-
-        if let Ok(rate_limit) = std::env::var("VAK_SECURITY__MAX_REQUESTS_PER_MINUTE") {
-            if let Ok(n) = rate_limit.parse() {
-                config.security.max_requests_per_minute = n;
-            }
+        if let Some(n) = env_parse("VAK_SECURITY__MAX_REQUESTS_PER_MINUTE") {
+            config.security.max_requests_per_minute = n;
         }
 
         // Load audit settings
-        if let Ok(audit_enabled) = std::env::var("VAK_AUDIT__ENABLED") {
-            config.audit.enabled = audit_enabled.to_lowercase() == "true";
+        if let Some(on) = env_bool("VAK_AUDIT__ENABLED") {
+            config.audit.enabled = on;
         }
-
-        if let Ok(include_bodies) = std::env::var("VAK_AUDIT__INCLUDE_BODIES") {
-            config.audit.include_bodies = include_bodies.to_lowercase() == "true";
+        if let Some(on) = env_bool("VAK_AUDIT__INCLUDE_BODIES") {
+            config.audit.include_bodies = on;
         }
-
-        if let Ok(log_path) = std::env::var("VAK_AUDIT__LOG_PATH") {
+        if let Some(log_path) = env_var("VAK_AUDIT__LOG_PATH") {
             config.audit.log_path = Some(PathBuf::from(log_path));
         }
-
-        if let Ok(format) = std::env::var("VAK_AUDIT__FORMAT") {
+        if let Some(format) = env_var("VAK_AUDIT__FORMAT") {
             config.audit.format = match format.to_lowercase().as_str() {
                 "sqlite" => AuditLogFormat::Sqlite,
                 _ => AuditLogFormat::Jsonl,
@@ -293,53 +279,57 @@ impl KernelConfig {
         }
 
         // Load policy settings
-        if let Ok(policy_enabled) = std::env::var("VAK_POLICY__ENABLED") {
-            config.policy.enabled = policy_enabled.to_lowercase() == "true";
+        if let Some(on) = env_bool("VAK_POLICY__ENABLED") {
+            config.policy.enabled = on;
         }
-
-        if let Ok(default_decision) = std::env::var("VAK_POLICY__DEFAULT_DECISION") {
+        if let Some(default_decision) = env_var("VAK_POLICY__DEFAULT_DECISION") {
             config.policy.default_decision = match default_decision.to_lowercase().as_str() {
                 "allow" => DefaultPolicyDecision::Allow,
                 _ => DefaultPolicyDecision::Deny,
             };
         }
-
-        if let Ok(format) = std::env::var("VAK_POLICY__FORMAT") {
+        if let Some(format) = env_var("VAK_POLICY__FORMAT") {
             config.policy.format = match format.to_lowercase().as_str() {
                 "cedar" => PolicyFormat::Cedar,
                 _ => PolicyFormat::Yaml,
             };
         }
-
-        if let Ok(schema) = std::env::var("VAK_POLICY__CEDAR_SCHEMA") {
+        if let Some(schema) = env_var("VAK_POLICY__CEDAR_SCHEMA") {
             config.policy.cedar_schema = Some(PathBuf::from(schema));
         }
-
-        if let Ok(caching) = std::env::var("VAK_POLICY__ENABLE_CACHING") {
-            config.policy.enable_caching = caching.to_lowercase() == "true";
+        if let Some(on) = env_bool("VAK_POLICY__ENABLE_CACHING") {
+            config.policy.enable_caching = on;
         }
 
         // Load resource limits
-        if let Ok(max_memory) = std::env::var("VAK_RESOURCES__MAX_MEMORY_MB") {
-            if let Ok(n) = max_memory.parse() {
-                config.resources.max_memory_mb = n;
-            }
+        if let Some(n) = env_parse("VAK_RESOURCES__MAX_MEMORY_MB") {
+            config.resources.max_memory_mb = n;
         }
-
-        if let Ok(max_cpu) = std::env::var("VAK_RESOURCES__MAX_CPU_TIME_MS") {
-            if let Ok(n) = max_cpu.parse() {
-                config.resources.max_cpu_time_ms = n;
-            }
+        if let Some(n) = env_parse("VAK_RESOURCES__MAX_CPU_TIME_MS") {
+            config.resources.max_cpu_time_ms = n;
         }
-
-        if let Ok(max_connections) = std::env::var("VAK_RESOURCES__MAX_CONNECTIONS") {
-            if let Ok(n) = max_connections.parse() {
-                config.resources.max_connections = n;
-            }
+        if let Some(n) = env_parse("VAK_RESOURCES__MAX_CONNECTIONS") {
+            config.resources.max_connections = n;
         }
 
         config
     }
+}
+
+/// The environment variable `name`, if it is set to valid Unicode.
+fn env_var(name: &str) -> Option<String> {
+    std::env::var(name).ok()
+}
+
+/// `true` if `name` is set to "true" in any case, `false` if it is set to
+/// anything else, and `None` if it is unset.
+fn env_bool(name: &str) -> Option<bool> {
+    env_var(name).map(|value| value.to_lowercase() == "true")
+}
+
+/// `name`'s value parsed as `T`, if it is set and parses.
+fn env_parse<T: std::str::FromStr>(name: &str) -> Option<T> {
+    env_var(name)?.parse().ok()
 }
 
 /// Builder for `KernelConfig`.
@@ -764,8 +754,10 @@ mod tests {
 
     #[test]
     fn test_invalid_config() {
-        let mut config = KernelConfig::default();
-        config.max_concurrent_agents = 0;
+        let config = KernelConfig {
+            max_concurrent_agents: 0,
+            ..KernelConfig::default()
+        };
         assert!(config.validate().is_err());
     }
 

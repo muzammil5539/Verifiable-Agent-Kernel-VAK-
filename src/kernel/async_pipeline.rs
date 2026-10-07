@@ -600,10 +600,16 @@ pub struct AsyncPipeline {
     /// Concurrency semaphore
     semaphore: Arc<Semaphore>,
     /// Request handler function
-    handler: Arc<dyn Fn(ToolRequest) -> PipelineResult<serde_json::Value> + Send + Sync>,
+    handler: RequestHandler,
     /// Policy evaluator function
-    policy_evaluator: Arc<dyn Fn(&AgentId, &ToolRequest) -> PolicyDecision + Send + Sync>,
+    policy_evaluator: PolicyEvaluatorFn,
 }
+
+/// Runs one request for the pipeline.
+type RequestHandler = Arc<dyn Fn(ToolRequest) -> PipelineResult<serde_json::Value> + Send + Sync>;
+
+/// Decides one request for the pipeline.
+type PolicyEvaluatorFn = Arc<dyn Fn(&AgentId, &ToolRequest) -> PolicyDecision + Send + Sync>;
 
 impl std::fmt::Debug for AsyncPipeline {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

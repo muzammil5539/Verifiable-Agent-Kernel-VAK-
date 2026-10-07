@@ -37,7 +37,7 @@ fn arb_json_value() -> impl Strategy<Value = serde_json::Value> {
         any::<f64>()
             .prop_filter("finite", |f| f.is_finite())
             .prop_map(|n| serde_json::json!(n)),
-        "[a-zA-Z0-9 ]{0,100}".prop_map(|s| serde_json::Value::String(s)),
+        "[a-zA-Z0-9 ]{0,100}".prop_map(serde_json::Value::String),
     ]
 }
 

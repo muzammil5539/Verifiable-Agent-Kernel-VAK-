@@ -818,7 +818,7 @@ impl TimeTravelManager {
 
         // Collect snapshots to remove (not in current chain or branches)
         let mut all_snapshots: Vec<_> = self.snapshots.values().collect();
-        all_snapshots.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        all_snapshots.sort_by_key(|a| a.created_at);
 
         let excess = self.snapshots.len() - self.config.max_snapshots;
         let mut to_remove = vec![];

@@ -41,7 +41,7 @@ This skill provides instructions for running tests to verify the correctness and
 
 ## Prerequisites
 
--   Rust 1.75+
+-   Rust 1.90+
 -   Python 3.9+
 -   `cargo-nextest` (optional, for faster execution): `cargo install cargo-nextest`
 -   `pytest` (`pip install pytest pytest-asyncio pytest-cov`)

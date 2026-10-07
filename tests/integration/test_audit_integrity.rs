@@ -238,8 +238,12 @@ fn test_signer_key_export_import() {
     // Create new signer from exported key
     let signer2 = AuditSigner::from_key_bytes(&key_bytes).expect("Failed to import key");
 
-    // Both signers should produce same public key
-    // (Signatures would be identical for same data)
+    // The imported signer is the same key: same public key, and each
+    // verifies the other's signatures (Ed25519 signing is deterministic).
+    assert_eq!(signer1.public_key_hex, signer2.public_key_hex);
+    let hash = "a".repeat(64);
+    assert_eq!(signer1.sign(&hash), signer2.sign(&hash));
+    assert!(signer2.verify(&hash, &signer1.sign(&hash)).unwrap());
 }
 
 /// Test: Concurrent audit logging

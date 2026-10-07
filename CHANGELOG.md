@@ -68,6 +68,22 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
   `CustomHandlerRegistry::{register_arc, register_new}`.
 
 ### Changed
+- **Toolchain:** the minimum supported Rust is 1.90, the highest among dependencies
+  (Wasmtime 41); it was declared as 1.75, which nothing could build. CI tests stable
+  and 1.90, and checks formatting and clippy on stable only. The metrics endpoint's
+  `rust_version` and the Python module's `__rust_version__` come from
+  `Cargo.toml` instead of a hardcoded "1.75".
+- CI's clippy (`--all-targets --all-features -D warnings`, with `RUSTFLAGS=-D warnings`)
+  passes: 24 lints from newer toolchains fixed, plus warnings that only show with some
+  features off. The security clippy job (`unwrap_used`, `expect_used`, `panic`) checks
+  production code, as CLAUDE.md describes, and passes. Its 96 hits are gone:
+  - poisoned locks are recovered rather than unwrapped;
+  - an empty plan and a missing "default" role in the neuro-symbolic pipeline no longer
+    panic;
+  - a missing CAS `base_path` is a configuration error;
+  - constant regex patterns carry a scoped, commented `allow`.
+- **Breaking:** `audit::streaming::WebhookSink::new` returns a `Result`; it panicked if
+  the HTTP client couldn't be built.
 - **Breaking:** `CedarPolicy::policies` returns the current set as an
   `Arc<CedarPolicySet>`. The policy loader refuses policies that carry `@property`
   (`CedarPolicyError::PropertyAsPolicy`).
@@ -121,6 +137,11 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- `memory::receipts`: a public key or signature of the wrong length fails
+  verification. It used to be replaced with zero bytes, and an all-zero key is a
+  small-order point that non-strict Ed25519 verification can be forged against.
+- `test_signer_key_export_import` checks the imported key (same public key, same
+  signatures); it used to assert nothing.
 - A durable audit log (`FileAuditLog`) whose caller stopped waiting mid-append could
   store the entry without adding it to the tree. The next entry then linked to the
   wrong predecessor, and the log refused to open. Appends now run to completion

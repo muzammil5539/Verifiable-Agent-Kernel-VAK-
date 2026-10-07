@@ -439,6 +439,9 @@ pub struct ViolationDetail {
 // Verification Gateway
 // ============================================================================
 
+/// Cached results, by request key, with when each was cached.
+type VerificationCache = HashMap<String, (GatewayVerificationResult, DateTime<Utc>)>;
+
 /// The main verification gateway
 pub struct VerificationGateway {
     /// Configuration
@@ -448,7 +451,7 @@ pub struct VerificationGateway {
     /// Z3 verifier
     verifier: Arc<Z3FormalVerifier>,
     /// Verification cache
-    cache: Arc<RwLock<HashMap<String, (GatewayVerificationResult, DateTime<Utc>)>>>,
+    cache: Arc<RwLock<VerificationCache>>,
     /// Verification stats
     stats: Arc<RwLock<VerificationStats>>,
 }

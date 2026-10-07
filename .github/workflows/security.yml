@@ -97,9 +97,11 @@ jobs:
         with:
           components: clippy
 
+      # Production code only (the library and binaries): tests, benches and
+      # examples may unwrap. Matches the command in CLAUDE.md.
       - name: Run security-focused clippy lints
         run: |
-          cargo clippy --all-targets --all-features -- \
+          cargo clippy --all-features -- \
             -D clippy::unwrap_used \
             -D clippy::expect_used \
             -D clippy::panic \

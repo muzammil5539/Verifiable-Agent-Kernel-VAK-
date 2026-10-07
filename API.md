@@ -541,7 +541,7 @@ let result: ExecutionResult = pipeline.evaluate(plan).await?;
 **Module:** `vak::policy::cedar`; decision point `vak::kernel::CedarPolicy` (ADR 0008)
 
 Policies in Cedar, evaluated by the `cedar-policy` crate and validated against a schema
-when they load. Enable the `cedar` feature (Rust 1.89+) and set:
+when they load. Enable the `cedar` feature and set:
 
 ```yaml
 policy:

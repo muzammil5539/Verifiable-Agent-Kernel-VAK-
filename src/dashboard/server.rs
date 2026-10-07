@@ -542,8 +542,10 @@ mod tests {
 
     #[test]
     fn test_dashboard_xss_vulnerability() {
-        let mut config = DashboardConfig::default();
-        config.title = "<script>alert('xss-title')</script>".to_string();
+        let config = DashboardConfig {
+            title: "<script>alert('xss-title')</script>".to_string(),
+            ..DashboardConfig::default()
+        };
 
         let metrics = Arc::new(MetricsCollector::default());
         let health = Arc::new(HealthChecker::new());

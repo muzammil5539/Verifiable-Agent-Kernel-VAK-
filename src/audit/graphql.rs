@@ -33,7 +33,10 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
-use std::sync::{Arc, RwLock};
+// A lock is poisoned only if a thread panicked while holding it. These locks
+// guard plain collections, so the data stays usable: recover the guard rather
+// than spread the panic to every later caller.
+use std::sync::{Arc, PoisonError, RwLock};
 use thiserror::Error;
 use tracing::info;
 
@@ -342,7 +345,7 @@ impl AuditQueryEngine {
 
     /// Add an audit log entry
     pub fn add_log(&self, mut entry: AuditLogEntry) {
-        let mut logs = self.logs.write().unwrap();
+        let mut logs = self.logs.write().unwrap_or_else(PoisonError::into_inner);
         if let Some(last) = logs.last() {
             entry.prev_hash = Some(last.hash.clone());
         }
@@ -352,13 +355,16 @@ impl AuditQueryEngine {
 
     /// Add a policy decision
     pub fn add_policy_decision(&self, entry: PolicyDecisionEntry) {
-        let mut decisions = self.policy_decisions.write().unwrap();
+        let mut decisions = self
+            .policy_decisions
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
         decisions.push(entry);
     }
 
     /// Query audit logs
     pub fn query_logs(&self, request: &QueryRequest) -> QueryResponse<AuditLogEntry> {
-        let logs = self.logs.read().unwrap();
+        let logs = self.logs.read().unwrap_or_else(PoisonError::into_inner);
 
         let filtered: Vec<AuditLogEntry> = logs
             .iter()
@@ -421,7 +427,7 @@ impl AuditQueryEngine {
 
     /// Get audit statistics
     pub fn get_stats(&self) -> AuditStats {
-        let logs = self.logs.read().unwrap();
+        let logs = self.logs.read().unwrap_or_else(PoisonError::into_inner);
 
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -456,7 +462,7 @@ impl AuditQueryEngine {
 
     /// Verify chain integrity
     pub fn verify_chain(&self) -> ChainVerificationResult {
-        let logs = self.logs.read().unwrap();
+        let logs = self.logs.read().unwrap_or_else(PoisonError::into_inner);
 
         if logs.is_empty() {
             return ChainVerificationResult {
@@ -495,7 +501,7 @@ impl AuditQueryEngine {
 
     /// Get unique agent IDs
     pub fn get_agents(&self) -> Vec<String> {
-        let logs = self.logs.read().unwrap();
+        let logs = self.logs.read().unwrap_or_else(PoisonError::into_inner);
         let mut agents: Vec<String> = logs
             .iter()
             .map(|l| l.agent_id.clone())
@@ -508,7 +514,7 @@ impl AuditQueryEngine {
 
     /// Get unique actions
     pub fn get_actions(&self) -> Vec<String> {
-        let logs = self.logs.read().unwrap();
+        let logs = self.logs.read().unwrap_or_else(PoisonError::into_inner);
         let mut actions: Vec<String> = logs
             .iter()
             .map(|l| l.action.clone())
@@ -521,7 +527,7 @@ impl AuditQueryEngine {
 
     /// Clear all logs
     pub fn clear(&self) {
-        let mut logs = self.logs.write().unwrap();
+        let mut logs = self.logs.write().unwrap_or_else(PoisonError::into_inner);
         let count = logs.len();
         logs.clear();
         info!(count, "Cleared audit logs");
@@ -529,7 +535,10 @@ impl AuditQueryEngine {
 
     /// Get log count
     pub fn log_count(&self) -> usize {
-        self.logs.read().unwrap().len()
+        self.logs
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
     }
 }
 

@@ -98,7 +98,7 @@
 //! | `integrations` | no | LangChain, AutoGPT and MCP adapters (implies `reasoner`, `wasm`) |
 //! | `dashboard` | no | `dashboard` and `api` (implies `swarm`) |
 //! | `legacy-tools` | no | `tools::skill_sign`, superseded by `sandbox::signing` |
-//! | `cedar` | no | Cedar policies through the `cedar-policy` crate (`policy::cedar`); needs Rust 1.89 |
+//! | `cedar` | no | Cedar policies through the `cedar-policy` crate (`policy::cedar`) |
 //! | `cedar-analysis` | no | SymCC proofs about Cedar policy sets (`policy::cedar::analysis`); checks run cvc5 |
 //! | `python` | no | PyO3 bindings, built by maturin |
 //! | `full` | no | everything except `python` |

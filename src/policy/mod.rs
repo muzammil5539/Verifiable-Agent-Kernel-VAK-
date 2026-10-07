@@ -521,7 +521,7 @@ impl PolicyEngine {
         let config: PolicyConfig =
             serde_yaml::from_str(&content).map_err(|e| PolicyError::ParseError(e.to_string()))?;
         self.rules = config.rules;
-        self.rules.sort_by(|a, b| b.priority.cmp(&a.priority));
+        self.rules.sort_by_key(|r| std::cmp::Reverse(r.priority));
         self.cache.invalidate(); // Rules changed, clear cache
         Ok(())
     }
@@ -529,7 +529,7 @@ impl PolicyEngine {
     /// Add a rule programmatically
     pub fn add_rule(&mut self, rule: PolicyRule) {
         self.rules.push(rule);
-        self.rules.sort_by(|a, b| b.priority.cmp(&a.priority));
+        self.rules.sort_by_key(|r| std::cmp::Reverse(r.priority));
         self.cache.invalidate(); // Rules changed, clear cache
     }
 

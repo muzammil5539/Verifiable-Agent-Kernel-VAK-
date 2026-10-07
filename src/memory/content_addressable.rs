@@ -440,7 +440,7 @@ impl ContentAddressableStore {
                 mem.insert(hex_key.clone(), stored_data);
             }
             CASBackendType::File => {
-                let path = self.get_file_path(&hex_key);
+                let path = self.get_file_path(&hex_key)?;
                 if let Some(parent) = path.parent() {
                     fs::create_dir_all(parent)?;
                 }
@@ -507,7 +507,7 @@ impl ContentAddressableStore {
                     stats.cache_misses += 1;
                 }
 
-                let path = self.get_file_path(&hex_key);
+                let path = self.get_file_path(&hex_key)?;
                 let mut file = File::open(&path).map_err(|_| CASError::NotFound(cid.to_hex()))?;
                 let mut data = Vec::new();
                 file.read_to_end(&mut data)?;
@@ -539,7 +539,7 @@ impl ContentAddressableStore {
                 Ok(mem.contains_key(&hex_key))
             }
             CASBackendType::File => {
-                let path = self.get_file_path(&hex_key);
+                let path = self.get_file_path(&hex_key)?;
                 Ok(path.exists())
             }
         }
@@ -567,7 +567,7 @@ impl ContentAddressableStore {
                 mem.remove(&hex_key);
             }
             CASBackendType::File => {
-                let path = self.get_file_path(&hex_key);
+                let path = self.get_file_path(&hex_key)?;
                 if path.exists() {
                     fs::remove_file(&path)?;
                 }
@@ -655,8 +655,11 @@ impl ContentAddressableStore {
     // ========================================================================
 
     /// Get file path for a given key using sharding
-    fn get_file_path(&self, hex_key: &str) -> PathBuf {
-        let base = self.config.base_path.as_ref().unwrap();
+    fn get_file_path(&self, hex_key: &str) -> CASResult<PathBuf> {
+        let base =
+            self.config.base_path.as_ref().ok_or_else(|| {
+                CASError::ConfigError("File backend requires base_path".to_string())
+            })?;
         let mut path = base.clone();
 
         // Shard based on first N characters
@@ -668,7 +671,7 @@ impl ContentAddressableStore {
         }
 
         path.push(format!("{}.blob", hex_key));
-        path
+        Ok(path)
     }
 
     /// Compress data using flate2

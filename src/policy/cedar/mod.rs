@@ -171,6 +171,7 @@ impl CedarDecision {
 pub struct CedarPolicySet {
     schema: Schema,
     /// The schema's source, to tell whether two sets share a schema.
+    #[cfg(feature = "cedar-analysis")]
     schema_text: String,
     policies: PolicySet,
     /// Tools the schema declares an action for (`Vak::Action::"<tool>"`).
@@ -212,6 +213,7 @@ impl CedarPolicySet {
         schema: &str,
         sources: &[(String, String)],
     ) -> Result<Self, CedarPolicyError> {
+        #[cfg(feature = "cedar-analysis")]
         let schema_text = schema.to_string();
         let (schema, warnings) = Schema::from_cedarschema_str(schema)
             .map_err(|e| CedarPolicyError::Schema(error_chain(&e)))?;
@@ -284,6 +286,7 @@ impl CedarPolicySet {
 
         let set = Self {
             schema,
+            #[cfg(feature = "cedar-analysis")]
             schema_text,
             policies,
             tool_actions,

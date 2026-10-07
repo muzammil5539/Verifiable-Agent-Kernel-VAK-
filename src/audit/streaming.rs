@@ -988,17 +988,22 @@ pub struct WebhookSink {
 
 impl WebhookSink {
     /// Create a new webhook sink
-    pub fn new(config: WebhookSinkConfig) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// [`AuditError::BackendNotAvailable`] if the HTTP client can't be built
+    /// (for example, its TLS backend fails to initialise).
+    pub fn new(config: WebhookSinkConfig) -> Result<Self, AuditError> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_millis(config.timeout_ms))
             .build()
-            .expect("Failed to create HTTP client");
+            .map_err(|e| AuditError::BackendNotAvailable(format!("webhook HTTP client: {e}")))?;
 
-        Self {
+        Ok(Self {
             config,
             client,
             buffer: RwLock::new(Vec::new()),
-        }
+        })
     }
 
     /// Get the HTTP client
@@ -1011,15 +1016,19 @@ impl WebhookSink {
         let body = serde_json::to_string(events)
             .map_err(|e| AuditError::SerializationError(e.to_string()))?;
 
-        let mut request = self.client.post(&self.config.url).body(body);
-
-        for (key, value) in &self.config.headers {
-            request = request.header(key.as_str(), value.as_str());
-        }
+        // A fresh request per attempt: the body is a string, so this never
+        // fails the way `try_clone` on a streaming body could.
+        let request = || {
+            let mut request = self.client.post(&self.config.url).body(body.clone());
+            for (key, value) in &self.config.headers {
+                request = request.header(key.as_str(), value.as_str());
+            }
+            request
+        };
 
         let mut attempts = 0;
         loop {
-            match request.try_clone().unwrap().send().await {
+            match request().send().await {
                 Ok(response) if response.status().is_success() => {
                     return Ok(());
                 }
@@ -1235,8 +1244,10 @@ mod tests {
 
     #[test]
     fn test_max_subscribers_limit() {
-        let mut config = StreamConfig::default();
-        config.max_subscribers = 2;
+        let config = StreamConfig {
+            max_subscribers: 2,
+            ..StreamConfig::default()
+        };
 
         let manager = AuditStreamManager::new(config);
 
@@ -1329,7 +1340,7 @@ mod tests {
             batch_size: 100,
         };
 
-        let sink = WebhookSink::new(config.clone());
+        let sink = WebhookSink::new(config.clone()).unwrap();
         assert_eq!(sink.config.url, "https://example.com/webhook");
         assert!(sink.config.batch_enabled);
     }

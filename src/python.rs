@@ -45,7 +45,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use std::collections::HashMap;
 
 #[cfg(feature = "python")]
-use crate::policy::{PolicyContext, PolicyEffect, PolicyEngine, PolicyRule};
+use crate::policy::{PolicyContext, PolicyEngine, PolicyRule};
 
 #[cfg(feature = "python")]
 use crate::audit::{AuditDecision, AuditLogger};
@@ -976,7 +976,10 @@ fn _vak_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Add version info
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
-    m.add("__rust_version__", "1.75+")?;
+    m.add(
+        "__rust_version__",
+        format!("{}+", env!("CARGO_PKG_RUST_VERSION")),
+    )?;
 
     Ok(())
 }

@@ -3,7 +3,7 @@
 **An open-source Agent Kernel that intercepts agent actions, enforces policy rules (ABAC), and audit-logs behavior for trustworthy AI agent deployments.**
 
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-1.90%2B-orange.svg)](https://www.rust-lang.org/)
 [![Status](https://img.shields.io/badge/status-production--ready-brightgreen.svg)](https://github.com/muzammil5539/Verifiable-Agent-Kernel-VAK-)
 
 ---
@@ -348,7 +348,7 @@ VAK/
 
 ### Prerequisites
 
-- **Rust**: 1.75 or later
+- **Rust**: 1.90 or later (Wasmtime 41's minimum)
 - **Python**: 3.8+ (for Python SDK)
 - **WASM Target**: For building skills
 

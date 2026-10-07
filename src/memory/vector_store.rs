@@ -1230,12 +1230,18 @@ impl OptimizedVectorStore {
 
     /// Get current statistics
     pub fn stats(&self) -> VectorStoreStats {
-        self.stats.read().unwrap().clone()
+        self.stats
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Reset statistics
     pub fn reset_stats(&self) {
-        let mut stats = self.stats.write().unwrap();
+        let mut stats = self
+            .stats
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *stats = VectorStoreStats::default();
     }
 
@@ -1255,7 +1261,10 @@ impl OptimizedVectorStore {
         // Update statistics
         if self.opt_config.track_stats {
             let duration = start.elapsed();
-            let mut stats = self.stats.write().unwrap();
+            let mut stats = self
+                .stats
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             stats.total_searches += 1;
             stats.total_comparisons += self.inner.count() as u64;
             stats.last_search_latency_us = duration.as_micros() as f64;

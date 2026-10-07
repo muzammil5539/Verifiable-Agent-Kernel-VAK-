@@ -59,6 +59,7 @@ stub or a placeholder.
 | K8 | Policy attributes reflect the agent | Every principal gets `internal = true`, whoever the agent is. **Fixed in v2.1:** attributes come from the agent's `AgentRecord`; anonymous agents are not internal. | `src/kernel/mod.rs:272` | S2 |
 | K9 | `VakRuntime` builder configures the kernel | `with_audit_logging`, `with_policy_enforcement` and `with_sandboxing` are stored in `RuntimeConfig` but never reach `KernelConfig`. `register_tool` registers a schema with no handler, so calls hit K1. | `src/lib_integration.rs:860-880,672` | S2 |
 | K10 | Library users can add tools | Only by dropping a WASM skill on disk. `kernel::custom_handlers` has a working handler registry, but the kernel never consults it. The `kernel::traits` ports (`PolicyEvaluator`, `AuditWriter`, …) have no implementations or callers. | `src/kernel/custom_handlers.rs`, `src/kernel/traits.rs` | S3 |
+| K11 | WASM skills run in an isolated sandbox | The sandbox is Wasmtime 41.0.4, which has 17 published advisories and no patched 41.x release. They include sandbox escapes (with the Winch backend, and miscompiled heap accesses on aarch64 Cranelift), data leakage between pooling-allocator instances (VAK offers the pooling allocator), and host panics and out-of-bounds accesses in component-model string transcoding. Patched lines: Wasmtime 36 LTS, or 49.0.2 and later. Found by `cargo deny check` while fixing CI; not yet fixed. PyO3 0.24 (feature `python`) has 2 more advisories, fixed in 0.29. | `Cargo.toml` (`wasmtime = "41.0.3"`, `pyo3 = "0.24"`) | S1 |
 
 ### 2.2 Verification and cryptography
 
@@ -445,7 +446,7 @@ Phase 1 keeps one crate but gates heavy and experimental modules behind features
 | `legacy-tools` | `tools::skill_sign` (superseded by `sandbox::signing`) | base64 | no |
 | `python` | `python` | pyo3 | no |
 | `full` | everything except `python` | | no |
-| `cedar` | `policy::cedar` engine and `kernel::CedarPolicy` over `cedar-policy` (slice 2a, ADR 0008); needs Rust 1.89; 64 more packages | cedar-policy | no; in `full` |
+| `cedar` | `policy::cedar` engine and `kernel::CedarPolicy` over `cedar-policy` (slice 2a, ADR 0008); 64 more packages | cedar-policy | no; in `full` |
 | `cedar-analysis` | `policy::cedar::analysis`: SymCC proofs, checked reloads (slice 2b, ADR 0009); runs cvc5 1.3.1; 4 more packages | cedar-policy-symcc | no; in `full` |
 
 Departures from the plan above, with reasons:

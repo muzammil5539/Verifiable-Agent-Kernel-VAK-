@@ -294,11 +294,15 @@ impl SecretScrubber {
     }
 
     /// Create with default configuration
+    // The built-in patterns are constants, compiled by the tests of both
+    // configurations: `expect` can only fail on an edit that tests catch.
+    #[allow(clippy::expect_used)]
     pub fn with_defaults() -> Self {
         Self::new(ScrubberConfig::default()).expect("Default config should be valid")
     }
 
     /// Create with minimal configuration (for testing)
+    #[allow(clippy::expect_used)]
     pub fn minimal() -> Self {
         Self::new(ScrubberConfig::minimal()).expect("Minimal config should be valid")
     }
@@ -402,15 +406,10 @@ impl SecretScrubber {
             serde_json::Value::Object(map) => {
                 let scrubbed: serde_json::Map<String, serde_json::Value> = map
                     .iter()
-                    .map(|(k, v)| {
-                        // Also scrub keys that look like they contain secrets
-                        let scrubbed_key = if self.is_sensitive_key(k) {
-                            k.clone() // Keep key but scrub value
-                        } else {
-                            k.clone()
-                        };
-                        (scrubbed_key, self.scrub_json(v))
-                    })
+                    // Keys are kept. Values are scrubbed by pattern, whatever
+                    // their key: a value under a key that `is_sensitive_key`
+                    // flags is not redacted on that account.
+                    .map(|(k, v)| (k.clone(), self.scrub_json(v)))
                     .collect();
                 serde_json::Value::Object(scrubbed)
             }

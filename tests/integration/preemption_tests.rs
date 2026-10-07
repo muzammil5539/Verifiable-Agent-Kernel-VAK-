@@ -20,13 +20,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 #[cfg(test)]
-mod preemption_tests {
+mod epoch_preemption {
     use super::*;
 
     /// Test that the epoch ticker mechanism is properly configured
     #[test]
     fn test_epoch_ticker_creation() {
-        use vak::sandbox::epoch_ticker::{EpochTicker, EpochTickerConfig};
         use wasmtime::{Config, Engine};
 
         // Create engine with epoch interruption enabled
@@ -49,8 +48,10 @@ mod preemption_tests {
         assert_eq!(config.budget_ms(), 100);
 
         // Invalid config (zero budget)
-        let mut invalid = EpochConfig::default();
-        invalid.epoch_budget = 0;
+        let invalid = EpochConfig {
+            epoch_budget: 0,
+            ..EpochConfig::default()
+        };
         assert!(matches!(
             invalid.validate(),
             Err(EpochConfigError::InvalidBudget(_))
@@ -429,7 +430,6 @@ mod preemption_tests {
 /// Tests for panic safety at WASM/Host boundary (RT-005)
 #[cfg(test)]
 mod panic_safety_tests {
-    use super::*;
 
     #[test]
     fn test_panic_boundary_catches_panic() {
@@ -495,7 +495,6 @@ mod panic_safety_tests {
 /// Tests for neuro-symbolic reasoning (NSR-003)
 #[cfg(all(test, feature = "reasoner"))]
 mod reasoning_tests {
-    use super::*;
 
     #[test]
     fn test_reasoning_host_creation() {

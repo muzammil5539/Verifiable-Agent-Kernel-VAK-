@@ -620,7 +620,7 @@ impl Constitution {
                 r.enforcement_point == point || r.enforcement_point == EnforcementPoint::All
             })
             .collect();
-        rules.sort_by(|a, b| b.priority.cmp(&a.priority));
+        rules.sort_by_key(|r| std::cmp::Reverse(r.priority));
         rules
     }
 }
@@ -742,7 +742,7 @@ impl ConstitutionalEngine {
         } else {
             // Evaluate all rules
             let mut all_rules: Vec<_> = self.constitution.rules.iter().collect();
-            all_rules.sort_by(|a, b| b.priority.cmp(&a.priority));
+            all_rules.sort_by_key(|r| std::cmp::Reverse(r.priority));
             all_rules
         };
 

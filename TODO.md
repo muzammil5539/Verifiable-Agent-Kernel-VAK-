@@ -93,6 +93,15 @@ that language is exactly how the gap went unnoticed for thirteen sprints.
 
 ## P0 — Security: still fails open
 
+- [ ] **Upgrade Wasmtime past its advisories** (finding K11 in
+      `docs/architecture-v2.md`). Wasmtime 41.0.4 has 17 published advisories,
+      including sandbox escapes and data leakage between pooling-allocator
+      instances, and no patched 41.x exists. Move to 49.0.2 or later (or the 36 LTS
+      line) and adapt `src/sandbox/` to the API changes. Run `tests/wasm_skills.rs`
+      and `tests/signed_skills.rs`, and expect the minimum Rust version to rise. Upgrade
+      PyO3 to 0.29 for its two advisories. `cargo deny check` and `cargo audit`
+      (the Security workflow) stay red until then.
+
 - [ ] **ZK proofs are not zero-knowledge.** `src/reasoner/zk_proof.rs::verify_response`
       accepts any 64-character hex string as a valid proof of any statement — there is
       no check binding the response to the witness. The module now carries an explicit
@@ -146,6 +155,14 @@ request path. In order of leverage:
 ---
 
 ## P2 — Fix the parts that mislead adopters
+
+- [ ] **`SecretScrubber` doesn't redact values under sensitive keys.**
+      `src/memory/secret_scrubber.rs::scrub_json` scrubs values only by pattern, so
+      `{"password": "hunter2"}` passes through. Its comment claimed otherwise, and its
+      branch for sensitive keys did the same as the other branch (clippy's
+      `if_same_then_else`, removed while fixing CI). Redacting by key needs
+      `is_sensitive_key` to match whole words first: today "auth" matches "author" and
+      "token" matches "max_tokens".
 
 - [ ] **MCP `execute_skill` reports success without running anything** (finding I3
       in `docs/architecture-v2.md`). `src/integrations/mcp.rs` returns

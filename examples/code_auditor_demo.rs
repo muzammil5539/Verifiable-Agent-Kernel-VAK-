@@ -74,6 +74,8 @@ struct CodeFinding {
     confidence: f64,
 }
 
+// The full taxonomy, though this demo's checks report only some of it.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FindingSeverity {
     Critical,
@@ -95,6 +97,7 @@ impl std::fmt::Display for FindingSeverity {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 enum FindingCategory {
     SecurityVulnerability,
@@ -123,11 +126,16 @@ struct CodeAuditor {
     config: CodeAuditorConfig,
     episodic_memory: EpisodicMemory,
     time_travel: TimeTravelManager,
+    // Built to show the subsystems wiring up; the demo's checks don't
+    // consult them yet.
+    #[allow(dead_code)]
     knowledge_graph: KnowledgeGraph,
     audit_logger: AuditLogger,
+    #[allow(dead_code)]
     policy_engine: PolicyEngine,
     constraint_verifier: ConstraintVerifier,
     prm: MockPrm,
+    #[allow(dead_code)]
     skill_registry: SkillRegistry,
     step_count: usize,
     files_analyzed: Vec<String>,

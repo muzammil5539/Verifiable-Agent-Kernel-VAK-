@@ -68,9 +68,9 @@ print(f"Audit chain valid: {is_valid}")
 
 **Solution**:
 ```bash
-# Ensure MSRV 1.75+
+# Ensure MSRV 1.90+ (Wasmtime 41's minimum)
 rustup update stable
-rustc --version   # Should show 1.75.0 or later
+rustc --version   # Should show 1.90.0 or later
 ```
 
 ### `error: failed to run custom build command for rusqlite`

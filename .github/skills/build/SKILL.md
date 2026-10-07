@@ -9,7 +9,7 @@ This skill provides instructions for building all components of the VAK project.
 
 ## Prerequisites
 
--   Rust 1.75+ (`rustup update stable`)
+-   Rust 1.90+ (`rustup update stable`)
 -   `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
 -   Python 3.9+ (for Python bindings)
 -   `maturin` (`pip install maturin`)

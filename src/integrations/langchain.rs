@@ -1340,8 +1340,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_llm_interception_blocked_model() {
-        let mut config = LangChainConfig::default();
-        config.intercept_llm = true;
+        let mut config = LangChainConfig {
+            intercept_llm: true,
+            ..LangChainConfig::default()
+        };
         config
             .base
             .blocked_actions

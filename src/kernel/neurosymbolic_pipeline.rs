@@ -53,7 +53,10 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+// A lock is poisoned only if a thread panicked while holding it. These locks
+// guard plain collections, so the data stays usable: recover the guard rather
+// than spread the panic to every later caller.
+use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Instant;
 use thiserror::Error;
 use tracing::{debug, info, instrument, warn};
@@ -580,7 +583,10 @@ impl DatalogValidator for DefaultDatalogValidator {
         }
 
         // Apply custom rules
-        let custom_rules = self.custom_rules.read().unwrap();
+        let custom_rules = self
+            .custom_rules
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
         for (rule_name, pattern) in custom_rules.iter() {
             for action in &plan.actions {
                 if action.target.contains(pattern) || action.action_type.contains(pattern) {
@@ -615,7 +621,10 @@ impl DatalogValidator for DefaultDatalogValidator {
 impl DefaultDatalogValidator {
     /// Add a custom rule
     pub fn add_rule(&self, name: impl Into<String>, pattern: impl Into<String>) {
-        let mut rules = self.custom_rules.write().unwrap();
+        let mut rules = self
+            .custom_rules
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
         rules.push((name.into(), pattern.into()));
     }
 }
@@ -684,7 +693,11 @@ impl PolicyChecker for DefaultPolicyChecker {
         }
 
         // Check role permissions (default role for now)
-        let allowed_actions = self.role_permissions.get("default").unwrap();
+        // No "default" role means no actions are allowed.
+        let allowed_actions = self
+            .role_permissions
+            .get("default")
+            .map_or(&[][..], Vec::as_slice);
         let action_allowed = allowed_actions.iter().any(|a| {
             action
                 .action_type
@@ -929,15 +942,17 @@ impl NeuroSymbolicPipeline {
                 }
             }
 
-            let check = self
-                .policy_checker
-                .check(&plan.agent_id, plan.actions.first().unwrap());
+            // A plan with no actions has nothing to summarise.
+            let check = plan
+                .actions
+                .first()
+                .map(|first| self.policy_checker.check(&plan.agent_id, first));
             stage_timings.insert(
                 "policy_check".to_string(),
                 stage_start.elapsed().as_millis() as u64,
             );
 
-            Some(check)
+            check
         } else {
             None
         };
@@ -1048,7 +1063,10 @@ impl NeuroSymbolicPipeline {
 
         // Store in history
         {
-            let mut history = self.execution_history.write().unwrap();
+            let mut history = self
+                .execution_history
+                .write()
+                .unwrap_or_else(PoisonError::into_inner);
             history.push(result.clone());
             // Keep last 1000 executions
             if history.len() > 1000 {
@@ -1068,17 +1086,26 @@ impl NeuroSymbolicPipeline {
 
     /// Get current pipeline stage
     pub fn current_stage(&self) -> PipelineStage {
-        *self.current_stage.read().unwrap()
+        *self
+            .current_stage
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Get execution history
     pub fn history(&self) -> Vec<ExecutionResult> {
-        self.execution_history.read().unwrap().clone()
+        self.execution_history
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Set the current stage
     fn set_stage(&self, stage: PipelineStage) {
-        *self.current_stage.write().unwrap() = stage;
+        *self
+            .current_stage
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = stage;
         debug!(stage = %stage, "Pipeline stage changed");
     }
 }

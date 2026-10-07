@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use vak::kernel::types::{AgentId, KernelError, SessionId, ToolRequest};
+use vak::kernel::types::KernelError;
 use vak::kernel::{Kernel, KernelConfig, PolicyFormat};
 
 fn repo(path: &str) -> PathBuf {
@@ -40,6 +40,7 @@ mod with_cedar {
     use std::sync::Arc;
 
     use vak::kernel::custom_handlers::{FunctionHandler, HandlerFuture};
+    use vak::kernel::types::{AgentId, SessionId, ToolRequest};
     use vak::kernel::types::{PolicyDecision, ToolResponse};
     use vak::kernel::{AgentRecord, ToolHandler};
 

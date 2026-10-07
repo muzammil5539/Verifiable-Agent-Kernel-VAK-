@@ -376,7 +376,7 @@ impl HotReloadablePolicyEngine {
             .filter(|p| Self::matches_policy(p, action, resource))
             .collect();
 
-        matching_policies.sort_by(|a, b| b.priority.cmp(&a.priority));
+        matching_policies.sort_by_key(|r| std::cmp::Reverse(r.priority));
 
         // Apply first matching policy (highest priority)
         for policy in matching_policies {

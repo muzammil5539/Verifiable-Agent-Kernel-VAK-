@@ -563,13 +563,11 @@ impl<P: LlmProvider> WorkingMemory<P> {
         let summary_content = self.generate_summary(&content_to_summarize).await?;
 
         // Get time range
-        let time_range = if items_to_summarize.len() >= 2 {
-            Some((
-                items_to_summarize.first().unwrap().timestamp,
-                items_to_summarize.last().unwrap().timestamp,
-            ))
-        } else {
-            None
+        let time_range = match (items_to_summarize.first(), items_to_summarize.last()) {
+            (Some(first), Some(last)) if items_to_summarize.len() >= 2 => {
+                Some((first.timestamp, last.timestamp))
+            }
+            _ => None,
         };
 
         // Create summary item
@@ -1028,7 +1026,7 @@ mod tests {
         // English text should estimate reasonably (~4 chars/token)
         let english = "this is a longer message";
         let tokens = estimate_tokens(english);
-        assert!(tokens >= 4 && tokens <= 10, "English estimate: {}", tokens);
+        assert!((4..=10).contains(&tokens), "English estimate: {}", tokens);
 
         // Code with symbols should estimate higher than pure text
         let code = r#"fn main() { println!("hello"); }"#;

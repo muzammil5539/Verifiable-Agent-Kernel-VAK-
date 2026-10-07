@@ -426,17 +426,13 @@ pub struct FlightRecorder {
 impl FlightRecorder {
     /// Create a new flight recorder
     pub fn new(config: RecorderConfig) -> Self {
-        let file_handle = config
-            .storage_path
-            .as_ref()
-            .map(|path| {
-                // Ensure directory exists
-                if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent).ok();
-                }
-                OpenOptions::new().create(true).append(true).open(path).ok()
-            })
-            .flatten();
+        let file_handle = config.storage_path.as_ref().and_then(|path| {
+            // Ensure directory exists
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
+            OpenOptions::new().create(true).append(true).open(path).ok()
+        });
 
         Self {
             config,
