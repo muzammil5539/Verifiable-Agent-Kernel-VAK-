@@ -589,6 +589,51 @@ policies) makes the kernel deny everything, giving the load error as the reason.
 `CedarPolicySet::load(schema, paths)` and `authorize(&CedarRequest)` use the engine
 directly. `CedarPolicy::new(set, &config)` plus `KernelBuilder::with_policy` injects it.
 
+### Proving properties of Cedar policies (feature `cedar-analysis`)
+
+**Module:** `vak::policy::cedar::analysis` (ADR 0009). Needs cvc5 1.3.1 (`CVC5` or `PATH`).
+
+Properties are Cedar policy sets, named with `@property` and typed with `@kind`. A
+*ceiling* bounds what the policies may allow; a *floor* is what they must keep allowing.
+SymCC proves them over every request the schema admits.
+
+```cedar
+@property("restricted-tools-are-never-called")
+@kind("ceiling")
+permit (principal, action, resource) when { !resource.restricted };
+```
+
+```rust
+use vak::policy::cedar::analysis::{Analyzer, PolicyProperties};
+
+let properties = PolicyProperties::load(&policies, &["policies/cedar/properties".into()])?;
+let mut analyzer = Analyzer::new()?;                 // starts cvc5
+let report = analyzer.check(&policies, &properties).await?;
+assert!(report.holds(), "{report}");                 // counterexamples on failure
+```
+
+Every policy is also checked never to error. `check_no_widening(old, new)` proves `new`
+allows nothing `old` didn't. From the command line, for CI:
+
+```bash
+cargo run --example cedar_check --features cedar-analysis -- \
+  --policies policies/cedar --properties policies/cedar/properties [--baseline <old policies>]
+```
+
+A running `CedarPolicy` can swap in a new set:
+
+```rust
+let pdp = Arc::new(CedarPolicy::new(policies, &config));
+let kernel = Kernel::builder(config).with_policy(pdp.clone()).build().await?;
+
+pdp.reload(new_set).await;                           // unchecked
+pdp.reload_checked(new_set, &properties, &mut analyzer, Widening::Refuse).await?;
+```
+
+`reload_checked` swaps the set in only if the properties hold, no policy can error, the
+schema is unchanged and, with `Widening::Refuse`, nothing new is allowed. Otherwise the
+current set stays in force and `ReloadRefused` carries the counterexamples.
+
 ### CedarEnforcer
 
 **Module:** `vak::policy`

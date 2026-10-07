@@ -216,7 +216,8 @@ feature `cedar`, ADR 0008). The kernel reaches either one through the
 
 | Component | File | Description |
 |-----------|------|-------------|
-| `CedarPolicySet` | `cedar.rs` | Feature `cedar`: loads a Cedar schema and `.cedar` policies, validates them strictly, decides tool calls; any evaluation error denies |
+| `Analyzer`, `PolicyProperties` | `cedar/analysis.rs` | Feature `cedar-analysis`: SymCC proofs of ceilings, floors and never-errors over every request the schema admits; checked reloads |
+| `CedarPolicySet` | `cedar/mod.rs` | Feature `cedar`: loads a Cedar schema and `.cedar` policies, validates them strictly, decides tool calls; any evaluation error denies |
 | `CedarEnforcer` | `enforcer.rs` | Core policy evaluation engine. Loads YAML rules, evaluates conditions. |
 | `DynamicContextCollector` | `context.rs` | Injects runtime context (timestamp, risk score) into policy evaluation. |
 | `HotReloadablePolicyEngine` | `hot_reload.rs` | Live policy updates using `arc-swap` for lock-free reads. |

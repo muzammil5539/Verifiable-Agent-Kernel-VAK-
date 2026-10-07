@@ -12,6 +12,11 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 `docs/adr/0003-admit-budget-record-outcome-pipeline-stages.md` for the decision records.
 
 ### Added
+- The `cedar-analysis` feature (ADR 0009): `policy::cedar::analysis` (`Analyzer`,
+  `PolicyProperties`, `AnalysisReport`, `check_reload`, `Widening`, `ReloadRefused`)
+  proves properties of Cedar policy sets with SymCC and cvc5 1.3.1. `CedarPolicy::reload`
+  and `reload_checked`. `examples/cedar_check.rs` runs the checks in CI.
+  `policies/cedar/properties/` holds the default policies' properties.
 - The `cedar` feature (ADR 0008; needs Rust 1.89): `policy::cedar` (`CedarPolicySet`,
   `CedarRequest`, `CedarDecision`, `CedarPolicyError`, `VAK_SCHEMA`) and
   `kernel::CedarPolicy`, a `PolicyDecisionPoint` over the `cedar-policy` crate. Selected
@@ -63,6 +68,11 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
   `CustomHandlerRegistry::{register_arc, register_new}`.
 
 ### Changed
+- **Breaking:** `CedarPolicy::policies` returns the current set as an
+  `Arc<CedarPolicySet>`. The policy loader refuses policies that carry `@property`
+  (`CedarPolicyError::PropertyAsPolicy`).
+- `policies/cedar/examples/payments.cedar` forbids restricted tools. SymCC showed that
+  without it a finance agent could still call a blocked `transfer_funds`.
 - `KernelError::PolicyViolation::policy_id` names the policies that denied, when the
   decision point reports them. It used to be `"default"` for every denial.
 - **Breaking:** `AuditLogger::log` and `log_with_metadata` return

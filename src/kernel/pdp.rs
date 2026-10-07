@@ -351,10 +351,20 @@ impl PolicyDecisionPoint for DenyAll {
 /// from config: `restricted` from `security.blocked_tools`, `builtin` from
 /// the kernel's built-in tools. Anything Cedar can't decide cleanly (a call
 /// that doesn't match the schema, a policy that fails to evaluate) is denied.
+///
+/// The policy set can be replaced while the kernel runs. Each decision uses
+/// one set throughout; a reload takes effect from the next decision. With
+/// the `cedar-analysis` feature, [`CedarPolicy::reload_checked`] swaps a new
+/// set in only once SymCC has proven it safe (docs/adr/0009). To reload, keep
+/// an `Arc<CedarPolicy>` and give the kernel a clone with
+/// [`KernelBuilder::with_policy`](super::KernelBuilder::with_policy).
 #[cfg(feature = "cedar")]
 #[derive(Debug)]
 pub struct CedarPolicy {
-    policies: crate::policy::cedar::CedarPolicySet,
+    policies: arc_swap::ArcSwap<crate::policy::cedar::CedarPolicySet>,
+    /// Serialises reloads, so a checked reload is checked against the set it
+    /// replaces.
+    reloading: tokio::sync::Mutex<()>,
     blocked_tools: Vec<String>,
     constraints: Option<Vec<String>>,
 }
@@ -366,16 +376,71 @@ impl CedarPolicy {
     #[must_use]
     pub fn new(policies: crate::policy::cedar::CedarPolicySet, config: &KernelConfig) -> Self {
         Self {
-            policies,
+            policies: arc_swap::ArcSwap::from_pointee(policies),
+            reloading: tokio::sync::Mutex::new(()),
             blocked_tools: config.security.blocked_tools.clone(),
             constraints: execution_constraints(config),
         }
     }
 
-    /// The policies this decision point decides with.
+    /// The policies this decision point currently decides with.
     #[must_use]
-    pub fn policies(&self) -> &crate::policy::cedar::CedarPolicySet {
-        &self.policies
+    pub fn policies(&self) -> Arc<crate::policy::cedar::CedarPolicySet> {
+        self.policies.load_full()
+    }
+
+    /// Replaces the policies without analysing them. The new set was
+    /// validated against its schema when it was loaded; nothing else is
+    /// checked. Prefer [`CedarPolicy::reload_checked`] where cvc5 is
+    /// available.
+    pub async fn reload(&self, policies: crate::policy::cedar::CedarPolicySet) {
+        let _reloading = self.reloading.lock().await;
+        self.policies.store(Arc::new(policies));
+        info!("Cedar policies reloaded without analysis");
+    }
+
+    /// Replaces the policies only if SymCC proves, for every request the
+    /// schema admits, that `properties` hold of them, that none of them
+    /// ever errors, and (unless `widening` allows it) that they allow
+    /// nothing the current policies don't. Otherwise the current policies
+    /// stay in force.
+    ///
+    /// # Errors
+    ///
+    /// [`ReloadRefused`](crate::policy::cedar::analysis::ReloadRefused),
+    /// with the failing checks and their counterexamples, or with why the
+    /// analysis couldn't run.
+    #[cfg(feature = "cedar-analysis")]
+    pub async fn reload_checked(
+        &self,
+        policies: crate::policy::cedar::CedarPolicySet,
+        properties: &crate::policy::cedar::analysis::PolicyProperties,
+        analyzer: &mut crate::policy::cedar::analysis::Analyzer,
+        widening: crate::policy::cedar::analysis::Widening,
+    ) -> Result<
+        crate::policy::cedar::analysis::AnalysisReport,
+        crate::policy::cedar::analysis::ReloadRefused,
+    > {
+        let _reloading = self.reloading.lock().await;
+        let current = self.policies.load_full();
+        match crate::policy::cedar::analysis::check_reload(
+            analyzer, &current, &policies, properties, widening,
+        )
+        .await
+        {
+            Ok(report) => {
+                self.policies.store(Arc::new(policies));
+                info!(
+                    checks = report.outcomes.len(),
+                    "Cedar policies reloaded after analysis"
+                );
+                Ok(report)
+            }
+            Err(refused) => {
+                warn!(error = %refused, "Cedar policy reload refused; current policies stay in force");
+                Err(refused)
+            }
+        }
     }
 }
 
@@ -397,7 +462,7 @@ impl PolicyDecisionPoint for CedarPolicy {
             None => ("", false, &no_attributes),
         };
 
-        let decision = self.policies.authorize(&CedarRequest {
+        let decision = self.policies.load().authorize(&CedarRequest {
             agent_id: &agent_id,
             agent_name,
             internal,

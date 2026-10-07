@@ -30,6 +30,12 @@ cargo test --package vak --lib policy                # tests in one module
 cargo test --test integration_root test_stress --features full -- --test-threads=1  # stress tests
 PROPTEST_CASES=512 cargo test --test property_tests --features full   # property-based tests, extended cases
 python -m pytest python/tests/ -v                     # Python SDK tests
+
+# Cedar policy proofs (docs/adr/0009) need cvc5 1.3.1: set CVC5 or put it on PATH.
+# Tests that run the solver are #[ignore]d without it; CI runs them.
+cargo test --features full --test cedar_properties -- --include-ignored
+cargo run --example cedar_check --features cedar-analysis -- \
+  --policies policies/cedar --properties policies/cedar/properties
 cargo bench                                           # benchmarks (Criterion)
 
 # Lint / format
@@ -54,7 +60,7 @@ Building the Python SDK locally uses `maturin` (`pip install -e ./python` or `ma
 
 ## Architecture (essentials)
 
-Features: the trusted core (`kernel`, `policy`, `audit`, `secrets`, `lib_integration`) is always built. `wasm` (sandbox, skills) and `memory` (with `llm`) are on by default; `reasoner`, `experimental-zk`, `swarm`, `integrations`, `dashboard`, `legacy-tools`, `cedar` and `python` are off. `full` is everything but `python`. Code in the core must not import a feature-gated module; gate the importing code instead.
+Features: the trusted core (`kernel`, `policy`, `audit`, `secrets`, `lib_integration`) is always built. `wasm` (sandbox, skills) and `memory` (with `llm`) are on by default; `reasoner`, `experimental-zk`, `swarm`, `integrations`, `dashboard`, `legacy-tools`, `cedar`, `cedar-analysis` and `python` are off. `full` is everything but `python`. Code in the core must not import a feature-gated module; gate the importing code instead.
 
 VAK is a Cargo workspace: the root crate (`vak`) plus WASM skill crates under `.github/skills/*` (`calculator`, `crypto-hasher`, `json-validator`, `text-analyzer`, `regex-matcher`) as workspace members. Build skills with `cargo build -p <skill> --target wasm32-unknown-unknown --release`.
 
@@ -65,7 +71,7 @@ Core modules under `src/`:
 | Module | Responsibility |
 |---|---|
 | `kernel/` | Orchestration: `Kernel` struct, request dispatch, `AgentId`/`SessionId`/`AuditId` (UUIDv7), `PolicyDecision`, rate limiting, constitution (immutable safety principles enforced pre-policy/pre-execution/post-execution) |
-| `policy/` | ABAC engine — Cedar-style YAML rules, hot-reload via `arc-swap`, conflict analysis; real Cedar (`policy::cedar`, feature `cedar`, `policy.format: cedar`; schema and ported policies in `policies/cedar/`, ADR 0008) |
+| `policy/` | ABAC engine — Cedar-style YAML rules, hot-reload via `arc-swap`, conflict analysis; real Cedar (`policy::cedar`, feature `cedar`, `policy.format: cedar`; schema and ported policies in `policies/cedar/`, ADR 0008); SymCC proofs of policy-set properties and checked reloads (`policy::cedar::analysis`, feature `cedar-analysis`, ADR 0009) |
 | `audit/` | RFC 9162 transparency log behind the kernel's `AuditLog` port (adapters in `kernel/audit_log.rs`: memory, JSONL, SQLite; the one audit path, ADR 0007); standalone hash-chained `AuditLogger`, Ed25519 signing, flight recorder (shadow mode), replay, S3/multi-region backends |
 | `memory/` | Three-tier memory: working (hot) / episodic (warm, Merkle chain via `rs_merkle`) / semantic (cold, knowledge graph + vector store); time-travel rollback by hash |
 | `sandbox/` | WASM execution (Wasmtime 41.x), fuel metering, epoch-based preemption, pooling allocator, skill registry/marketplace, verified publishers |
@@ -92,7 +98,7 @@ Any tool name not matching a built-in (`echo`, `calculator`, `data_processor`, `
 
 ## Policies and configuration
 
-Example ABAC policies live under `policies/` (`admin/`, `data/`, `finance/`, `tests/`) as YAML with `id`, `effect`, `patterns` (actions/resources with glob support), `conditions` (operators: `Equals`, `NotEquals`, `LessThan`, `GreaterThan`, `In`, `Contains`, `StartsWith`, `EndsWith`, `Matches`), and `priority`. Cedar policies (`policy.format: cedar`) live under `policies/cedar/`: the kernel's schema `vak.cedarschema`, the port of the default tool rules `default.cedar`, and `examples/` (typed tool arguments). Agent definitions (dev-time code-gen agents vs. runtime enforcement agents) live under `agents/`; system instructions under `instructions/`; prompt templates under `prompts/`; protocol schemas under `protocols/`.
+Example ABAC policies live under `policies/` (`admin/`, `data/`, `finance/`, `tests/`) as YAML with `id`, `effect`, `patterns` (actions/resources with glob support), `conditions` (operators: `Equals`, `NotEquals`, `LessThan`, `GreaterThan`, `In`, `Contains`, `StartsWith`, `EndsWith`, `Matches`), and `priority`. Cedar policies (`policy.format: cedar`) live under `policies/cedar/`: the kernel's schema `vak.cedarschema`, the port of the default tool rules `default.cedar`, `properties/` (ceilings and floors SymCC proves about them; never load these as policies), and `examples/` (typed tool arguments, with their properties). Agent definitions (dev-time code-gen agents vs. runtime enforcement agents) live under `agents/`; system instructions under `instructions/`; prompt templates under `prompts/`; protocol schemas under `protocols/`.
 
 ## Testing conventions
 

@@ -60,6 +60,43 @@ jobs:
       - name: Run integration tests
         run: cargo test --test '*' --features full --verbose
 
+      # Cedar policy proofs (docs/adr/0009) need the cvc5 1.3.1 solver,
+      # pinned by checksum.
+      - name: Install cvc5 1.3.1
+        run: |
+          curl -sSL -o /tmp/cvc5.zip \
+            https://github.com/cvc5/cvc5/releases/download/cvc5-1.3.1/cvc5-Linux-x86_64-static.zip
+          echo "1a1cda20d2df4938fa4944a69f33ddc9172e319ece0eed0aa09c4d7abede3ed1  /tmp/cvc5.zip" \
+            | sha256sum -c -
+          unzip -q /tmp/cvc5.zip -d /tmp/cvc5
+          echo "CVC5=/tmp/cvc5/cvc5-Linux-x86_64-static/bin/cvc5" >> "$GITHUB_ENV"
+
+      # Tests that need the solver are #[ignore]d without it; run them here.
+      # Then prove the shipped policies' properties, as a user's CI would.
+      - name: Prove Cedar policy properties
+        run: |
+          cargo test --features full --test cedar_properties -- --include-ignored
+          cargo run --example cedar_check --features cedar-analysis -- \
+            --policies policies/cedar --properties policies/cedar/properties
+          cargo run --example cedar_check --features cedar-analysis -- \
+            --schema policies/cedar/examples/payments.cedarschema \
+            --policies policies/cedar/examples/payments.cedar \
+            --properties policies/cedar/examples/payments.properties.cedar
+
+      # Does this change let the default policies allow anything they didn't?
+      # Widening can be intended, so this reports rather than blocks: a
+      # reviewer reads the counterexample.
+      - name: Check Cedar policies don't widen access
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        run: |
+          git fetch --depth=1 origin "${{ github.base_ref }}"
+          git worktree add /tmp/base FETCH_HEAD
+          if [ -d /tmp/base/policies/cedar ]; then
+            cargo run --example cedar_check --features cedar-analysis -- \
+              --policies policies/cedar --baseline /tmp/base/policies/cedar
+          fi
+
       # The trusted core must build and pass its tests with nothing else.
       - name: Build and test the core alone
         run: |

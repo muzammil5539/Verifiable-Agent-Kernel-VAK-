@@ -140,7 +140,8 @@ level** once implemented.
   authoring time.
 - **Implication.** VAK's "Cedar-style YAML" engine reimplements a fraction of Cedar
   without its guarantees, and its Z3 integration (V2) answers the wrong question.
-  (Since slice 2a, ADR 0008, `policy.format: cedar` evaluates real Cedar.)
+  (Since slice 2a, ADR 0008, `policy.format: cedar` evaluates real Cedar; since 2b,
+  ADR 0009, SymCC proves properties of policy sets in CI and before a reload.)
   - **Per request:** evaluate policies with the real `cedar-policy` crate (4.x,
     MSRV 1.89), with schema validation at load time. Evaluation is deterministic and
     takes microseconds. Assurance: `Enforced`.
@@ -445,6 +446,7 @@ Phase 1 keeps one crate but gates heavy and experimental modules behind features
 | `python` | `python` | pyo3 | no |
 | `full` | everything except `python` | | no |
 | `cedar` | `policy::cedar` engine and `kernel::CedarPolicy` over `cedar-policy` (slice 2a, ADR 0008); needs Rust 1.89; 64 more packages | cedar-policy | no; in `full` |
+| `cedar-analysis` | `policy::cedar::analysis`: SymCC proofs, checked reloads (slice 2b, ADR 0009); runs cvc5 1.3.1; 4 more packages | cedar-policy-symcc | no; in `full` |
 
 Departures from the plan above, with reasons:
 
@@ -574,9 +576,14 @@ phase's exit criterion.
       errors, which Cedar alone would let through a failing `forbid`.
       `policies/cedar/default.cedar` ports the tool-call rules of
       `default_policies.yaml`, and a test shows both decide 24 calls alike.
-- Slice 2b: a SymCC property suite in CI (cvc5), starting with "no policy permits a
-  restricted tool", plus hot reload that checks a new set against the old one before
-  swapping it in.
+- [x] Slice 2b (ADR 0009): the `cedar-analysis` feature proves properties of whole policy
+      sets with SymCC and cvc5. Properties are Cedar policy sets: ceilings (the most the
+      policies may allow, e.g. no restricted tool) and floors (what they must keep
+      allowing). Every policy is also checked never to error. `CedarPolicy` reloads
+      while running, and `reload_checked` swaps a new set in only once the properties
+      hold and it allows nothing the old set didn't. CI installs cvc5 and proves the
+      shipped policies. The analysis found that slice 2a's payments example let a
+      finance agent use a blocked tool.
 - IFC labels on tool results and arguments; label-aware policies; the AgentDojo harness
   as a benchmark.
 - `Guard` port with assurance levels; Datalog rules on Ascent with canonical paths.

@@ -19,6 +19,9 @@
 //! denied. So is a request on which any policy fails to evaluate: Cedar
 //! itself skips a policy that errors, which would let a request through a
 //! `forbid` that overflowed.
+//!
+//! With the `cedar-analysis` feature, [`analysis`] proves properties of a
+//! whole policy set with SymCC (docs/adr/0009).
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -31,9 +34,12 @@ use cedar_policy::{
 use serde_json::{json, Value};
 use thiserror::Error;
 
+#[cfg(feature = "cedar-analysis")]
+pub mod analysis;
+
 /// The kernel's Cedar schema, used unless `policy.cedar_schema` names
 /// another. Also shipped as `policies/cedar/vak.cedarschema`.
-pub const VAK_SCHEMA: &str = include_str!("../../policies/cedar/vak.cedarschema");
+pub const VAK_SCHEMA: &str = include_str!("../../../policies/cedar/vak.cedarschema");
 
 /// The namespace of every entity and action the kernel supplies.
 pub const NAMESPACE: &str = "Vak";
@@ -77,6 +83,16 @@ pub enum CedarPolicyError {
     Template {
         /// The file the template came from.
         origin: String,
+    },
+
+    /// A policy carries `@property`: it states a property to prove
+    /// (`analysis`), and loading it as a policy would grant what it allows.
+    #[error("{origin}: policy {id} is a property (@property), not a policy")]
+    PropertyAsPolicy {
+        /// The file it came from.
+        origin: String,
+        /// Its id.
+        id: String,
     },
 
     /// Two policies have the same id. Ids name policies in audit records,
@@ -154,6 +170,8 @@ impl CedarDecision {
 #[derive(Debug, Clone)]
 pub struct CedarPolicySet {
     schema: Schema,
+    /// The schema's source, to tell whether two sets share a schema.
+    schema_text: String,
     policies: PolicySet,
     /// Tools the schema declares an action for (`Vak::Action::"<tool>"`).
     tool_actions: BTreeSet<String>,
@@ -177,33 +195,7 @@ impl CedarPolicySet {
             None => VAK_SCHEMA.to_string(),
         };
 
-        let mut sources = Vec::new();
-        for path in paths {
-            if path.is_dir() {
-                // An entry that can't be read is an error, not a skip: it
-                // could be the file holding the forbids.
-                let mut files = std::fs::read_dir(path)
-                    .map_err(|e| io(path, &e))?
-                    .map(|entry| entry.map(|entry| entry.path()).map_err(|e| io(path, &e)))
-                    .collect::<Result<Vec<_>, _>>()?;
-                files.retain(|p| p.is_file() && p.extension().is_some_and(|e| e == "cedar"));
-                files.sort();
-                for file in files {
-                    sources.push((origin(&file), read(&file)?));
-                }
-            } else {
-                sources.push((origin(path), read(path)?));
-            }
-        }
-        if sources.is_empty() {
-            let where_ = paths
-                .iter()
-                .map(|p| p.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            return Err(CedarPolicyError::Empty(where_));
-        }
-
+        let sources = read_sources(paths)?;
         Self::from_sources(&schema_src, &sources)
     }
 
@@ -220,6 +212,7 @@ impl CedarPolicySet {
         schema: &str,
         sources: &[(String, String)],
     ) -> Result<Self, CedarPolicyError> {
+        let schema_text = schema.to_string();
         let (schema, warnings) = Schema::from_cedarschema_str(schema)
             .map_err(|e| CedarPolicyError::Schema(error_chain(&e)))?;
         for warning in warnings {
@@ -239,6 +232,12 @@ impl CedarPolicySet {
                 });
             }
             for policy in parsed.policies() {
+                if policy.annotation("property").is_some() {
+                    return Err(CedarPolicyError::PropertyAsPolicy {
+                        origin: origin.clone(),
+                        id: policy.id().to_string(),
+                    });
+                }
                 let id = policy
                     .annotation("id")
                     .map_or_else(|| format!("{origin}/{}", policy.id()), str::to_string);
@@ -285,6 +284,7 @@ impl CedarPolicySet {
 
         let set = Self {
             schema,
+            schema_text,
             policies,
             tool_actions,
             ids,
@@ -441,6 +441,38 @@ impl CedarPolicySet {
     }
 }
 
+/// `(file name, contents)` for each policy file in `paths`. A directory
+/// contributes every `*.cedar` file directly in it.
+fn read_sources(paths: &[PathBuf]) -> Result<Vec<(String, String)>, CedarPolicyError> {
+    let mut sources = Vec::new();
+    for path in paths {
+        if path.is_dir() {
+            // An entry that can't be read is an error, not a skip: it could
+            // be the file holding the forbids.
+            let mut files = std::fs::read_dir(path)
+                .map_err(|e| io(path, &e))?
+                .map(|entry| entry.map(|entry| entry.path()).map_err(|e| io(path, &e)))
+                .collect::<Result<Vec<_>, _>>()?;
+            files.retain(|p| p.is_file() && p.extension().is_some_and(|e| e == "cedar"));
+            files.sort();
+            for file in files {
+                sources.push((origin(&file), read(&file)?));
+            }
+        } else {
+            sources.push((origin(path), read(path)?));
+        }
+    }
+    if sources.is_empty() {
+        let where_ = paths
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(CedarPolicyError::Empty(where_));
+    }
+    Ok(sources)
+}
+
 /// `Vak::<kind>::"<id>"`.
 fn uid(kind: &str, id: &str) -> Result<EntityUid, String> {
     let type_name = format!("{NAMESPACE}::{kind}")
@@ -492,10 +524,10 @@ fn error_chain(error: &dyn std::error::Error) -> String {
 mod tests {
     use super::*;
 
-    const DEFAULT_POLICIES: &str = include_str!("../../policies/cedar/default.cedar");
+    const DEFAULT_POLICIES: &str = include_str!("../../../policies/cedar/default.cedar");
     const PAYMENTS_SCHEMA: &str =
-        include_str!("../../policies/cedar/examples/payments.cedarschema");
-    const PAYMENTS_POLICIES: &str = include_str!("../../policies/cedar/examples/payments.cedar");
+        include_str!("../../../policies/cedar/examples/payments.cedarschema");
+    const PAYMENTS_POLICIES: &str = include_str!("../../../policies/cedar/examples/payments.cedar");
 
     fn set(schema: &str, policies: &str) -> CedarPolicySet {
         CedarPolicySet::from_sources(schema, &[("test.cedar".to_string(), policies.to_string())])
@@ -726,6 +758,14 @@ mod tests {
         assert!(matches!(
             load_error("namespace Vak {", DEFAULT_POLICIES),
             CedarPolicyError::Schema(_)
+        ));
+        // A property file loaded as policies would grant what it bounds.
+        assert!(matches!(
+            load_error(
+                VAK_SCHEMA,
+                include_str!("../../../policies/cedar/properties/default.cedar")
+            ),
+            CedarPolicyError::PropertyAsPolicy { .. }
         ));
     }
 

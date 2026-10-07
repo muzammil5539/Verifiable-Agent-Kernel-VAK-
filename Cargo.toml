@@ -53,6 +53,8 @@ wasmtime = "41.0.3"
 
 # Cedar policy evaluation (feature `cedar`; needs Rust 1.89)
 cedar-policy = "4.13"
+# Symbolic analysis of Cedar policy sets (feature `cedar-analysis`; runs cvc5)
+cedar-policy-symcc = "0.7"
 
 # Identifiers
 uuid = { version = "1.6", features = ["v4", "v7", "serde"] }
@@ -139,6 +141,7 @@ arc-swap.workspace = true
 # Optional: each pulled in only by the feature that needs it.
 wasmtime = { workspace = true, optional = true }
 cedar-policy = { workspace = true, optional = true }
+cedar-policy-symcc = { workspace = true, optional = true }
 tokio-stream = { workspace = true, optional = true }
 petgraph = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true }
@@ -172,6 +175,9 @@ legacy-tools = ["dep:base64"]
 # Policies in Cedar, evaluated by the cedar-policy crate (docs/adr/0008).
 # Needs Rust 1.89.
 cedar = ["dep:cedar-policy"]
+# Proves properties of whole Cedar policy sets with SymCC (docs/adr/0009).
+# Checks need the cvc5 1.3.1 solver at run time (`CVC5` or `cvc5` on PATH).
+cedar-analysis = ["cedar", "dep:cedar-policy-symcc"]
 # Python bindings (PyO3); built by maturin.
 python = ["dep:pyo3"]
 # Everything except the Python bindings. CI builds and tests with this.
@@ -186,6 +192,7 @@ full = [
     "dashboard",
     "legacy-tools",
     "cedar",
+    "cedar-analysis",
 ]
 
 [dev-dependencies]
@@ -198,6 +205,10 @@ tempfile.workspace = true
 [[example]]
 name = "sign_skill"
 required-features = ["wasm"]
+
+[[example]]
+name = "cedar_check"
+required-features = ["cedar-analysis"]
 
 [[example]]
 name = "code_auditor_demo"

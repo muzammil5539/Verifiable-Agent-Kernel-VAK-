@@ -99,6 +99,7 @@
 //! | `dashboard` | no | `dashboard` and `api` (implies `swarm`) |
 //! | `legacy-tools` | no | `tools::skill_sign`, superseded by `sandbox::signing` |
 //! | `cedar` | no | Cedar policies through the `cedar-policy` crate (`policy::cedar`); needs Rust 1.89 |
+//! | `cedar-analysis` | no | SymCC proofs about Cedar policy sets (`policy::cedar::analysis`); checks run cvc5 |
 //! | `python` | no | PyO3 bindings, built by maturin |
 //! | `full` | no | everything except `python` |
 //!
@@ -114,6 +115,7 @@
 //! | Kernel mediation | Enforced | Default deny; unknown tools fail closed |
 //! | Policy (`CedarEnforcer`, YAML) | Enforced | Cedar-style, not the `cedar-policy` engine |
 //! | Policy (`CedarPolicy`, feature `cedar`) | Enforced | The `cedar-policy` engine; schema-validated; errors deny |
+//! | Policy analysis (feature `cedar-analysis`) | Enforced, for the properties stated | SymCC with cvc5: ceilings, floors, never-errors, no-widening reloads |
 //! | Kernel audit log | Enforced | RFC 9162 Merkle tree, signed tree heads; in memory, or durable (JSONL or SQLite) with `audit.log_path`, verified on open |
 //! | WASM sandbox | Enforced | Fuel and wall-clock limits; Ed25519-signed skills pinned to their verified module |
 //! | `reasoner` (PRM, ToT, Datalog, prompt-injection) | Heuristic | LLM judge, closures, regexes |

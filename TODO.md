@@ -48,6 +48,12 @@ that language is exactly how the gap went unnoticed for thirteen sprints.
 - [x] `sandbox::async_host` denies when its enforcer can't be built, instead of
       falling back to `CedarEnforcer::new_permissive()`
       (`test_enforcer_construction_failure_denies`)
+- [x] SymCC proofs (`docs/adr/0009`, feature `cedar-analysis`): properties written in
+      Cedar (ceilings, floors) proven over every request the schema admits, plus
+      never-errors for each policy, with confirmed counterexamples; `cedar_check` for CI;
+      CI installs cvc5 and proves the shipped policies. `CedarPolicy` hot-reloads, and
+      `reload_checked` refuses a set that breaks a property or widens access. It found the
+      payments example letting a finance agent use a blocked tool
 - [x] Real Cedar (`docs/adr/0008`, feature `cedar`): `policy.format: cedar` decides
       with the `cedar-policy` crate against a schema for VAK's agents, tools and
       per-tool actions (typed arguments). Policies are validated at load, and a call
