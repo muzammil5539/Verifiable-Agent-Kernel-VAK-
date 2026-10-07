@@ -160,6 +160,20 @@ request path. In order of leverage:
       "max_tokens" keep their values. Nothing on the kernel's path calls the
       scrubber yet.
 
+- [ ] **`SecretScrubber` is fixed but nothing calls it.** It redacts correctly
+      now, but nothing in the kernel, the audit path or the memory tiers uses
+      it, so it protects nothing. Not to be decided as a side effect of other
+      work; two options:
+      - **Wire it into the audit path.** Scrub tool parameters and results
+        before they are hashed into audit entries (and receipts). This changes
+        what the transparency log commits to: a redacted value can't be
+        re-verified against the original, so it needs an ADR on what the log
+        attests, and probably a choice per field (redact vs. commit to a
+        salted hash).
+      - **Gate it behind a feature flag** (e.g. `secret-scrubbing`, off by
+        default), so it isn't exported as if it were active, until there is a
+        caller. Cheaper, and honest about its status.
+
 - [x] **MCP `execute_skill` reports success without running anything** (finding I3
       in `docs/architecture-v2.md`). It now runs every call through
       `Kernel::execute` on the kernel `create_vak_mcp_server` is given; a refused,
