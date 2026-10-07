@@ -285,7 +285,7 @@ fn generate_dashboard_html(
         include_str!("dashboard.html"),
         refresh = config.refresh_interval_secs,
         title = escape_html(&config.title),
-        status = format!("{:?}", health_check.status),
+        status = format_args!("{:?}", health_check.status),
         status_class = match health_check.status {
             HealthStatus::Healthy => "healthy",
             HealthStatus::Degraded => "degraded",

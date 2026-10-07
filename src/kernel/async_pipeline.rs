@@ -405,25 +405,8 @@ impl PipelineMetrics {
             .fetch_add(latency_us, Ordering::Relaxed);
 
         // Update min/max latency
-        let _ = self
-            .min_latency_us
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                if latency_us < current {
-                    Some(latency_us)
-                } else {
-                    None
-                }
-            });
-
-        let _ = self
-            .max_latency_us
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                if latency_us > current {
-                    Some(latency_us)
-                } else {
-                    None
-                }
-            });
+        self.min_latency_us.fetch_min(latency_us, Ordering::Relaxed);
+        self.max_latency_us.fetch_max(latency_us, Ordering::Relaxed);
     }
 
     /// Record a request failed
