@@ -216,7 +216,7 @@ jobs:
 
       - name: Test the native bindings (Rust)
         if: matrix.python-version == '3.12'
-        run: cargo test --features python --lib python::
+        run: cargo test --features python --lib "python::"
 
       - name: Test the native module (Python)
         if: matrix.python-version == '3.12'
