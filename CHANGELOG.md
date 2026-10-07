@@ -156,6 +156,12 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- **Breaking:** `SecretScrubber::scrub_json` and `scrub_map` redact whole any value
+  under a sensitive key, keeping the key; they used to scrub such values by pattern
+  only, so `{"password": "hunter2"}` passed through. `is_sensitive_key` matches the
+  whole key against `memory::SENSITIVE_KEYS`, ignoring case. It used to match
+  substrings, flagging "author" and "max_tokens", and no longer flags keys outside
+  the list such as "secret_token" or "api-key".
 - `memory::receipts`: a public key or signature of the wrong length fails
   verification. It used to be replaced with zero bytes, and an all-zero key is a
   small-order point that non-strict Ed25519 verification can be forged against.

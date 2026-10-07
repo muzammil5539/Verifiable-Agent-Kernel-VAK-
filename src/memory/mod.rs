@@ -71,7 +71,7 @@ pub use receipts::{
 
 pub use secret_scrubber::{
     PatternType, ScrubReport, ScrubberConfig, ScrubberError, ScrubberResult, SecretDetection,
-    SecretScrubber,
+    SecretScrubber, SENSITIVE_KEYS,
 };
 
 pub use snapshot_backend::{

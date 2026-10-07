@@ -141,6 +141,24 @@ impl PatternType {
     }
 }
 
+/// Keys whose values [`SecretScrubber::scrub_json`] and
+/// [`SecretScrubber::scrub_map`] redact whole, whatever the value. Matched
+/// against the whole key, ignoring ASCII case.
+pub const SENSITIVE_KEYS: &[&str] = &[
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "auth_token",
+    "access_token",
+    "refresh_token",
+    "private_key",
+    "client_secret",
+    "bearer",
+];
+
 /// Configuration for secret scrubbing
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScrubberConfig {
@@ -396,6 +414,10 @@ impl SecretScrubber {
     }
 
     /// Scrub secrets from a JSON value (recursively)
+    ///
+    /// A value under a sensitive key ([`Self::is_sensitive_key`]) is replaced
+    /// whole by the redaction text, whatever its type. Every other string is
+    /// scrubbed by pattern.
     pub fn scrub_json(&self, value: &serde_json::Value) -> serde_json::Value {
         if !self.config.enabled {
             return value.clone();
@@ -406,10 +428,16 @@ impl SecretScrubber {
             serde_json::Value::Object(map) => {
                 let scrubbed: serde_json::Map<String, serde_json::Value> = map
                     .iter()
-                    // Keys are kept. Values are scrubbed by pattern, whatever
-                    // their key: a value under a key that `is_sensitive_key`
-                    // flags is not redacted on that account.
-                    .map(|(k, v)| (k.clone(), self.scrub_json(v)))
+                    // Keys are kept. A value under a sensitive key is
+                    // redacted whole; any other value is scrubbed by pattern.
+                    .map(|(k, v)| {
+                        let v = if self.is_sensitive_key(k) {
+                            serde_json::Value::String(self.config.redaction_text.clone())
+                        } else {
+                            self.scrub_json(v)
+                        };
+                        (k.clone(), v)
+                    })
                     .collect();
                 serde_json::Value::Object(scrubbed)
             }
@@ -422,36 +450,38 @@ impl SecretScrubber {
     }
 
     /// Scrub secrets from a HashMap
+    ///
+    /// As [`Self::scrub_json`]: keys are kept, a value under a sensitive key
+    /// is redacted whole, and every other value is scrubbed by pattern.
     pub fn scrub_map(&self, map: &HashMap<String, String>) -> HashMap<String, String> {
         if !self.config.enabled {
             return map.clone();
         }
 
         map.iter()
-            .map(|(k, v)| (k.clone(), self.scrub(v)))
+            .map(|(k, v)| {
+                let v = if self.is_sensitive_key(k) {
+                    self.config.redaction_text.clone()
+                } else {
+                    self.scrub(v)
+                };
+                (k.clone(), v)
+            })
             .collect()
     }
 
-    /// Check if a key name suggests it contains sensitive data
+    /// Whether a value under `key` is redacted whole: `key` is one of
+    /// [`SENSITIVE_KEYS`], ignoring ASCII case.
+    ///
+    /// The match is on the whole key, never a substring. Matching substrings
+    /// flagged "author" (for "auth") and "max_tokens" (for "token"), which
+    /// would redact ordinary data. A key outside the list, such as
+    /// "db_password", is not redacted on account of its name; its value is
+    /// still scrubbed by pattern.
     pub fn is_sensitive_key(&self, key: &str) -> bool {
-        let key_lower = key.to_lowercase();
-        let sensitive_keywords = [
-            "password",
-            "passwd",
-            "pwd",
-            "secret",
-            "token",
-            "api_key",
-            "apikey",
-            "api-key",
-            "auth",
-            "credential",
-            "private",
-            "access_key",
-            "secret_key",
-        ];
-
-        sensitive_keywords.iter().any(|kw| key_lower.contains(kw))
+        SENSITIVE_KEYS
+            .iter()
+            .any(|sensitive| key.eq_ignore_ascii_case(sensitive))
     }
 
     /// Check if text contains any secrets
@@ -634,11 +664,95 @@ mod tests {
     fn test_sensitive_key_detection() {
         let scrubber = SecretScrubber::with_defaults();
 
-        assert!(scrubber.is_sensitive_key("api_key"));
-        assert!(scrubber.is_sensitive_key("PASSWORD"));
-        assert!(scrubber.is_sensitive_key("secret_token"));
-        assert!(!scrubber.is_sensitive_key("username"));
-        assert!(!scrubber.is_sensitive_key("email"));
+        for key in SENSITIVE_KEYS {
+            assert!(scrubber.is_sensitive_key(key), "{key}");
+            assert!(scrubber.is_sensitive_key(&key.to_uppercase()), "{key}");
+        }
+        assert!(scrubber.is_sensitive_key("Api_Key"));
+        // Whole keys only: no substrings, prefixes or suffixes.
+        for key in [
+            "username",
+            "email",
+            "author",
+            "authority",
+            "max_tokens",
+            "token_count",
+            "secretary",
+            "password_hint_shown",
+            "secret_token",
+            "db_password",
+            "api-key",
+            "",
+        ] {
+            assert!(!scrubber.is_sensitive_key(key), "{key}");
+        }
+    }
+
+    /// Ordinary keys that contain a sensitive word must keep their values.
+    #[test]
+    fn values_under_lookalike_keys_are_not_redacted() {
+        let scrubber = SecretScrubber::with_defaults();
+        let json = serde_json::json!({
+            "max_tokens": 100,
+            "author": "Ada Lovelace",
+            "nested": {"max_tokens": 4096, "author": "Grace Hopper"},
+        });
+        assert_eq!(scrubber.scrub_json(&json), json);
+
+        let map: HashMap<String, String> = [
+            ("max_tokens".to_string(), "100".to_string()),
+            ("author".to_string(), "Ada Lovelace".to_string()),
+        ]
+        .into();
+        assert_eq!(scrubber.scrub_map(&map), map);
+    }
+
+    /// Values under sensitive keys are redacted whole, whatever they are,
+    /// and their keys kept, at any depth and in any case.
+    #[test]
+    fn values_under_sensitive_keys_are_redacted() {
+        let scrubber = SecretScrubber::with_defaults();
+        let json = serde_json::json!({
+            "password": "hunter2",
+            "api_key": "abc",
+            "Token": 12345,
+            "client_secret": {"value": "s3cr3t"},
+            "user": "ada",
+            "accounts": [{"name": "ops", "PASSWORD": "correct horse"}],
+        });
+        assert_eq!(
+            scrubber.scrub_json(&json),
+            serde_json::json!({
+                "password": "[REDACTED]",
+                "api_key": "[REDACTED]",
+                "Token": "[REDACTED]",
+                "client_secret": "[REDACTED]",
+                "user": "ada",
+                "accounts": [{"name": "ops", "PASSWORD": "[REDACTED]"}],
+            })
+        );
+
+        let map: HashMap<String, String> = [
+            ("password".to_string(), "hunter2".to_string()),
+            ("api_key".to_string(), "abc".to_string()),
+            ("user".to_string(), "ada".to_string()),
+        ]
+        .into();
+        let scrubbed = scrubber.scrub_map(&map);
+        assert_eq!(scrubbed["password"], "[REDACTED]");
+        assert_eq!(scrubbed["api_key"], "[REDACTED]");
+        assert_eq!(scrubbed["user"], "ada");
+    }
+
+    #[test]
+    fn a_disabled_scrubber_redacts_nothing_by_key() {
+        let scrubber = SecretScrubber::new(ScrubberConfig {
+            enabled: false,
+            ..Default::default()
+        })
+        .unwrap();
+        let json = serde_json::json!({"password": "hunter2"});
+        assert_eq!(scrubber.scrub_json(&json), json);
     }
 
     #[test]

@@ -154,13 +154,11 @@ request path. In order of leverage:
 
 ## P2 — Fix the parts that mislead adopters
 
-- [ ] **`SecretScrubber` doesn't redact values under sensitive keys.**
-      `src/memory/secret_scrubber.rs::scrub_json` scrubs values only by pattern, so
-      `{"password": "hunter2"}` passes through. Its comment claimed otherwise, and its
-      branch for sensitive keys did the same as the other branch (clippy's
-      `if_same_then_else`, removed while fixing CI). Redacting by key needs
-      `is_sensitive_key` to match whole words first: today "auth" matches "author" and
-      "token" matches "max_tokens".
+- [x] **`SecretScrubber` doesn't redact values under sensitive keys.**
+      `scrub_json` and `scrub_map` now redact whole any value under a key in
+      `SENSITIVE_KEYS`, matched as a whole key, ignoring case. "author" and
+      "max_tokens" keep their values. Nothing on the kernel's path calls the
+      scrubber yet.
 
 - [ ] **MCP `execute_skill` reports success without running anything** (finding I3
       in `docs/architecture-v2.md`). `src/integrations/mcp.rs` returns
