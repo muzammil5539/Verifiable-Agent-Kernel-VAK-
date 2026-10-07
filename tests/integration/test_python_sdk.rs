@@ -57,8 +57,12 @@ mod python_sdk_type_tests {
         let mut logger = AuditLogger::new();
 
         // 2. Log events
-        logger.log("py-agent", "execute", "/tools/calc", AuditDecision::Allowed);
-        logger.log("py-agent", "read", "/data/secret", AuditDecision::Denied);
+        logger
+            .log("py-agent", "execute", "/tools/calc", AuditDecision::Allowed)
+            .unwrap();
+        logger
+            .log("py-agent", "read", "/data/secret", AuditDecision::Denied)
+            .unwrap();
 
         // 3. Query entries
         let entries = logger.load_all_entries().expect("Failed to load entries");

@@ -73,7 +73,7 @@ pub mod traits;
 pub mod types;
 
 // Re-export commonly used types at the module level
-pub use self::config::{DefaultPolicyDecision, KernelConfig};
+pub use self::config::{AuditLogFormat, DefaultPolicyDecision, KernelConfig};
 pub use self::custom_handlers::{
     CustomHandlerRegistry, FunctionHandler, HandlerError, HandlerMetadata, HandlerResult,
     ToolHandler,
@@ -96,7 +96,7 @@ pub use self::constitution::{
 /// sandbox. Any other tool name is dispatched to the skill registry.
 pub const BUILTIN_TOOLS: &[&str] = &["echo", "calculator", "data_processor", "system_info"];
 
-pub use self::audit_log::{AuditLogError, FileAuditLog, MemoryAuditLog};
+pub use self::audit_log::{AuditLogError, FileAuditLog, MemoryAuditLog, SqliteAuditLog};
 pub use self::budget::{AgentRateBudget, BudgetDecision, Unlimited};
 pub use self::identity::{AgentRecord, AgentStatus, InMemoryAgentRegistry, RegistryError};
 pub use self::pdp::{ConfigPolicy, EnforcerPolicy};
@@ -337,8 +337,8 @@ impl KernelBuilder {
         self
     }
 
-    /// Records into `log`, instead of the log `config.audit.log_path`
-    /// describes.
+    /// Records into `log`, instead of the log `config.audit.log_path` and
+    /// `config.audit.format` describe.
     #[must_use]
     pub fn with_audit_log(mut self, log: Arc<dyn AuditLog>) -> Self {
         self.audit_log = Some(log);
@@ -404,11 +404,19 @@ impl KernelBuilder {
 
         let audit: Arc<dyn AuditLog> = match (self.audit_log, &config.audit.log_path) {
             (Some(log), _) => log,
-            (None, Some(path)) => Arc::new(FileAuditLog::open(path).await.map_err(|e| {
-                KernelError::InvalidConfiguration {
+            (None, Some(path)) => {
+                let unusable = |e: AuditLogError| KernelError::InvalidConfiguration {
                     message: format!("audit.log_path: {e}"),
+                };
+                match config.audit.format {
+                    AuditLogFormat::Jsonl => {
+                        Arc::new(FileAuditLog::open(path).await.map_err(unusable)?)
+                    }
+                    AuditLogFormat::Sqlite => {
+                        Arc::new(SqliteAuditLog::open(path).await.map_err(unusable)?)
+                    }
                 }
-            })?),
+            }
             (None, None) => Arc::new(MemoryAuditLog::new()),
         };
 

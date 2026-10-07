@@ -503,7 +503,8 @@ impl PyKernel {
             AuditDecision::Denied
         };
         self.audit_logger
-            .log(agent_id, action, &resource, audit_decision);
+            .log(agent_id, action, &resource, audit_decision)
+            .map_err(|e| PyRuntimeError::new_err(format!("Audit log unavailable: {e}")))?;
 
         let mut result = HashMap::new();
         result.insert(
@@ -545,12 +546,14 @@ impl PyKernel {
         let request_id = uuid::Uuid::now_v7().to_string();
 
         // Log tool execution to audit trail
-        self.audit_logger.log(
-            agent_id,
-            format!("tool.execute:{}", tool_id),
-            action,
-            AuditDecision::Allowed,
-        );
+        self.audit_logger
+            .log(
+                agent_id,
+                format!("tool.execute:{}", tool_id),
+                action,
+                AuditDecision::Allowed,
+            )
+            .map_err(|e| PyRuntimeError::new_err(format!("Audit log unavailable: {e}")))?;
 
         // Convert Python dictionary to serde_json::Value
         let params_val = py_to_json(params.as_any().clone())?;
@@ -772,7 +775,8 @@ impl PyKernel {
 
         let entry = self
             .audit_logger
-            .log(agent_id, action, resource, AuditDecision::Allowed);
+            .log(agent_id, action, resource, AuditDecision::Allowed)
+            .map_err(|e| PyRuntimeError::new_err(format!("Audit log unavailable: {e}")))?;
         Ok(entry.id.to_string())
     }
 

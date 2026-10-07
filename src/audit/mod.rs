@@ -1,7 +1,16 @@
 //! Cryptographic Audit Logging Module
 //!
-//! Provides tamper-evident, hash-chained audit logging for agent actions.
-//! Supports pluggable backends for persistent storage (Issue #3).
+//! **The kernel's audit trail is not here.** Every request mediated by
+//! [`Kernel::execute`](crate::kernel::Kernel::execute) is recorded through the
+//! [`AuditLog`](crate::kernel::AuditLog) port, whose adapters live in
+//! [`crate::kernel::audit_log`] and build on [`transparency`] (an RFC 9162
+//! Merkle tree with inclusion and consistency proofs). That is the one audit
+//! path for mediated actions (`docs/adr/0007`).
+//!
+//! This module provides that tree, and [`AuditLogger`]: a standalone
+//! hash-chained event log for applications that record their own events
+//! outside the kernel. Its entry hash covers every field, length-prefixed
+//! ([`entry_hash`]); `log` returns an error when an entry can't be stored.
 //!
 //! # Features
 //! - Hash-chained audit entries for tamper detection
@@ -19,11 +28,15 @@
 //! ```rust,no_run
 //! use vak::audit::{AuditLogger, AuditDecision, AuditBackend, FileAuditBackend};
 //!
+//! # fn main() -> Result<(), vak::audit::AuditError> {
 //! // Create with file-based persistence
-//! let backend = FileAuditBackend::new("/var/log/vak/audit").unwrap();
-//! let mut logger = AuditLogger::with_backend(Box::new(backend)).unwrap();
+//! let backend = FileAuditBackend::new("/var/log/vak/audit")?;
+//! let mut logger = AuditLogger::with_backend(Box::new(backend))?;
 //!
-//! logger.log("agent-1", "read", "/data/file.txt", AuditDecision::Allowed);
+//! // Fails if the entry couldn't be stored.
+//! logger.log("agent-1", "read", "/data/file.txt", AuditDecision::Allowed)?;
+//! # Ok(())
+//! # }
 //! ```
 
 pub mod flight_recorder;
@@ -1004,6 +1017,123 @@ pub struct AuditLogger {
     rotation: Option<RotationConfig>,
     /// Count of entries rotated out
     rotated_count: u64,
+    /// The `prev_hash` the first stored entry must carry: the genesis hash,
+    /// or the hash of the last entry rotation evicted.
+    chain_anchor: String,
+}
+
+/// The `prev_hash` of the first entry in a log.
+fn genesis_hash() -> String {
+    "0".repeat(64)
+}
+
+/// Domain tag of the entry hash. Version 1, before `docs/adr/0007`, had none.
+const ENTRY_HASH_DOMAIN: &[u8] = b"vak.audit-logger.entry.v2";
+
+/// The hash of an [`AuditLogger`] entry: SHA-256 over a domain tag and every
+/// field but `hash` and `signature`, each length-prefixed, `metadata`
+/// included (as JSON).
+///
+/// Length prefixes keep field boundaries in the pre-image, so
+/// `("ab", "c")` and `("a", "bc")` hash differently. The version 1 hash
+/// concatenated fields without them and left `metadata` out (finding K7).
+#[must_use]
+pub fn entry_hash(entry: &AuditEntry) -> String {
+    fn absorb(hasher: &mut Sha256, field: &[u8]) {
+        hasher.update((field.len() as u64).to_be_bytes());
+        hasher.update(field);
+    }
+
+    let mut hasher = Sha256::new();
+    absorb(&mut hasher, ENTRY_HASH_DOMAIN);
+    hasher.update(entry.id.to_be_bytes());
+    hasher.update(entry.timestamp.to_be_bytes());
+    absorb(&mut hasher, entry.agent_id.as_bytes());
+    absorb(&mut hasher, entry.action.as_bytes());
+    absorb(&mut hasher, entry.resource.as_bytes());
+    match &entry.decision {
+        AuditDecision::Allowed => absorb(&mut hasher, b"allowed"),
+        AuditDecision::Denied => absorb(&mut hasher, b"denied"),
+        AuditDecision::Error(message) => {
+            absorb(&mut hasher, b"error");
+            absorb(&mut hasher, message.as_bytes());
+        }
+    }
+    absorb(&mut hasher, entry.prev_hash.as_bytes());
+    match &entry.metadata {
+        None => hasher.update([0u8]),
+        Some(metadata) => {
+            hasher.update([1u8]);
+            // Serialising a `Value` can't fail: its map keys are strings.
+            absorb(
+                &mut hasher,
+                &serde_json::to_vec(metadata).unwrap_or_default(),
+            );
+        }
+    }
+    hex::encode(hasher.finalize())
+}
+
+/// The version 1 entry hash, kept only to verify logs written before
+/// `docs/adr/0007`. Not collision-free, and blind to `metadata`.
+fn legacy_entry_hash(entry: &AuditEntry) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(entry.id.to_le_bytes());
+    hasher.update(entry.timestamp.to_le_bytes());
+    hasher.update(entry.agent_id.as_bytes());
+    hasher.update(entry.action.as_bytes());
+    hasher.update(entry.resource.as_bytes());
+    hasher.update(entry.decision.to_string().as_bytes());
+    hasher.update(entry.prev_hash.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+/// Walks a chain entry by entry.
+///
+/// Version 1 entries are accepted only before the first version 2 entry: a
+/// log written before `docs/adr/0007` keeps verifying, and every entry
+/// written since is held to the current hash.
+struct ChainCheck {
+    expected_prev: String,
+    seen_current: bool,
+    legacy_entries: usize,
+    last: Option<AuditEntry>,
+}
+
+impl ChainCheck {
+    fn new(anchor: String) -> Self {
+        Self {
+            expected_prev: anchor,
+            seen_current: false,
+            legacy_entries: 0,
+            last: None,
+        }
+    }
+
+    fn check(&mut self, entry: &AuditEntry) -> Result<(), AuditVerificationError> {
+        if entry.prev_hash != self.expected_prev {
+            return Err(AuditVerificationError::BrokenChain {
+                entry_id: entry.id,
+                expected: self.expected_prev.clone(),
+                found: entry.prev_hash.clone(),
+            });
+        }
+        let current = entry_hash(entry);
+        if entry.hash == current {
+            self.seen_current = true;
+        } else if !self.seen_current && entry.hash == legacy_entry_hash(entry) {
+            self.legacy_entries += 1;
+        } else {
+            return Err(AuditVerificationError::InvalidHash {
+                entry_id: entry.id,
+                expected: current,
+                found: entry.hash.clone(),
+            });
+        }
+        self.expected_prev = entry.hash.clone();
+        self.last = Some(entry.clone());
+        Ok(())
+    }
 }
 
 impl std::fmt::Debug for AuditLogger {
@@ -1032,6 +1162,7 @@ impl AuditLogger {
             signer: None,
             rotation: None,
             rotated_count: 0,
+            chain_anchor: genesis_hash(),
         }
     }
 
@@ -1045,6 +1176,7 @@ impl AuditLogger {
             signer: Some(AuditSigner::new()),
             rotation: None,
             rotated_count: 0,
+            chain_anchor: genesis_hash(),
         }
     }
 
@@ -1067,6 +1199,7 @@ impl AuditLogger {
             signer: None,
             rotation: None,
             rotated_count: 0,
+            chain_anchor: genesis_hash(),
         };
 
         // Verify chain integrity on startup and get last entry
@@ -1076,8 +1209,8 @@ impl AuditLogger {
                 logger.last_entry_cache = last_entry;
             }
             Err(e) => {
-                tracing::error!("Audit chain verification failed on startup: {:?}", e);
-                return Err(AuditError::ChainVerificationFailed(format!("{:?}", e)));
+                tracing::error!("Audit chain verification failed on startup: {}", e);
+                return Err(AuditError::ChainVerificationFailed(e.to_string()));
             }
         }
 
@@ -1133,18 +1266,29 @@ impl AuditLogger {
         self.signer.as_ref().map(|s| s.public_key_hex.as_str())
     }
 
-    /// Logs an action with cryptographic hash chaining
+    /// Logs an action with cryptographic hash chaining.
+    ///
+    /// # Errors
+    ///
+    /// Returns the backend's error if the entry couldn't be stored. The chain
+    /// is then unchanged: the entry isn't part of the log, and the next one
+    /// links to the last entry that was stored.
     pub fn log(
         &mut self,
         agent_id: impl Into<String>,
         action: impl Into<String>,
         resource: impl Into<String>,
         decision: AuditDecision,
-    ) -> &AuditEntry {
+    ) -> Result<&AuditEntry, AuditError> {
         self.log_with_metadata(agent_id, action, resource, decision, None)
     }
 
-    /// Logs an action with additional metadata
+    /// Logs an action with additional metadata, which the entry's hash
+    /// covers.
+    ///
+    /// # Errors
+    ///
+    /// As [`AuditLogger::log`].
     pub fn log_with_metadata(
         &mut self,
         agent_id: impl Into<String>,
@@ -1152,11 +1296,7 @@ impl AuditLogger {
         resource: impl Into<String>,
         decision: AuditDecision,
         metadata: Option<serde_json::Value>,
-    ) -> &AuditEntry {
-        let agent_id = agent_id.into();
-        let action = action.into();
-        let resource = resource.into();
-
+    ) -> Result<&AuditEntry, AuditError> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -1165,46 +1305,35 @@ impl AuditLogger {
         let prev_hash = self
             .last_entry_cache
             .as_ref()
-            .map(|e| e.hash.clone())
-            .unwrap_or_else(|| "0".repeat(64)); // Genesis hash
+            .map_or_else(|| self.chain_anchor.clone(), |e| e.hash.clone());
 
-        let hash = Self::compute_hash_static(
-            self.next_id,
-            timestamp,
-            &agent_id,
-            &action,
-            &resource,
-            &decision,
-            &prev_hash,
-        );
-
-        let entry = AuditEntry {
+        let mut entry = AuditEntry {
             id: self.next_id,
             timestamp,
-            agent_id,
-            action,
-            resource,
+            agent_id: agent_id.into(),
+            action: action.into(),
+            resource: resource.into(),
             decision,
-            hash: hash.clone(),
+            hash: String::new(),
             prev_hash,
-            signature: self.signer.as_ref().map(|s| s.sign(&hash)), // Sign if signer is available (Issue #51)
+            signature: None,
             metadata,
         };
+        entry.hash = entry_hash(&entry);
+        // Sign if a signer is set (Issue #51).
+        entry.signature = self.signer.as_ref().map(|s| s.sign(&entry.hash));
 
-        // Persist to backend
+        // Only a stored entry joins the chain.
         if let Err(e) = self.backend.append(&entry) {
-            tracing::error!("Failed to persist audit entry: {:?}", e);
+            tracing::error!("Failed to persist audit entry {}: {:?}", entry.id, e);
+            return Err(e);
         }
-
-        self.last_entry_cache = Some(entry);
         self.next_id += 1;
 
         // Check if rotation is needed (Issue #20)
         self.maybe_rotate();
 
-        // SAFETY: We just set last_entry_cache to Some(entry)
-        #[allow(clippy::unwrap_used)]
-        self.last_entry_cache.as_ref().unwrap()
+        Ok(self.last_entry_cache.insert(entry))
     }
 
     /// Perform rotation if configured and entry count exceeds limit (Issue #20)
@@ -1234,19 +1363,23 @@ impl AuditLogger {
             }
         };
 
-        // Archive to archival backend if configured
+        // Archive to archival backend if configured. Entries that weren't
+        // archived are not evicted: rotation must never lose history.
         if let Some(ref mut archival) = self
             .rotation
             .as_mut()
             .and_then(|r| r.archival_backend.as_mut())
         {
-            for entry in &entries_to_archive {
-                if let Err(e) = archival.append(entry) {
-                    tracing::error!("Failed to archive audit entry {}: {:?}", entry.id, e);
-                }
-            }
-            if let Err(e) = archival.flush() {
-                tracing::error!("Failed to flush archival backend: {:?}", e);
+            let archived = entries_to_archive
+                .iter()
+                .try_for_each(|entry| archival.append(entry))
+                .and_then(|()| archival.flush());
+            if let Err(e) = archived {
+                tracing::error!(
+                    "Failed to archive audit entries; keeping them in the primary backend: {:?}",
+                    e
+                );
+                return;
             }
         }
 
@@ -1258,6 +1391,10 @@ impl AuditLogger {
                 e
             );
         } else {
+            // The first remaining entry links to the last evicted one.
+            if let Some(last_evicted) = entries_to_archive.last() {
+                self.chain_anchor = last_evicted.hash.clone();
+            }
             self.rotated_count += to_evict as u64;
             tracing::info!(
                 "Rotated {} audit entries (total rotated: {})",
@@ -1265,29 +1402,6 @@ impl AuditLogger {
                 self.rotated_count
             );
         }
-    }
-
-    /// Static hash computation function (for use before self is available)
-    fn compute_hash_static(
-        id: u64,
-        timestamp: u64,
-        agent_id: &str,
-        action: &str,
-        resource: &str,
-        decision: &AuditDecision,
-        prev_hash: &str,
-    ) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(id.to_le_bytes());
-        hasher.update(timestamp.to_le_bytes());
-        hasher.update(agent_id.as_bytes());
-        hasher.update(action.as_bytes());
-        hasher.update(resource.as_bytes());
-        hasher.update(decision.to_string().as_bytes());
-        hasher.update(prev_hash.as_bytes());
-
-        let result = hasher.finalize();
-        hex::encode(result)
     }
 
     /// Flush pending entries to the backend
@@ -1300,57 +1414,37 @@ impl AuditLogger {
         self.backend.get_by_agent(agent_id)
     }
 
-    /// Verifies the integrity of the entire audit chain and returns the last entry
+    /// Verifies the integrity of the entire audit chain and returns the last
+    /// entry.
+    ///
+    /// Each entry must link to its predecessor (the first, to the genesis
+    /// hash or, after rotation, to the last evicted entry) and match its
+    /// [`entry_hash`]. Entries hashed the version 1 way are accepted only as
+    /// a prefix of the log, before any current entry; see
+    /// [`AuditReport::legacy_entries`].
     pub fn verify_chain(&self) -> Result<Option<AuditEntry>, AuditVerificationError> {
-        let mut prev_hash = "0".repeat(64);
-        let mut last_entry: Option<AuditEntry> = None;
+        self.check_chain().map(|check| check.last)
+    }
 
-        let mut verify_fn = |entry: &AuditEntry| -> Result<(), AuditError> {
-            if entry.prev_hash != prev_hash {
-                return Err(AuditError::ChainVerificationFailed(format!(
-                    "Broken chain at entry {}: expected prev_hash {}, found {}",
-                    entry.id, prev_hash, entry.prev_hash
-                )));
-            }
-
-            let computed_hash = Self::compute_hash_static(
-                entry.id,
-                entry.timestamp,
-                &entry.agent_id,
-                &entry.action,
-                &entry.resource,
-                &entry.decision,
-                &entry.prev_hash,
-            );
-
-            if entry.hash != computed_hash {
-                return Err(AuditError::ChainVerificationFailed(format!(
-                    "Invalid hash at entry {}: expected {}, found {}",
-                    entry.id, computed_hash, entry.hash
-                )));
-            }
-
-            prev_hash = entry.hash.clone();
-            last_entry = Some(entry.clone());
-            Ok(())
-        };
-
-        self.backend
-            .for_each_entry(&mut verify_fn)
-            .map_err(|e| match e {
-                AuditError::ChainVerificationFailed(msg) => AuditVerificationError::BrokenChain {
-                    entry_id: 0,
-                    expected: String::new(),
-                    found: msg,
-                },
-                e => AuditVerificationError::BrokenChain {
-                    entry_id: 0,
-                    expected: String::new(),
-                    found: format!("Backend error: {:?}", e),
-                },
-            })?;
-
-        Ok(last_entry)
+    fn check_chain(&self) -> Result<ChainCheck, AuditVerificationError> {
+        let mut check = ChainCheck::new(self.chain_anchor.clone());
+        let mut failure = None;
+        let walked = self.backend.for_each_entry(&mut |entry| {
+            check.check(entry).map_err(|e| {
+                let message = e.to_string();
+                failure = Some(e);
+                AuditError::ChainVerificationFailed(message)
+            })
+        });
+        if let Some(failure) = failure {
+            return Err(failure);
+        }
+        walked.map_err(|e| AuditVerificationError::BrokenChain {
+            entry_id: 0,
+            expected: String::new(),
+            found: format!("Backend error: {:?}", e),
+        })?;
+        Ok(check)
     }
 
     /// Verify all signatures in the chain (Issue #51)
@@ -1417,7 +1511,9 @@ impl AuditLogger {
             .filter(|e| matches!(e.decision, AuditDecision::Error(_)))
             .count();
 
-        let chain_valid = self.verify_chain().is_ok();
+        let chain = self.check_chain();
+        let chain_valid = chain.is_ok();
+        let legacy_entries = chain.map_or(0, |check| check.legacy_entries);
 
         let first_timestamp = entries.first().map(|e| e.timestamp);
         let last_timestamp = entries.last().map(|e| e.timestamp);
@@ -1428,6 +1524,7 @@ impl AuditLogger {
             denied_count,
             error_count,
             chain_valid,
+            legacy_entries,
             first_timestamp,
             last_timestamp,
             entries,
@@ -1539,6 +1636,12 @@ pub struct AuditReport {
     pub error_count: usize,
     /// Whether the hash chain is valid
     pub chain_valid: bool,
+    /// How many entries, at the start of the log, carry the version 1 hash,
+    /// written before `docs/adr/0007`. Their `metadata` is not covered by
+    /// their hash, and their fields can be shifted across boundaries without
+    /// detection (finding K7).
+    #[serde(default)]
+    pub legacy_entries: usize,
     /// Timestamp of first entry (if any)
     pub first_timestamp: Option<u64>,
     /// Timestamp of last entry (if any)
@@ -1555,7 +1658,9 @@ mod tests {
     #[test]
     fn test_log_creates_entry() {
         let mut logger = AuditLogger::new();
-        logger.log("agent-1", "read", "/data/file.txt", AuditDecision::Allowed);
+        logger
+            .log("agent-1", "read", "/data/file.txt", AuditDecision::Allowed)
+            .unwrap();
 
         assert_eq!(logger.count().unwrap(), 1);
         assert_eq!(logger.load_all_entries().unwrap()[0].agent_id, "agent-1");
@@ -1564,9 +1669,15 @@ mod tests {
     #[test]
     fn test_hash_chain_integrity() {
         let mut logger = AuditLogger::new();
-        logger.log("agent-1", "read", "/data/a.txt", AuditDecision::Allowed);
-        logger.log("agent-2", "write", "/data/b.txt", AuditDecision::Denied);
-        logger.log("agent-1", "delete", "/data/c.txt", AuditDecision::Allowed);
+        logger
+            .log("agent-1", "read", "/data/a.txt", AuditDecision::Allowed)
+            .unwrap();
+        logger
+            .log("agent-2", "write", "/data/b.txt", AuditDecision::Denied)
+            .unwrap();
+        logger
+            .log("agent-1", "delete", "/data/c.txt", AuditDecision::Allowed)
+            .unwrap();
 
         assert!(logger.verify_chain().is_ok());
 
@@ -1579,8 +1690,12 @@ mod tests {
     #[test]
     fn test_export_report() {
         let mut logger = AuditLogger::new();
-        logger.log("agent-1", "read", "/data/a.txt", AuditDecision::Allowed);
-        logger.log("agent-2", "write", "/data/b.txt", AuditDecision::Denied);
+        logger
+            .log("agent-1", "read", "/data/a.txt", AuditDecision::Allowed)
+            .unwrap();
+        logger
+            .log("agent-2", "write", "/data/b.txt", AuditDecision::Denied)
+            .unwrap();
 
         let report = logger.export().unwrap();
 
@@ -1688,8 +1803,12 @@ mod tests {
         let backend = FileAuditBackend::new(temp_dir.path()).unwrap();
         let mut logger = AuditLogger::with_backend(Box::new(backend)).unwrap();
 
-        logger.log("agent-1", "read", "/data/a.txt", AuditDecision::Allowed);
-        logger.log("agent-2", "write", "/data/b.txt", AuditDecision::Denied);
+        logger
+            .log("agent-1", "read", "/data/a.txt", AuditDecision::Allowed)
+            .unwrap();
+        logger
+            .log("agent-2", "write", "/data/b.txt", AuditDecision::Denied)
+            .unwrap();
         logger.flush().unwrap();
 
         assert_eq!(logger.count().unwrap(), 2);
@@ -1699,9 +1818,15 @@ mod tests {
     #[test]
     fn test_entries_by_agent() {
         let mut logger = AuditLogger::new();
-        logger.log("agent-1", "read", "/a.txt", AuditDecision::Allowed);
-        logger.log("agent-2", "write", "/b.txt", AuditDecision::Allowed);
-        logger.log("agent-1", "delete", "/c.txt", AuditDecision::Denied);
+        logger
+            .log("agent-1", "read", "/a.txt", AuditDecision::Allowed)
+            .unwrap();
+        logger
+            .log("agent-2", "write", "/b.txt", AuditDecision::Allowed)
+            .unwrap();
+        logger
+            .log("agent-1", "delete", "/c.txt", AuditDecision::Denied)
+            .unwrap();
 
         let agent1_entries = logger.get_entries_by_agent("agent-1").unwrap();
         assert_eq!(agent1_entries.len(), 2);
@@ -1715,13 +1840,15 @@ mod tests {
             "request_id": "req-123"
         });
 
-        logger.log_with_metadata(
-            "agent-1",
-            "api_call",
-            "/api/v1/users",
-            AuditDecision::Allowed,
-            Some(metadata.clone()),
-        );
+        logger
+            .log_with_metadata(
+                "agent-1",
+                "api_call",
+                "/api/v1/users",
+                AuditDecision::Allowed,
+                Some(metadata.clone()),
+            )
+            .unwrap();
 
         let entries = logger.load_all_entries().unwrap();
         let entry = &entries[0];
@@ -1910,8 +2037,12 @@ mod tests {
     fn test_logger_with_signing() {
         let mut logger = AuditLogger::new_with_signing();
 
-        logger.log("agent-1", "read", "/data/a.txt", AuditDecision::Allowed);
-        logger.log("agent-2", "write", "/data/b.txt", AuditDecision::Denied);
+        logger
+            .log("agent-1", "read", "/data/a.txt", AuditDecision::Allowed)
+            .unwrap();
+        logger
+            .log("agent-2", "write", "/data/b.txt", AuditDecision::Denied)
+            .unwrap();
 
         // All entries should have signatures
         for entry in logger.load_all_entries().unwrap() {
@@ -1927,9 +2058,15 @@ mod tests {
     fn test_logger_verify_all() {
         let mut logger = AuditLogger::new_with_signing();
 
-        logger.log("agent-1", "action1", "/res1", AuditDecision::Allowed);
-        logger.log("agent-1", "action2", "/res2", AuditDecision::Denied);
-        logger.log("agent-2", "action3", "/res3", AuditDecision::Allowed);
+        logger
+            .log("agent-1", "action1", "/res1", AuditDecision::Allowed)
+            .unwrap();
+        logger
+            .log("agent-1", "action2", "/res2", AuditDecision::Denied)
+            .unwrap();
+        logger
+            .log("agent-2", "action3", "/res3", AuditDecision::Allowed)
+            .unwrap();
 
         let pk = logger.public_key().unwrap().to_string();
 
@@ -1988,12 +2125,14 @@ mod tests {
 
         // Add 8 entries - should trigger rotation after exceeding 5
         for i in 0..8 {
-            logger.log(
-                format!("agent-{}", i),
-                "read",
-                "/data/file.txt",
-                AuditDecision::Allowed,
-            );
+            logger
+                .log(
+                    format!("agent-{}", i),
+                    "read",
+                    "/data/file.txt",
+                    AuditDecision::Allowed,
+                )
+                .unwrap();
         }
 
         // After rotation, count should not exceed max_entries
@@ -2014,12 +2153,14 @@ mod tests {
 
         // Add 5 entries
         for i in 0..5 {
-            logger.log(
-                format!("agent-{}", i),
-                "read",
-                "/data/file.txt",
-                AuditDecision::Allowed,
-            );
+            logger
+                .log(
+                    format!("agent-{}", i),
+                    "read",
+                    "/data/file.txt",
+                    AuditDecision::Allowed,
+                )
+                .unwrap();
         }
 
         // Primary should have at most 3 entries
@@ -2037,12 +2178,14 @@ mod tests {
 
         // Add many entries without rotation configured
         for i in 0..20 {
-            logger.log(
-                format!("agent-{}", i),
-                "read",
-                "/data/file.txt",
-                AuditDecision::Allowed,
-            );
+            logger
+                .log(
+                    format!("agent-{}", i),
+                    "read",
+                    "/data/file.txt",
+                    AuditDecision::Allowed,
+                )
+                .unwrap();
         }
 
         // All entries should be present
@@ -2093,5 +2236,268 @@ mod tests {
         assert_eq!(remaining[0].id, 3);
         assert_eq!(remaining[1].id, 4);
         assert_eq!(remaining[2].id, 5);
+    }
+
+    fn entry(agent_id: &str, action: &str, metadata: Option<serde_json::Value>) -> AuditEntry {
+        let mut entry = AuditEntry {
+            id: 1,
+            timestamp: 1_700_000_000,
+            agent_id: agent_id.to_string(),
+            action: action.to_string(),
+            resource: "/r".to_string(),
+            decision: AuditDecision::Allowed,
+            hash: String::new(),
+            prev_hash: genesis_hash(),
+            signature: None,
+            metadata,
+        };
+        entry.hash = entry_hash(&entry);
+        entry
+    }
+
+    #[test]
+    fn test_entry_hash_keeps_field_boundaries() {
+        // Version 1 hashed these two identically (finding K7).
+        let (shifted_a, shifted_b) = (entry("ab", "c", None), entry("a", "bc", None));
+        assert_eq!(legacy_entry_hash(&shifted_a), legacy_entry_hash(&shifted_b));
+        assert_ne!(shifted_a.hash, shifted_b.hash);
+
+        // An error message can't pass for another field either.
+        let mut error = entry("a", "b", None);
+        error.decision = AuditDecision::Error("x".to_string());
+        let mut other = entry("a", "b", None);
+        other.decision = AuditDecision::Error(String::new());
+        other.resource = "/rx".to_string();
+        assert_ne!(entry_hash(&error), entry_hash(&other));
+    }
+
+    #[test]
+    fn test_entry_hash_covers_metadata() {
+        let none = entry("a", "b", None);
+        let empty = entry("a", "b", Some(serde_json::json!({})));
+        let amount = entry("a", "b", Some(serde_json::json!({"amount": 10})));
+        let more = entry("a", "b", Some(serde_json::json!({"amount": 10_000})));
+        let hashes = [&none.hash, &empty.hash, &amount.hash, &more.hash];
+        for (i, a) in hashes.iter().enumerate() {
+            for b in &hashes[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
+        // Version 1 couldn't tell them apart.
+        assert_eq!(legacy_entry_hash(&amount), legacy_entry_hash(&more));
+    }
+
+    #[test]
+    fn test_rewritten_metadata_is_detected_on_reopen() {
+        let dir = tempdir().unwrap();
+        {
+            let backend = FileAuditBackend::new(dir.path()).unwrap();
+            let mut logger = AuditLogger::with_backend(Box::new(backend)).unwrap();
+            logger
+                .log_with_metadata(
+                    "agent",
+                    "transfer",
+                    "/accounts/1",
+                    AuditDecision::Allowed,
+                    Some(serde_json::json!({"amount": 10})),
+                )
+                .unwrap();
+            logger.flush().unwrap();
+        }
+        let file = dir.path().join("audit.jsonl");
+        let text = std::fs::read_to_string(&file).unwrap();
+        std::fs::write(&file, text.replace("\"amount\":10", "\"amount\":10000")).unwrap();
+
+        let backend = FileAuditBackend::new(dir.path()).unwrap();
+        assert!(matches!(
+            AuditLogger::with_backend(Box::new(backend)),
+            Err(AuditError::ChainVerificationFailed(_))
+        ));
+    }
+
+    #[test]
+    fn test_metadata_floats_survive_a_reopen() {
+        let dir = tempdir().unwrap();
+        // Arbitrary finite doubles: without serde_json's `float_roundtrip`
+        // some parse back one ulp off, and the reopened log's hashes break.
+        let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+        let floats: Vec<f64> = std::iter::from_fn(|| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            Some(f64::from_bits(state))
+        })
+        .filter(|f| f.is_finite())
+        .take(2_000)
+        .collect();
+        let metadata = serde_json::json!({ "floats": floats, "sum": 0.1 + 0.2 });
+        {
+            let backend = FileAuditBackend::new(dir.path()).unwrap();
+            let mut logger = AuditLogger::with_backend(Box::new(backend)).unwrap();
+            logger
+                .log_with_metadata("a", "b", "c", AuditDecision::Allowed, Some(metadata))
+                .unwrap();
+            logger.flush().unwrap();
+        }
+        let backend = FileAuditBackend::new(dir.path()).unwrap();
+        let logger = AuditLogger::with_backend(Box::new(backend)).unwrap();
+        assert_eq!(logger.count().unwrap(), 1);
+    }
+
+    /// Writes `count` entries hashed the version 1 way, as a log from before
+    /// `docs/adr/0007` would hold them.
+    fn legacy_entries(count: u64) -> Vec<AuditEntry> {
+        let mut prev_hash = genesis_hash();
+        (1..=count)
+            .map(|id| {
+                let mut entry = entry("old-agent", "read", Some(serde_json::json!({"n": id})));
+                entry.id = id;
+                entry.prev_hash = prev_hash.clone();
+                entry.hash = legacy_entry_hash(&entry);
+                prev_hash = entry.hash.clone();
+                entry
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_a_legacy_log_still_verifies_and_is_reported() {
+        let mut backend = MemoryAuditBackend::new();
+        for entry in legacy_entries(3) {
+            backend.append(&entry).unwrap();
+        }
+        let mut logger = AuditLogger::with_backend(Box::new(backend)).unwrap();
+        logger
+            .log("new-agent", "write", "/r", AuditDecision::Allowed)
+            .unwrap();
+
+        let report = logger.export().unwrap();
+        assert!(report.chain_valid);
+        assert_eq!(report.total_entries, 4);
+        assert_eq!(report.legacy_entries, 3);
+        let last = logger.verify_chain().unwrap().unwrap();
+        assert_eq!(last.hash, entry_hash(&last));
+    }
+
+    #[test]
+    fn test_a_legacy_hash_after_a_current_one_is_refused() {
+        let mut backend = MemoryAuditBackend::new();
+        let current = entry("a", "b", None);
+        backend.append(&current).unwrap();
+        // A forger who knows only the version 1 hash appends a second entry.
+        let mut forged = entry("a", "b", None);
+        forged.id = 2;
+        forged.prev_hash = current.hash.clone();
+        forged.hash = legacy_entry_hash(&forged);
+        backend.append(&forged).unwrap();
+
+        let error = AuditLogger::with_backend(Box::new(backend)).unwrap_err();
+        assert!(
+            error.to_string().contains("Invalid hash at entry 2"),
+            "{error}"
+        );
+    }
+
+    /// A memory backend whose appends fail while `failing` is set.
+    #[derive(Debug, Default)]
+    struct FlakyBackend {
+        inner: MemoryAuditBackend,
+        failing: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl AuditBackend for FlakyBackend {
+        fn append(&mut self, entry: &AuditEntry) -> Result<(), AuditError> {
+            if self.failing.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(AuditError::BackendNotAvailable("disk full".to_string()));
+            }
+            self.inner.append(entry)
+        }
+        fn load_all(&self) -> Result<Vec<AuditEntry>, AuditError> {
+            self.inner.load_all()
+        }
+        fn get_last(&self) -> Result<Option<AuditEntry>, AuditError> {
+            self.inner.get_last()
+        }
+        fn count(&self) -> Result<u64, AuditError> {
+            self.inner.count()
+        }
+        fn flush(&mut self) -> Result<(), AuditError> {
+            self.inner.flush()
+        }
+        fn get_by_agent(&self, agent_id: &str) -> Result<Vec<AuditEntry>, AuditError> {
+            self.inner.get_by_agent(agent_id)
+        }
+        fn get_by_time_range(&self, start: u64, end: u64) -> Result<Vec<AuditEntry>, AuditError> {
+            self.inner.get_by_time_range(start, end)
+        }
+        fn for_each_entry(
+            &self,
+            f: &mut dyn FnMut(&AuditEntry) -> Result<(), AuditError>,
+        ) -> Result<(), AuditError> {
+            self.inner.for_each_entry(f)
+        }
+        fn get_entry(&self, id: u64) -> Result<Option<AuditEntry>, AuditError> {
+            self.inner.get_entry(id)
+        }
+    }
+
+    #[test]
+    fn test_a_failed_write_is_an_error_and_leaves_the_chain_alone() {
+        let backend = FlakyBackend::default();
+        let failing = backend.failing.clone();
+        let mut logger = AuditLogger::with_backend(Box::new(backend)).unwrap();
+        let first = logger
+            .log("a", "read", "/r", AuditDecision::Allowed)
+            .unwrap()
+            .clone();
+
+        failing.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(matches!(
+            logger.log("a", "delete", "/r", AuditDecision::Allowed),
+            Err(AuditError::BackendNotAvailable(_))
+        ));
+        assert_eq!(logger.count().unwrap(), 1);
+        assert_eq!(logger.last_entry().unwrap().hash, first.hash);
+
+        failing.store(false, std::sync::atomic::Ordering::SeqCst);
+        let next = logger
+            .log("a", "write", "/r", AuditDecision::Allowed)
+            .unwrap();
+        assert_eq!(next.prev_hash, first.hash);
+        assert_eq!(next.id, 2);
+        logger.verify_chain().unwrap();
+    }
+
+    #[test]
+    fn test_rotation_keeps_the_chain_verifiable() {
+        let mut logger = AuditLogger::new();
+        logger.set_rotation(RotationConfig::new(10));
+        for i in 0..25 {
+            logger
+                .log(format!("agent-{i}"), "read", "/r", AuditDecision::Allowed)
+                .unwrap();
+        }
+        assert!(logger.rotated_count() > 0);
+        let last = logger.verify_chain().unwrap().unwrap();
+        assert_eq!(last.id, 25);
+        assert!(logger.export().unwrap().chain_valid);
+    }
+
+    #[test]
+    fn test_rotation_keeps_entries_it_could_not_archive() {
+        let archive = FlakyBackend::default();
+        archive
+            .failing
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let mut logger = AuditLogger::new();
+        logger.set_rotation(RotationConfig::with_archival(5, Box::new(archive)));
+        for i in 0..12 {
+            logger
+                .log(format!("agent-{i}"), "read", "/r", AuditDecision::Allowed)
+                .unwrap();
+        }
+        assert_eq!(logger.count().unwrap(), 12, "nothing lost");
+        assert_eq!(logger.rotated_count(), 0);
+        logger.verify_chain().unwrap();
     }
 }

@@ -48,6 +48,13 @@ that language is exactly how the gap went unnoticed for thirteen sprints.
 - [x] `sandbox::async_host` denies when its enforcer can't be built, instead of
       falling back to `CedarEnforcer::new_permissive()`
       (`test_enforcer_construction_failure_denies`)
+- [x] One audit path (`docs/adr/0007`): the `AuditLog` port records everything the
+      kernel mediates; `SqliteAuditLog` (`audit.format: sqlite`) is its durable,
+      queryable adapter and refuses a database that doesn't verify; durable appends
+      finish even if the caller stops waiting. `AuditLogger` hashes every field
+      length-prefixed, `metadata` included (K7), returns write failures as errors, and
+      stays verifiable across rotation. `tests/audit_path.rs` drives it through
+      `Kernel::execute`
 - [x] Feature gates (`docs/adr/0006`): the trusted core builds and tests alone with
       `--no-default-features` (no Wasmtime); `reasoner`, `experimental-zk`, `swarm`,
       `integrations`, `dashboard`, `legacy-tools` and `python` are off by default;
@@ -90,19 +97,11 @@ that language is exactly how the gap went unnoticed for thirteen sprints.
 Each of these exists as a well-tested standalone module. None of them sit on the
 request path. In order of leverage:
 
-- [ ] **Delegate kernel auditing to `AuditLogger`, backed by `MerkleDag`.**
-      *Partly superseded (ADR 0002, 0003):* the kernel's log is now the `AuditLog`
-      port over an RFC 9162 tree, with receipts and a durable file adapter. What
-      remains is making `AuditLogger`'s SQLite backend an `AuditLog` adapter, or
-      removing it (Phase 1 slice 1e).
-      `Kernel` currently keeps its own `Vec<AuditEntry>` in parallel with
-      `src/audit/mod.rs`'s `AuditLogger` (9,211 lines, Ed25519 signing, rotation,
-      multiple backends — genuinely more capable, and unused). Collapsing to one
-      implementation, backed by `src/memory/merkle_dag.rs`, is what turns a hash
-      chain into the "cryptographic receipt" the vision describes: a session
-      should be able to produce a root hash and a Merkle inclusion proof for any
-      decision. This is the natural anchor point for Module 1 (Cryptographic
-      Memory Fabric), which is otherwise fully disconnected from any request.
+- [x] **Delegate kernel auditing to `AuditLogger`, backed by `MerkleDag`.**
+      *Superseded (ADR 0002, 0003, 0007):* the kernel records through the `AuditLog`
+      port over an RFC 9162 tree, with receipts, inclusion proofs for any decision,
+      and memory, JSONL and SQLite adapters. `AuditLogger` stays a standalone event
+      log; it was not made the kernel's.
 
 - [ ] **Gate high-risk actions on the neuro-symbolic reasoner.** PRM scoring,
       the Datalog safety engine (`src/reasoner/datalog.rs`), and the Z3
@@ -141,6 +140,13 @@ request path. In order of leverage:
       "executed successfully" for any skill name and loads unsigned skills with
       `new_permissive_dev`, bypassing the kernel. Route it through
       `Kernel::execute` and make an unknown or refused skill an error.
+
+- [ ] **The Python SDK's native `Kernel` is not the kernel** (finding I4).
+      `PyKernel` in `src/python.rs` has its own `PolicyEngine` and `AuditLogger`
+      instead of wrapping `vak::kernel::Kernel`, and `execute_tool` returns
+      `success: "true"` without running anything. Wrap `Kernel` (its `execute`,
+      receipts and audit proofs) and make an unknown tool an error. `AuditLogger`
+      can then be removed or kept on its own merits (`docs/adr/0007`).
 
 - [ ] **Python SDK silently substitutes a fake kernel.** `VakKernel` falls back
       to `_StubKernel` — a pure-Python in-memory imitation with no policy

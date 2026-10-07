@@ -112,11 +112,12 @@
 //! |-----------|-------|-------|
 //! | Kernel mediation | Enforced | Default deny; unknown tools fail closed |
 //! | Policy (`CedarEnforcer`, YAML) | Enforced | Cedar-style, not the `cedar-policy` engine |
-//! | Kernel audit log | Enforced | RFC 9162 Merkle tree, signed tree heads; in memory, or durable with `audit.log_path` |
+//! | Kernel audit log | Enforced | RFC 9162 Merkle tree, signed tree heads; in memory, or durable (JSONL or SQLite) with `audit.log_path`, verified on open |
 //! | WASM sandbox | Enforced | Fuel and wall-clock limits; Ed25519-signed skills pinned to their verified module |
 //! | `reasoner` (PRM, ToT, Datalog, prompt-injection) | Heuristic | LLM judge, closures, regexes |
 //! | `reasoner::zk_proof` | Experimental | Not a sound proof system |
 //! | `swarm` consensus | Heuristic | Votes are unauthenticated |
+//! | Python bindings (`python`) | Experimental | `vak.Kernel` doesn't call the kernel; `execute_tool` runs nothing (finding I4) |
 //!
 //! ## License
 //!

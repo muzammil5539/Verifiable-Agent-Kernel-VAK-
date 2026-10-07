@@ -2,19 +2,21 @@
 //!
 //! Tests audit logging, chain verification, and signing
 
-use vak::audit::{AuditDecision, AuditLogger, AuditSigner};
+use vak::audit::{AuditDecision, AuditLogger, AuditSigner, FileAuditBackend};
 
 /// Test: Basic audit logging
 #[test]
 fn test_basic_audit_logging() {
     let mut logger = AuditLogger::new();
 
-    let entry = logger.log(
-        "agent-001",
-        "read",
-        "/data/file.txt",
-        AuditDecision::Allowed,
-    );
+    let entry = logger
+        .log(
+            "agent-001",
+            "read",
+            "/data/file.txt",
+            AuditDecision::Allowed,
+        )
+        .unwrap();
 
     assert_eq!(entry.agent_id, "agent-001");
     assert_eq!(entry.action, "read");
@@ -28,9 +30,15 @@ fn test_audit_chain_hash_linking() {
     let mut logger = AuditLogger::new();
 
     // Log several entries
-    logger.log("agent-001", "read", "/data/a.txt", AuditDecision::Allowed);
-    logger.log("agent-001", "write", "/data/b.txt", AuditDecision::Denied);
-    logger.log("agent-002", "read", "/data/c.txt", AuditDecision::Allowed);
+    logger
+        .log("agent-001", "read", "/data/a.txt", AuditDecision::Allowed)
+        .unwrap();
+    logger
+        .log("agent-001", "write", "/data/b.txt", AuditDecision::Denied)
+        .unwrap();
+    logger
+        .log("agent-002", "read", "/data/c.txt", AuditDecision::Allowed)
+        .unwrap();
 
     // Verify chain
     assert!(logger.verify_chain().is_ok());
@@ -55,19 +63,41 @@ fn test_audit_chain_hash_linking() {
 /// Test: Chain verification detects tampering
 #[test]
 fn test_chain_tampering_detection() {
-    let mut logger = AuditLogger::new();
+    let dir = tempfile::tempdir().unwrap();
+    {
+        let backend = FileAuditBackend::new(dir.path()).unwrap();
+        let mut logger = AuditLogger::with_backend(Box::new(backend)).unwrap();
+        logger
+            .log("agent-001", "read", "/data/a.txt", AuditDecision::Allowed)
+            .unwrap();
+        logger
+            .log("agent-001", "write", "/data/b.txt", AuditDecision::Denied)
+            .unwrap();
+        logger
+            .log("agent-002", "read", "/data/c.txt", AuditDecision::Allowed)
+            .unwrap();
+        assert!(logger.verify_chain().is_ok());
+        logger.flush().unwrap();
+    }
 
-    // Log entries
-    logger.log("agent-001", "read", "/data/a.txt", AuditDecision::Allowed);
-    logger.log("agent-001", "write", "/data/b.txt", AuditDecision::Denied);
-    logger.log("agent-002", "read", "/data/c.txt", AuditDecision::Allowed);
+    // Move a byte from the agent into the action: the version 1 hash
+    // (finding K7) couldn't see this.
+    let file = dir.path().join("audit.jsonl");
+    let text = std::fs::read_to_string(&file).unwrap();
+    let tampered = text.replacen(
+        "\"agent_id\":\"agent-001\",\"action\":\"write\"",
+        "\"agent_id\":\"agent-00\",\"action\":\"1write\"",
+        1,
+    );
+    assert_ne!(tampered, text);
+    std::fs::write(&file, tampered).unwrap();
 
-    // Verify chain is initially valid
-    assert!(logger.verify_chain().is_ok());
-
-    // Note: In a real tampering test, we'd modify entries directly
-    // but that requires mutable access to internal entries
-    // The chain verification logic is tested in unit tests
+    let backend = FileAuditBackend::new(dir.path()).unwrap();
+    let error = AuditLogger::with_backend(Box::new(backend)).unwrap_err();
+    assert!(
+        error.to_string().contains("Invalid hash at entry 2"),
+        "{error}"
+    );
 }
 
 /// Test: Audit logging with signatures
@@ -77,18 +107,22 @@ fn test_audit_logging_with_signatures() {
     let mut logger = AuditLogger::new_with_signing();
 
     // Log entries with automatic signing
-    logger.log(
-        "agent-001",
-        "read",
-        "/data/file.txt",
-        AuditDecision::Allowed,
-    );
-    logger.log(
-        "agent-001",
-        "write",
-        "/data/file.txt",
-        AuditDecision::Denied,
-    );
+    logger
+        .log(
+            "agent-001",
+            "read",
+            "/data/file.txt",
+            AuditDecision::Allowed,
+        )
+        .unwrap();
+    logger
+        .log(
+            "agent-001",
+            "write",
+            "/data/file.txt",
+            AuditDecision::Denied,
+        )
+        .unwrap();
 
     // Verify signatures
     let pk = logger.public_key().unwrap().to_string();
@@ -103,12 +137,14 @@ fn test_audit_logging_with_signatures() {
 fn test_signature_verification_unsigned() {
     // Logger without signing
     let mut logger = AuditLogger::new();
-    logger.log(
-        "agent-001",
-        "read",
-        "/data/file.txt",
-        AuditDecision::Allowed,
-    );
+    logger
+        .log(
+            "agent-001",
+            "read",
+            "/data/file.txt",
+            AuditDecision::Allowed,
+        )
+        .unwrap();
 
     // Entries should not have signatures
     let entries = logger.load_all_entries().unwrap();
@@ -123,12 +159,14 @@ fn test_audit_filtering_by_agent() {
     // Log entries from different agents
     for i in 0..30 {
         let agent = format!("agent-{:03}", i % 3);
-        logger.log(
-            &agent,
-            "action",
-            format!("/resource/{}", i),
-            AuditDecision::Allowed,
-        );
+        logger
+            .log(
+                &agent,
+                "action",
+                format!("/resource/{}", i),
+                AuditDecision::Allowed,
+            )
+            .unwrap();
     }
 
     // Get entries for a specific agent
@@ -148,12 +186,14 @@ fn test_audit_filtering_by_time() {
 
     // Log entries
     for i in 0..10 {
-        logger.log(
-            "agent-001",
-            "action",
-            format!("/resource/{}", i),
-            AuditDecision::Allowed,
-        );
+        logger
+            .log(
+                "agent-001",
+                "action",
+                format!("/resource/{}", i),
+                AuditDecision::Allowed,
+            )
+            .unwrap();
     }
 
     // All entries should have timestamps
@@ -173,12 +213,14 @@ fn test_large_audit_chain_integrity() {
         } else {
             AuditDecision::Allowed
         };
-        logger.log(
-            format!("agent-{:03}", i % 10),
-            format!("action-{}", i % 5),
-            format!("/resource/{}", i),
-            decision,
-        );
+        logger
+            .log(
+                format!("agent-{:03}", i % 10),
+                format!("action-{}", i % 5),
+                format!("/resource/{}", i),
+                decision,
+            )
+            .unwrap();
     }
 
     // Verify chain integrity
@@ -216,12 +258,14 @@ async fn test_concurrent_audit_logging() {
         join_set.spawn(async move {
             let mut logger = logger_clone.write().await;
             for j in 0..10 {
-                logger.log(
-                    format!("agent-{:03}", i),
-                    "concurrent-action",
-                    format!("/resource/{}/{}", i, j),
-                    AuditDecision::Allowed,
-                );
+                logger
+                    .log(
+                        format!("agent-{:03}", i),
+                        "concurrent-action",
+                        format!("/resource/{}/{}", i, j),
+                        AuditDecision::Allowed,
+                    )
+                    .unwrap();
             }
         });
     }

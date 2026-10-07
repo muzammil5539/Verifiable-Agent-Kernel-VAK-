@@ -54,8 +54,8 @@ stub or a placeholder.
 | K3 | Sandbox is scalable | A new `wasmtime::Engine` is created, and the module recompiled, on **every** tool call. Execution is synchronous inside an `async fn`, blocking a Tokio worker for the skill's whole runtime. **Fixed in slice 1b:** `SandboxRuntime` (one engine, SHA-256-keyed module cache, one parked epoch ticker), execution on `spawn_blocking` (ADR 0004). | `src/kernel/mod.rs:634`, `src/sandbox/mod.rs:217` | S2 |
 | K4 | Skills are cryptographically signed | The registry's "signature" is an unkeyed SHA-256 over name, version and description, which anyone can recompute. If the module was missing it hashed the module's *path*. `trusted_keys` was never read, and there was an `unwrap()` on that path. (This table originally said `sandbox/verified_publisher.rs` had real Ed25519. It doesn't: it stores key and signature strings and never verifies one.) **Fixed in slice 1c:** Ed25519 over the module digest and the manifest, verified against `security.trusted_skill_keys`, with each skill pinned to the verified module (ADR 0005). | `src/sandbox/registry.rs:519,540` | S1 |
 | K5 | Rate limiting, constitution, neuro-symbolic checks protect execution | `RateLimiter`, `Constitution`, `NeuroSymbolicPipeline` and `AsyncPipeline` are declared in `kernel/` but never called by `Kernel::execute`. **v2.1:** rate limiting is enforced by the Budget stage; the others wait for the Guard port. | `src/kernel/mod.rs:31-54,503` | S2 |
-| K6 | Audit module provides persistent, signed, rotatable logs | `audit::AuditLogger` (file, SQLite, S3 backends, Ed25519) is **not used by the kernel**. The kernel keeps its own `Vec<AuditEntry>` in RAM, which grows without bound; `get_audit_log` clones all of it. **v2.1:** the kernel's log is the `AuditLog` port; `FileAuditLog` persists it when `audit.log_path` is set. Merging `AuditLogger` in is slice 1e. | `src/kernel/mod.rs:115,875` | S2 |
-| K7 | `audit::AuditLogger` hashes are collision-free | Fields are concatenated without length prefixes, so `("ab","c")` and `("a","bc")` hash identically, and `metadata` isn't hashed at all. (The kernel's own entry hash was fixed in `a9076d8`; this one wasn't.) | `src/audit/mod.rs:1270-1290` | S1 |
+| K6 | Audit module provides persistent, signed, rotatable logs | `audit::AuditLogger` (file, SQLite, S3 backends, Ed25519) is **not used by the kernel**. The kernel keeps its own `Vec<AuditEntry>` in RAM, which grows without bound; `get_audit_log` clones all of it. **v2.1:** the kernel's log is the `AuditLog` port; `FileAuditLog` persists it when `audit.log_path` is set. **Fixed in slice 1e:** the port is the only audit path for mediated actions; `SqliteAuditLog` (`audit.format: sqlite`) gives it durable, queryable storage; both durable adapters finish an append even if the caller stops waiting. It is deliberately not rotated, and `AuditLogger` remains a standalone event log (ADR 0007). Entries are still all held in memory until Phase 3's tiles. | `src/kernel/mod.rs:115,875` | S2 |
+| K7 | `audit::AuditLogger` hashes are collision-free | Fields are concatenated without length prefixes, so `("ab","c")` and `("a","bc")` hash identically, and `metadata` isn't hashed at all. (The kernel's own entry hash was fixed in `a9076d8`; this one wasn't.) `log` also returned entries its backend failed to store, and rotation broke `verify_chain`. **Fixed in slice 1e:** a version 2 hash with a domain tag, length prefixes and `metadata`; old logs verify only as a prefix, counted in `AuditReport::legacy_entries`; `log` returns `Result`; rotation keeps the chain verifiable and never evicts what it couldn't archive (ADR 0007). | `src/audit/mod.rs:1270-1290` | S1 |
 | K8 | Policy attributes reflect the agent | Every principal gets `internal = true`, whoever the agent is. **Fixed in v2.1:** attributes come from the agent's `AgentRecord`; anonymous agents are not internal. | `src/kernel/mod.rs:272` | S2 |
 | K9 | `VakRuntime` builder configures the kernel | `with_audit_logging`, `with_policy_enforcement` and `with_sandboxing` are stored in `RuntimeConfig` but never reach `KernelConfig`. `register_tool` registers a schema with no handler, so calls hit K1. | `src/lib_integration.rs:860-880,672` | S2 |
 | K10 | Library users can add tools | Only by dropping a WASM skill on disk. `kernel::custom_handlers` has a working handler registry, but the kernel never consults it. The `kernel::traits` ports (`PolicyEvaluator`, `AuditWriter`, …) have no implementations or callers. | `src/kernel/custom_handlers.rs`, `src/kernel/traits.rs` | S3 |
@@ -85,10 +85,12 @@ stub or a placeholder.
 | I1 | MCP server | Pinned to protocol `2024-11-05`. The current spec is `2026-07-28`, which uses a stateless core, header routing and hardened OAuth. | `src/integrations/mcp.rs:420` | S3 |
 | I2 | A2A protocol with signed messages | An in-process message bus, not the A2A v1.0 HTTP/JSON-RPC protocol. The `signature` field is never set or checked. | `src/swarm/a2a.rs:200` | S2 |
 | I3 | MCP `execute_skill` runs a sandboxed skill | Nothing runs. For any skill name it returns `is_error: false` with "Skill '…' executed successfully", the same fake success as K1. When `./skills` exists it loads skills with `new_permissive_dev` (unsigned allowed), outside the kernel's pipeline. Found during slice 1c; not yet fixed. | `src/integrations/mcp.rs:860,884` | S1 |
+| I4 | The Python SDK's `Kernel` enforces policy and audits | `vak.Kernel` (`PyKernel`) doesn't use `vak::kernel::Kernel`. It has its own `PolicyEngine` and `AuditLogger`, and `execute_tool` returns `success: "true"` with an echo of its arguments without running anything: the same fake success as K1. Found during slice 1e; not yet fixed. | `src/python.rs:324,526-576` | S1 |
 | D1 | Security audit status table: "✅ Audited" | No external audit is referenced anywhere in the repo. | `src/lib.rs:88-95` | S2 |
 
 **What is sound:** the CedarEnforcer path after `a9076d8` (default deny, condition
-evaluation, fail-closed loading), the kernel's length-prefixed audit hash chain,
+evaluation, fail-closed loading), the kernel's length-prefixed audit hash chain (and, since slice 1e,
+`AuditLogger`'s),
 `ed25519-dalek` usage in `audit::AuditSigner`, the `arc-swap` policy hot-reload, and the
 built-in tools.
 
@@ -416,7 +418,7 @@ flowchart TB
 | `ToolHandler` | execute one named tool | registry of host closures | wired in this change (existed, unused) |
 | `AgentRegistry` | agent → record (attributes, status, tool scope) | `InMemoryAgentRegistry` | **added in v2.1** |
 | `Budget` | charge one request to an agent's budget | `AgentRateBudget` (token bucket) or `Unlimited` | **added in v2.1** |
-| `AuditLog` | append; tree head; inclusion and consistency proofs | `MemoryAuditLog`, or `FileAuditLog` when `audit.log_path` is set | **added in v2.1** |
+| `AuditLog` | append; tree head; inclusion and consistency proofs | `MemoryAuditLog`, or `FileAuditLog` / `SqliteAuditLog` (by `audit.format`) when `audit.log_path` is set | **added in v2.1**; SQLite in 1e |
 | `Guard` | extra pre-execution checks with an assurance level | none | next |
 | `Signer` | sign tree heads | Ed25519 (`ed25519-dalek`) | tree-head signing added |
 | `StateStore`, `Clock`, `ApprovalChannel` | persistence, time, human-in-the-loop | memory, system clock, deny | later |
@@ -448,8 +450,8 @@ Departures from the plan above, with reasons:
 - `integrations` is off by default: all three adapters embed the `reasoner` (the MCP server
   uses the Datalog engine; LangChain and AutoGPT use the PRM), and the MCP server carries
   finding I3.
-- There is no `sqlite` feature yet. The SQLite backends live in `audit` and `memory`, and
-  untangling `audit::AuditLogger` from the core is slice 1e.
+- There is no `sqlite` feature. Since slice 1e (ADR 0007) the kernel's own durable log can
+  be SQLite (`SqliteAuditLog`), so `rusqlite` belongs to the core.
 - `rs_merkle` was a dependency no module used. It is removed.
 - The core build depends on 210 packages instead of 301 (normal and build dependencies), and Wasmtime and petgraph are absent.
 
@@ -542,7 +544,12 @@ phase's exit criterion.
       `Budget` port and the Budget stage from `security.*` (K5); `AuditLog` port with
       memory and JSONL file adapters; outcome leaves; receipts on `ToolResponse`; the
       async-host enforcer denies when it can't be built.
-- SQLite adapter for the `AuditLog` port, replacing or absorbing `audit::AuditLogger`.
+- [x] Slice 1e (ADR 0007): the `AuditLog` port is the one audit path for mediated actions.
+      `SqliteAuditLog` (`audit.format: sqlite`) verifies on open and fails closed; durable
+      appends finish even if the caller stops waiting; the log is never rotated (K6).
+      `AuditLogger` stays as a standalone event log, with a version 2 hash over
+      length-prefixed fields and `metadata`, write failures returned as errors, and
+      rotation that keeps the chain verifiable (K7).
 - [x] Slice 1b (ADR 0004): shared `SandboxRuntime` (engine, module cache keyed by
       SHA-256, one epoch ticker that parks while idle); `spawn_blocking` execution;
       untrusted skill output bounds-checked. Pooling allocator available, opt-in.
@@ -556,7 +563,7 @@ phase's exit criterion.
 - [x] Exit criterion: one end-to-end test signs a skill, loads it, executes it, and
       verifies the inclusion proof for both decision and outcome leaves
       (`tests/signed_skills.rs`, against a tree head over the log reloaded from disk).
-      Slices 1d and 1e remain.
+      Phase 1 is complete.
 
 **Phase 2: research-grade enforcement (1 to 2 months)**
 - `cedar` feature: a `cedar-policy` 4.x adapter, schema for VAK entities, and a SymCC

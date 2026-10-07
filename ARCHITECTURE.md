@@ -182,7 +182,7 @@ The kernel orchestrates the full request lifecycle:
 | `identity.rs` | `AgentRecord`, `AgentRegistry`, `InMemoryAgentRegistry` (Admit stage) |
 | `budget.rs` | `Budget`, `AgentRateBudget`, `Unlimited` (Budget stage) |
 | `pdp.rs` | `ConfigPolicy`, `EnforcerPolicy` (Decide stage) |
-| `audit_log.rs` | `AuditLog`, `MemoryAuditLog`, `FileAuditLog` (Record stages) |
+| `audit_log.rs` | `AuditLog`, `MemoryAuditLog`, `FileAuditLog`, `SqliteAuditLog` (Record stages; the one audit path, ADR 0007) |
 
 **Built-in tools:**
 
@@ -241,9 +241,13 @@ rules:
 
 ### Audit Logger
 
-**Location:** `src/audit/`
+**Location:** `src/kernel/audit_log.rs` (the kernel's log) and `src/audit/`
 
-Provides a tamper-evident, hash-chained audit trail for every kernel action.
+Every kernel action is recorded through the `AuditLog` port, as a leaf of an RFC 9162
+Merkle tree (`audit::transparency`) with a per-entry hash chain. That is the only audit
+path for mediated actions (ADR 0007). The log lives in memory, or durably in a JSONL file
+or a SQLite database (`audit.log_path`, `audit.format`). Durable logs are verified when
+they open, refused if they don't verify, and never rotated.
 
 **Architecture:**
 
@@ -263,7 +267,7 @@ AuditEntry[N]
 
 | Component | File | Description |
 |-----------|------|-------------|
-| `AuditLogger` | `mod.rs` | Main logging system with chain integrity |
+| `AuditLogger` | `mod.rs` | Standalone hash-chained event log for application events outside the kernel (not the kernel's trail) |
 | `FlightRecorder` | `flight_recorder.rs` | Shadow-mode recording without execution |
 | `ReplaySession` | `replay.rs` | Cryptographic replay verification |
 | `AuditQueryEngine` | `graphql.rs` | GraphQL-style query API |
@@ -272,13 +276,13 @@ AuditEntry[N]
 | `S3Backend` | `s3_backend.rs` | Cloud archival storage |
 | `MultiRegionReplication` | `multi_region.rs` | Cross-region replication |
 
-**Storage backends:** File, SQLite (`rusqlite`), S3, In-memory
+**Storage:** the kernel's log uses memory, JSONL or SQLite (`rusqlite`). `AuditLogger`'s
+backends are file, SQLite, S3 and memory.
 
 **Features:**
-- Ed25519 signatures for non-repudiation
-- Log rotation with configurable max entries
-- Chain integrity verification
-- Cryptographic receipt generation
+- Ed25519-signed tree heads; inclusion and consistency proofs; receipts on every response
+- Chain integrity verification on open, failing closed
+- `AuditLogger`: per-entry Ed25519 signatures, rotation with a verifiable chain anchor
 
 ---
 

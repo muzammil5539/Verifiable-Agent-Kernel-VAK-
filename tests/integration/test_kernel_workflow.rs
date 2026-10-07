@@ -79,24 +79,30 @@ async fn test_audit_logging_captures_decisions() {
     let mut logger = AuditLogger::new();
 
     // Log multiple entries
-    logger.log(
-        "agent-001",
-        "read",
-        "/data/file1.txt",
-        AuditDecision::Allowed,
-    );
-    logger.log(
-        "agent-001",
-        "write",
-        "/data/file1.txt",
-        AuditDecision::Denied,
-    );
-    logger.log(
-        "agent-002",
-        "read",
-        "/data/file2.txt",
-        AuditDecision::Allowed,
-    );
+    logger
+        .log(
+            "agent-001",
+            "read",
+            "/data/file1.txt",
+            AuditDecision::Allowed,
+        )
+        .unwrap();
+    logger
+        .log(
+            "agent-001",
+            "write",
+            "/data/file1.txt",
+            AuditDecision::Denied,
+        )
+        .unwrap();
+    logger
+        .log(
+            "agent-002",
+            "read",
+            "/data/file2.txt",
+            AuditDecision::Allowed,
+        )
+        .unwrap();
 
     // Verify: All entries are logged
     let entries = logger.load_all_entries().unwrap();
@@ -251,12 +257,14 @@ async fn test_audit_chain_integrity_under_load() {
         } else {
             AuditDecision::Allowed
         };
-        logger.log(
-            format!("agent-{:03}", i % 10),
-            format!("action-{}", i % 5),
-            format!("/resource/{}", i),
-            decision,
-        );
+        logger
+            .log(
+                format!("agent-{:03}", i % 10),
+                format!("action-{}", i % 5),
+                format!("/resource/{}", i),
+                decision,
+            )
+            .unwrap();
     }
 
     // Verify: Chain integrity is maintained

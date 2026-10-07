@@ -253,7 +253,7 @@ mod audit_properties {
             let mut logger = AuditLogger::new();
 
             for (agent, action, resource) in &entries {
-                logger.log(agent, action, resource, AuditDecision::Allowed);
+                logger.log(agent, action, resource, AuditDecision::Allowed).unwrap();
             }
 
             let chain = logger.load_all_entries().unwrap();
@@ -276,7 +276,7 @@ mod audit_properties {
             let mut logger = AuditLogger::new();
 
             for (agent, action, resource) in &entries {
-                logger.log(agent, action, resource, AuditDecision::Allowed);
+                logger.log(agent, action, resource, AuditDecision::Allowed).unwrap();
             }
 
             let chain = logger.load_all_entries().unwrap();
@@ -298,7 +298,7 @@ mod audit_properties {
             let mut logger = AuditLogger::new();
 
             for (agent, action, resource) in &entries {
-                logger.log(agent, action, resource, AuditDecision::Allowed);
+                logger.log(agent, action, resource, AuditDecision::Allowed).unwrap();
             }
 
             let chain = logger.load_all_entries().unwrap();

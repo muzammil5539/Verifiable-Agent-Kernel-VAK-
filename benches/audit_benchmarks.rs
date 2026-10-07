@@ -15,12 +15,14 @@ fn setup_benchmark(temp_dir: &PathBuf) -> PathBuf {
     let mut logger = AuditLogger::with_backend(Box::new(backend)).unwrap();
 
     for i in 1..=1000 {
-        logger.log(
-            format!("agent-{}", i),
-            "test",
-            "/test",
-            AuditDecision::Allowed,
-        );
+        logger
+            .log(
+                format!("agent-{}", i),
+                "test",
+                "/test",
+                AuditDecision::Allowed,
+            )
+            .unwrap();
     }
     logger.flush().unwrap();
     backend_path

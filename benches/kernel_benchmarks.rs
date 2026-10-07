@@ -202,12 +202,14 @@ fn bench_audit_logging(c: &mut Criterion) {
         let mut logger = AuditLogger::new();
 
         b.iter(|| {
-            let entry = logger.log(
-                "agent-001",
-                "read",
-                "/data/test.txt",
-                AuditDecision::Allowed,
-            );
+            let entry = logger
+                .log(
+                    "agent-001",
+                    "read",
+                    "/data/test.txt",
+                    AuditDecision::Allowed,
+                )
+                .unwrap();
             black_box(entry.id)
         })
     });
@@ -225,16 +227,18 @@ fn bench_audit_chain_verification(c: &mut Criterion) {
 
         // Pre-populate the audit log
         for i in 0..*entry_count {
-            logger.log(
-                format!("agent-{}", i % 10),
-                "execute",
-                format!("/resource/{}", i),
-                if i % 3 == 0 {
-                    AuditDecision::Denied
-                } else {
-                    AuditDecision::Allowed
-                },
-            );
+            logger
+                .log(
+                    format!("agent-{}", i % 10),
+                    "execute",
+                    format!("/resource/{}", i),
+                    if i % 3 == 0 {
+                        AuditDecision::Denied
+                    } else {
+                        AuditDecision::Allowed
+                    },
+                )
+                .unwrap();
         }
 
         group.throughput(Throughput::Elements(*entry_count as u64));
@@ -530,24 +534,28 @@ fn bench_audit_logging_grouped(c: &mut Criterion) {
     group.bench_function("log_entry", |b| {
         let mut logger = AuditLogger::new();
         b.iter(|| {
-            logger.log(
-                black_box("bench-agent"),
-                black_box("read"),
-                black_box("/data/file.txt"),
-                AuditDecision::Allowed,
-            );
+            logger
+                .log(
+                    black_box("bench-agent"),
+                    black_box("read"),
+                    black_box("/data/file.txt"),
+                    AuditDecision::Allowed,
+                )
+                .unwrap();
         })
     });
 
     group.bench_function("verify_chain_10", |b| {
         let mut logger = AuditLogger::new();
         for i in 0..10 {
-            logger.log(
-                &format!("agent-{}", i),
-                "read",
-                "/data/file.txt",
-                AuditDecision::Allowed,
-            );
+            logger
+                .log(
+                    &format!("agent-{}", i),
+                    "read",
+                    "/data/file.txt",
+                    AuditDecision::Allowed,
+                )
+                .unwrap();
         }
         b.iter(|| {
             let _ = black_box(logger.verify_chain());
@@ -557,12 +565,14 @@ fn bench_audit_logging_grouped(c: &mut Criterion) {
     group.bench_function("verify_chain_100", |b| {
         let mut logger = AuditLogger::new();
         for i in 0..100 {
-            logger.log(
-                &format!("agent-{}", i),
-                "read",
-                "/data/file.txt",
-                AuditDecision::Allowed,
-            );
+            logger
+                .log(
+                    &format!("agent-{}", i),
+                    "read",
+                    "/data/file.txt",
+                    AuditDecision::Allowed,
+                )
+                .unwrap();
         }
         b.iter(|| {
             let _ = black_box(logger.verify_chain());
@@ -757,12 +767,14 @@ fn bench_signed_audit(c: &mut Criterion) {
     group.bench_function("log_with_signing", |b| {
         let mut logger = AuditLogger::new_with_signing();
         b.iter(|| {
-            logger.log(
-                black_box("agent-001"),
-                black_box("execute"),
-                black_box("/tool/calculator"),
-                AuditDecision::Allowed,
-            );
+            logger
+                .log(
+                    black_box("agent-001"),
+                    black_box("execute"),
+                    black_box("/tool/calculator"),
+                    AuditDecision::Allowed,
+                )
+                .unwrap();
         })
     });
 
@@ -770,12 +782,14 @@ fn bench_signed_audit(c: &mut Criterion) {
     group.bench_function("log_without_signing", |b| {
         let mut logger = AuditLogger::new();
         b.iter(|| {
-            logger.log(
-                black_box("agent-001"),
-                black_box("execute"),
-                black_box("/tool/calculator"),
-                AuditDecision::Allowed,
-            );
+            logger
+                .log(
+                    black_box("agent-001"),
+                    black_box("execute"),
+                    black_box("/tool/calculator"),
+                    AuditDecision::Allowed,
+                )
+                .unwrap();
         })
     });
 
@@ -783,12 +797,14 @@ fn bench_signed_audit(c: &mut Criterion) {
     group.bench_function("verify_signatures_100", |b| {
         let mut logger = AuditLogger::new_with_signing();
         for i in 0..100 {
-            logger.log(
-                &format!("agent-{}", i % 10),
-                "action",
-                &format!("/res/{}", i),
-                AuditDecision::Allowed,
-            );
+            logger
+                .log(
+                    &format!("agent-{}", i % 10),
+                    "action",
+                    &format!("/res/{}", i),
+                    AuditDecision::Allowed,
+                )
+                .unwrap();
         }
         b.iter(|| {
             black_box(logger.verify_all(None).is_ok());

@@ -181,7 +181,7 @@ registry.suspend(&agent_id, "key rotated").await?;  // refused from the next req
 | `AgentRegistry` | `InMemoryAgentRegistry` (unknown agents get an anonymous record) | `security.require_registered_agents` refuses unknown agents |
 | `Budget` | `AgentRateBudget::per_minute(n)` | `security.enable_rate_limiting`, `security.max_requests_per_minute` |
 | `PolicyDecisionPoint` | `EnforcerPolicy` or `ConfigPolicy` | `policy.policy_paths` |
-| `AuditLog` | `FileAuditLog` or `MemoryAuditLog` | `audit.log_path` |
+| `AuditLog` | `FileAuditLog` (JSONL) or `SqliteAuditLog`, else `MemoryAuditLog` | `audit.log_path`, `audit.format` (`jsonl` or `sqlite`) |
 
 ---
 
@@ -214,7 +214,8 @@ let config = KernelConfig::builder()
     .audit(AuditConfig {
         enabled: true,
         log_level: LogLevel::Info,
-        log_path: Some("/var/log/vak/audit.log".into()),
+        log_path: Some("/var/log/vak/audit.db".into()),
+        format: AuditLogFormat::Sqlite,
         include_bodies: false,
         max_log_size_bytes: 100 * 1024 * 1024,
         retention_count: 10,
@@ -250,7 +251,7 @@ config.validate()?;
 | Struct | Key Fields |
 |--------|------------|
 | `SecurityConfig` | `enable_sandboxing`, `require_signed_requests`, `allowed_tools`, `blocked_tools`, `enable_rate_limiting`, `max_requests_per_minute` |
-| `AuditConfig` | `enabled`, `log_level`, `log_path`, `include_bodies`, `max_log_size_bytes`, `retention_count` |
+| `AuditConfig` | `enabled`, `log_level`, `log_path`, `format`, `include_bodies`, `max_log_size_bytes`, `retention_count` (the last two don't apply to the kernel's log, which is never rotated) |
 | `PolicyConfig` | `enabled`, `default_decision`, `policy_paths`, `enable_caching`, `cache_ttl_seconds` |
 | `ResourceConfig` | `max_memory_mb`, `max_cpu_time_ms`, `max_connections`, `max_request_size_bytes`, `max_response_size_bytes` |
 
@@ -606,15 +607,48 @@ assert!(entry.verify_integrity());
 | `hash` | `String` | SHA-256 of entry contents |
 | `previous_hash` | `Option<String>` | Link to previous entry |
 
+### The kernel's audit log
+
+**Module:** `vak::kernel::audit_log`
+
+Everything `Kernel::execute` decides or does is recorded through the `AuditLog` port,
+and nothing else (ADR 0007). Each entry is a leaf of an RFC 9162 Merkle tree; see
+`Kernel::audit_tree_head` and the proof methods above.
+
+| Adapter | Selected by | Storage |
+|---------|-------------|---------|
+| `MemoryAuditLog` | no `audit.log_path` | In memory; lost on exit |
+| `FileAuditLog` | `audit.log_path`, `audit.format: jsonl` (default) | One JSON entry per line, `fsync`ed per append |
+| `SqliteAuditLog` | `audit.log_path`, `audit.format: sqlite` | One row per entry, each append a durable transaction; query with `json_extract(entry, '$.action')` |
+
+The durable adapters verify every entry when they open and refuse a log that doesn't
+verify (`AuditLogError::Corrupt`), one VAK didn't create, or one in the other format
+(`AuditLogError::Format`). `Kernel::build` then fails; it never starts on a fresh log
+instead. After a failed write a log refuses further appends until it is reopened, and
+the kernel refuses requests (`KernelError::AuditUnavailable`) rather than run tools
+unrecorded.
+
 ### AuditLogger
 
-Main audit system with chain management.
+**Module:** `vak::audit`
+
+A standalone hash-chained event log for events an application records itself, outside
+the kernel. It is not the kernel's audit trail.
 
 ```rust
-logger.log(agent_id, action, resource, decision).await?;
-logger.verify_chain().await?;           // Verify full chain integrity
-logger.export_receipt().await?;         // Generate cryptographic receipt
+use vak::audit::{AuditDecision, AuditLogger, SqliteAuditBackend};
+
+let backend = SqliteAuditBackend::new("/var/lib/app/events.db")?;
+let mut logger = AuditLogger::with_backend(Box::new(backend))?; // verifies on open
+logger.log("agent-1", "read", "/data/a.txt", AuditDecision::Allowed)?; // Err if not stored
+logger.verify_chain()?;
+let report = logger.export()?; // counts, chain_valid, legacy_entries
 ```
+
+Each entry's hash (`vak::audit::entry_hash`) covers a domain tag and every field,
+length-prefixed, `metadata` included. Entries written before ADR 0007 used a weaker
+hash; they still verify when they come first in the log, and `report.legacy_entries`
+counts them.
 
 ### FlightRecorder
 
@@ -1517,7 +1551,8 @@ security:
 audit:
   enabled: true
   log_level: "info"
-  log_path: "/var/log/vak/audit.log"
+  log_path: "/var/log/vak/audit.db"
+  format: "sqlite"   # or "jsonl" (default)
   include_bodies: false
   max_log_size_bytes: 104857600
   retention_count: 10

@@ -12,6 +12,11 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 `docs/adr/0003-admit-budget-record-outcome-pipeline-stages.md` for the decision records.
 
 ### Added
+- `kernel::SqliteAuditLog` (ADR 0007): the kernel's audit log in SQLite, selected with
+  `audit.format: sqlite` (`AuditLogFormat`, `VAK_AUDIT__FORMAT`). Each append is a
+  durable transaction; opening verifies every row and refuses a database VAK didn't
+  create. `AuditLogError::Format`.
+- `audit::entry_hash` and `AuditReport::legacy_entries` (ADR 0007).
 - Cargo features (ADR 0006): `wasm`, `llm`, `memory`, `reasoner`, `experimental-zk`,
   `swarm`, `integrations`, `dashboard`, `legacy-tools`, `python`, and `full` (everything
   but `python`). `default-features = false` builds the trusted core alone.
@@ -50,6 +55,16 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
   `CustomHandlerRegistry::{register_arc, register_new}`.
 
 ### Changed
+- **Breaking:** `AuditLogger::log` and `log_with_metadata` return
+  `Result<&AuditEntry, AuditError>`. A write the backend refused used to be logged and
+  returned as if stored; it is now an error, and the chain is left as it was.
+- **Breaking:** `AuditLogger` entries use a version 2 hash: a domain tag and every field
+  length-prefixed, `metadata` included (finding K7). Logs written before still verify
+  if their version 1 entries come first; `AuditReport::legacy_entries` counts them.
+- `serde_json` is built with `float_roundtrip`, so hashed JSON metadata reads back
+  exactly.
+- `audit.max_log_size_bytes` and `audit.retention_count` are documented as not applying
+  to the kernel's log, which is never rotated.
 - **Breaking:** default features are now `wasm` and `memory`. `reasoner`, `swarm`,
   `integrations`, `dashboard`, `api` and `tools` need their features (or `full`), and
   `reasoner::zk_proof` needs `experimental-zk`. `kernel::neurosymbolic_pipeline` and
@@ -86,6 +101,12 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- A durable audit log (`FileAuditLog`) whose caller stopped waiting mid-append could
+  store the entry without adding it to the tree. The next entry then linked to the
+  wrong predecessor, and the log refused to open. Appends now run to completion
+  (ADR 0007).
+- `AuditLogger` rotation no longer breaks `verify_chain`, and no longer evicts entries
+  it failed to archive.
 - Skills were "signed" with an unkeyed hash anyone could recompute, over the module's path
   when the module was missing, and `trusted_keys` was never read (K4).
 - WASM skills no longer block a Tokio worker for their whole runtime, and are no longer

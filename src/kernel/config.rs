@@ -278,6 +278,13 @@ impl KernelConfig {
             config.audit.log_path = Some(PathBuf::from(log_path));
         }
 
+        if let Ok(format) = std::env::var("VAK_AUDIT__FORMAT") {
+            config.audit.format = match format.to_lowercase().as_str() {
+                "sqlite" => AuditLogFormat::Sqlite,
+                _ => AuditLogFormat::Jsonl,
+            };
+        }
+
         // Load policy settings
         if let Ok(policy_enabled) = std::env::var("VAK_POLICY__ENABLED") {
             config.policy.enabled = policy_enabled.to_lowercase() == "true";
@@ -485,9 +492,13 @@ impl Default for SecurityConfig {
 }
 
 /// Audit logging configuration.
+///
+/// The kernel records every decision and outcome whatever these settings say
+/// (`docs/adr/0007`); they choose where the record is kept.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditConfig {
-    /// Whether audit logging is enabled.
+    /// Reported in the kernel's status. The kernel records every request
+    /// either way: a reference monitor can't run unaudited.
     #[serde(default = "default_true")]
     pub enabled: bool,
 
@@ -495,21 +506,40 @@ pub struct AuditConfig {
     #[serde(default = "default_log_level")]
     pub log_level: LogLevel,
 
-    /// Path to store audit logs.
+    /// Where the kernel's audit log is kept. When unset, the log is in
+    /// memory and lost on exit.
     #[serde(default)]
     pub log_path: Option<PathBuf>,
+
+    /// How the log at `log_path` is stored. Ignored when `log_path` is unset.
+    #[serde(default)]
+    pub format: AuditLogFormat,
 
     /// Whether to include request/response bodies in audit logs.
     #[serde(default)]
     pub include_bodies: bool,
 
-    /// Maximum size of the audit log before rotation (in bytes).
+    /// Not applied to the kernel's audit log, which is append-only: deleting
+    /// old entries would invalidate the proofs already handed out for them.
     #[serde(default = "default_max_log_size")]
     pub max_log_size_bytes: u64,
 
-    /// Number of rotated log files to keep.
+    /// Not applied to the kernel's audit log; see `max_log_size_bytes`.
     #[serde(default = "default_log_retention")]
     pub retention_count: u32,
+}
+
+/// How the kernel's durable audit log is stored (`audit.format`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AuditLogFormat {
+    /// One JSON entry per line, in an append-only file
+    /// ([`FileAuditLog`](super::FileAuditLog)).
+    #[default]
+    Jsonl,
+    /// A SQLite database ([`SqliteAuditLog`](super::SqliteAuditLog)): each
+    /// append is a transaction, so a crash can't leave a torn entry.
+    Sqlite,
 }
 
 fn default_log_level() -> LogLevel {
@@ -530,6 +560,7 @@ impl Default for AuditConfig {
             enabled: true,
             log_level: LogLevel::Info,
             log_path: None,
+            format: AuditLogFormat::default(),
             include_bodies: false,
             max_log_size_bytes: default_max_log_size(),
             retention_count: default_log_retention(),

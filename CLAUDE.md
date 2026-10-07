@@ -66,7 +66,7 @@ Core modules under `src/`:
 |---|---|
 | `kernel/` | Orchestration: `Kernel` struct, request dispatch, `AgentId`/`SessionId`/`AuditId` (UUIDv7), `PolicyDecision`, rate limiting, constitution (immutable safety principles enforced pre-policy/pre-execution/post-execution) |
 | `policy/` | ABAC engine — Cedar-style YAML rules, hot-reload via `arc-swap`, conflict analysis |
-| `audit/` | Hash-chained (SHA-256) audit log, Ed25519 signing, flight recorder (shadow mode), replay, S3/multi-region backends |
+| `audit/` | RFC 9162 transparency log behind the kernel's `AuditLog` port (adapters in `kernel/audit_log.rs`: memory, JSONL, SQLite; the one audit path, ADR 0007); standalone hash-chained `AuditLogger`, Ed25519 signing, flight recorder (shadow mode), replay, S3/multi-region backends |
 | `memory/` | Three-tier memory: working (hot) / episodic (warm, Merkle chain via `rs_merkle`) / semantic (cold, knowledge graph + vector store); time-travel rollback by hash |
 | `sandbox/` | WASM execution (Wasmtime 41.x), fuel metering, epoch-based preemption, pooling allocator, skill registry/marketplace, verified publishers |
 | `reasoner/` | PRM scoring, Datalog safety rules, Z3 SMT verification, MCTS tree-of-thoughts, ZK proofs, prompt-injection detection, PRM fine-tuning toolkit |
