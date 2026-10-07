@@ -208,6 +208,27 @@ jobs:
       - name: Run Python tests
         run: python -m pytest python/tests/ -v --tb=short
 
+      # The native module, once: the bindings' Rust tests, then the SDK's
+      # native tests against the built module (docs/adr/0011).
+      - name: Install Rust toolchain
+        if: matrix.python-version == '3.12'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Test the native bindings (Rust)
+        if: matrix.python-version == '3.12'
+        run: cargo test --features python --lib python::
+
+      - name: Test the native module (Python)
+        if: matrix.python-version == '3.12'
+        env:
+          VAK_REQUIRE_NATIVE: "1"
+        run: |
+          python -m venv .venv-native
+          . .venv-native/bin/activate
+          pip install maturin pytest
+          maturin develop
+          python -m pytest python/tests/test_native_kernel.py -v --tb=short
+
   # Benchmarks (non-blocking, for tracking performance)
   benchmarks:
     name: Performance Benchmarks

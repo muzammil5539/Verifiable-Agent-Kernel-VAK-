@@ -72,14 +72,15 @@ decision = kernel.evaluate_policy(
 )
 print(f"Policy: {decision.effect}")  # PolicyEffect.ALLOW or .DENY
 
-# 4. Execute a tool (WASM-sandboxed)
+# 4. Execute a tool through the kernel
 response = kernel.execute_tool(
     agent_id="analyst-001",
-    tool_id="calculator",
-    action="add",
-    parameters={"a": 42, "b": 58},
+    tool_id="echo",
+    action="say",
+    parameters={"text": "hello"},
 )
-print(f"Result: {response.result}")  # {"tool": "calculator", ...}
+print(f"Result: {response.result}")  # {"action": "say", "params": {"text": "hello"}}
+print(f"Receipt: {response.receipt}")  # the kernel's audit receipt
 
 # 5. Audit trail
 logs = kernel.get_audit_logs(agent_id="analyst-001")
@@ -89,6 +90,26 @@ for entry in logs:
 # 6. Shutdown
 kernel.shutdown()
 ```
+
+### How `execute_tool` runs a tool
+
+`execute_tool` runs through the Rust kernel's `Kernel::execute` (ADR 0011):
+
+- **The tool's input.** The tool gets `{"action": action, "params": parameters}`, the
+  shape WASM skills take.
+- **Who decides and records.** The kernel's policy decides, and its audit log records
+  the decision before the tool runs and the outcome after. The response carries the
+  kernel's `receipt`.
+- **Refusals.** If the kernel refuses a call, it raises `PolicyViolationError` and
+  nothing runs. Any other refusal, such as an unknown tool, raises
+  `ToolExecutionError`.
+- **Failures.** A tool that ran and failed returns `success=False` with an `error`.
+- **Time limit.** `timeout_ms` applies when it is tighter than the kernel's limit.
+- **Memory limit.** The kernel gives every skill 128 MiB and takes no per-call limit,
+  so it refuses a `memory_limit_bytes` below that rather than run looser than asked.
+
+Without the native module (`maturin develop`), `execute_tool` raises
+`ToolExecutionError`. The SDK never reports that a tool ran when nothing ran it.
 
 ---
 
@@ -397,7 +418,7 @@ Python Application
          │
          ▼
 ┌─────────────────────┐
-│  VAK Kernel (Rust)  │  ← PolicyEngine, AuditLogger, WASM Sandbox
+│  VAK Kernel (Rust)  │  ← Kernel::execute: policy, audit log, WASM sandbox
 │  src/               │
 └─────────────────────┘
 ```

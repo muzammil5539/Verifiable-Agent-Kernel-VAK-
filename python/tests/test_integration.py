@@ -25,6 +25,7 @@ from vak import (
 class TestEndToEndWorkflow:
     """End-to-end workflow integration tests."""
 
+    @pytest.mark.usefixtures("fake_tools")
     def test_complete_agent_workflow(self):
         """Test complete agent registration and tool execution workflow."""
         # 1. Create and initialize kernel
@@ -84,6 +85,7 @@ class TestEndToEndWorkflow:
         kernel.shutdown()
         assert not kernel.is_initialized
 
+    @pytest.mark.usefixtures("fake_tools")
     def test_policy_enforcement_integration(self):
         """Test policy enforcement in tool execution workflow."""
         kernel = VakKernel.default()
@@ -125,6 +127,7 @@ class TestEndToEndWorkflow:
             )
         assert "sensitive file" in exc_info.value.decision.reason.lower()
 
+    @pytest.mark.usefixtures("fake_tools")
     def test_multi_agent_collaboration(self):
         """Test multiple agents working together."""
         kernel = VakKernel.default()
@@ -179,6 +182,7 @@ class TestEndToEndWorkflow:
         assert "analyst" in agents
         assert "reviewer" in agents
 
+    @pytest.mark.usefixtures("fake_tools")
     def test_audit_trail_integrity(self):
         """Test that audit trail is maintained through operations."""
         kernel = VakKernel.default()
@@ -215,6 +219,7 @@ class TestEndToEndWorkflow:
         # Verify all entries are unique
         assert len(set(audit_entries)) == len(audit_entries)
 
+    @pytest.mark.usefixtures("fake_tools")
     def test_resource_limits_integration(self):
         """Test resource limits are respected."""
         kernel = VakKernel.default()
@@ -275,6 +280,7 @@ class TestSecurityScenarios:
         )
         kernel.register_agent(regular_agent)
 
+    @pytest.mark.usefixtures("fake_tools")
     def test_forbidden_operations_blocked(self):
         """Test that forbidden operations are blocked."""
         kernel = VakKernel.default()
@@ -314,6 +320,7 @@ class TestSecurityScenarios:
                 action="drop_database"
             )
 
+    @pytest.mark.usefixtures("fake_tools")
     def test_tool_isolation(self):
         """Test that tools are isolated per agent."""
         kernel = VakKernel.default()
@@ -354,6 +361,7 @@ class TestSecurityScenarios:
 class TestErrorRecovery:
     """Tests for error recovery and resilience."""
 
+    @pytest.mark.usefixtures("fake_tools")
     def test_agent_recovery_after_error(self):
         """Test that system recovers after agent error."""
         kernel = VakKernel.default()
@@ -473,6 +481,7 @@ class TestComplexPolicyScenarios:
         )
         assert decision.is_denied()
 
+    @pytest.mark.usefixtures("fake_tools")
     def test_rate_limiting_policy(self):
         """Test rate limiting via policy hooks."""
         kernel = VakKernel.default()
@@ -562,6 +571,7 @@ class TestComplexPolicyScenarios:
 class TestAuditCompliance:
     """Tests for audit and compliance features."""
 
+    @pytest.mark.usefixtures("fake_tools")
     def test_all_operations_auditable(self):
         """Test that all operations can be audited."""
         kernel = VakKernel.default()

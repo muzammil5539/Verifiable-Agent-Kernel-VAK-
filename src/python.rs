@@ -39,10 +39,17 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PyTuple};
 
 #[cfg(feature = "python")]
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyPermissionError, PyRuntimeError, PyValueError};
 
 #[cfg(feature = "python")]
 use std::collections::HashMap;
+#[cfg(feature = "python")]
+use std::sync::Arc;
+
+#[cfg(feature = "python")]
+use crate::kernel::types::{AgentId, KernelError, SessionId, ToolRequest};
+#[cfg(feature = "python")]
+use crate::kernel::{AgentRecord, Kernel, KernelConfig};
 
 #[cfg(feature = "python")]
 use crate::policy::{PolicyContext, PolicyEngine, PolicyRule};
@@ -317,7 +324,31 @@ fn py_to_json(obj: Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
     )))
 }
 
+/// The memory limit, in MiB, the native kernel puts on every WASM skill:
+/// the Python SDK's default `memory_limit_bytes` for an agent.
+///
+/// The kernel takes no per-call memory limit, so `execute_tool` refuses a
+/// call that asks for less than this rather than run it under a looser
+/// limit than asked.
+#[cfg(feature = "python")]
+pub const NATIVE_SKILL_MEMORY_MB: u64 = 128;
+
+/// An agent registered with the native kernel: its ID there, and the session
+/// its calls run in.
+#[cfg(feature = "python")]
+#[derive(Debug, Clone, Copy)]
+struct NativeAgent {
+    id: AgentId,
+    session: SessionId,
+}
+
 /// Python wrapper for the VAK Kernel
+///
+/// `execute_tool` runs every call through [`Kernel::execute`]: the kernel's
+/// policy decision point, audit log, skill registry and sandbox decide and
+/// run it (finding I4). The policy engine and audit logger held here serve
+/// `evaluate_policy` and the audit-log methods, which don't use the kernel
+/// yet.
 #[cfg(feature = "python")]
 #[pyclass(name = "Kernel")]
 #[derive(Debug)]
@@ -328,6 +359,38 @@ pub struct PyKernel {
     audit_logger: AuditLogger,
     /// Registry of available tools/skills
     skill_registry: HashMap<String, SkillInfo>,
+    /// The kernel `execute_tool` runs calls through.
+    kernel: Arc<Kernel>,
+    /// Runs the kernel's async API under Python's synchronous calls.
+    runtime: Arc<tokio::runtime::Runtime>,
+    /// The kernel's identity for each agent registered here.
+    native_agents: HashMap<String, NativeAgent>,
+}
+
+/// Starts a runtime and, on it, a kernel with the default configuration,
+/// except that skills get [`NATIVE_SKILL_MEMORY_MB`] of memory.
+#[cfg(feature = "python")]
+fn native_kernel() -> PyResult<(Arc<tokio::runtime::Runtime>, Arc<Kernel>)> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_name("vak-python")
+        .enable_all()
+        .build()
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to start the kernel runtime: {e}")))?;
+    let mut config = KernelConfig::default();
+    config.resources.max_memory_mb = NATIVE_SKILL_MEMORY_MB;
+    let kernel = runtime
+        .block_on(Kernel::new(config))
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to start the kernel: {e}")))?;
+    Ok((Arc::new(runtime), Arc::new(kernel)))
+}
+
+/// Converts a JSON value to the Python object `json.loads` would give.
+#[cfg(feature = "python")]
+fn json_to_py<'py>(py: Python<'py>, value: &serde_json::Value) -> PyResult<Bound<'py, PyAny>> {
+    let text = serde_json::to_string(value)
+        .map_err(|e| PyValueError::new_err(format!("Failed to serialize result: {e}")))?;
+    py.import("json")?.call_method1("loads", (text,))
 }
 
 /// Information about a registered skill/tool
@@ -366,12 +429,16 @@ impl PyKernel {
             },
         );
 
+        let (runtime, kernel) = native_kernel()?;
         Ok(Self {
             initialized: true,
             agents: HashMap::new(),
             policy_engine: PolicyEngine::new(),
             audit_logger: AuditLogger::new(),
             skill_registry,
+            kernel,
+            runtime,
+            native_agents: HashMap::new(),
         })
     }
 
@@ -397,6 +464,10 @@ impl PyKernel {
     /// Shutdown the kernel
     fn shutdown(&mut self) {
         self.initialized = false;
+        for agent in self.native_agents.drain().map(|(_, agent)| agent) {
+            self.runtime
+                .block_on(self.kernel.end_session(&agent.session));
+        }
         self.agents.clear();
         self.policy_engine = PolicyEngine::new();
         self.audit_logger = AuditLogger::new();
@@ -424,6 +495,21 @@ impl PyKernel {
         agent_data.insert("name".to_string(), name.to_string());
         agent_data.insert("config".to_string(), config_json);
 
+        // The kernel knows the agent by an ID of its own.
+        let native = NativeAgent {
+            id: AgentId::new(),
+            session: SessionId::new(),
+        };
+        self.runtime
+            .block_on(
+                self.kernel
+                    .register_agent(AgentRecord::new(native.id, name)),
+            )
+            .map_err(|e| PyRuntimeError::new_err(format!("The kernel refused the agent: {e}")))?;
+        if let Some(old) = self.native_agents.insert(agent_id.to_string(), native) {
+            self.runtime.block_on(self.kernel.end_session(&old.session));
+        }
+
         self.agents.insert(agent_id.to_string(), agent_data);
         Ok(())
     }
@@ -439,6 +525,10 @@ impl PyKernel {
                 "Agent not found: {}",
                 agent_id
             )));
+        }
+        if let Some(native) = self.native_agents.remove(agent_id) {
+            self.runtime
+                .block_on(self.kernel.end_session(&native.session));
         }
         Ok(())
     }
@@ -522,57 +612,108 @@ impl PyKernel {
         Ok(result)
     }
 
-    /// Execute a tool
-    fn execute_tool(
+    /// Execute a tool through the kernel ([`Kernel::execute`]).
+    ///
+    /// The tool gets `{"action": action, "params": params}`, the shape WASM
+    /// skills take. The kernel's policy decides, its audit log records the
+    /// decision before the tool runs and the outcome after, and the call
+    /// stops at `timeout_ms` or the kernel's own limit, whichever is sooner.
+    ///
+    /// Returns a dict with `request_id`, `success`, `result` (the tool's
+    /// output as a Python object), `error`, `execution_time_ms` and `receipt`
+    /// (the kernel's audit receipt). A tool that ran and failed has
+    /// `success` false and an `error`.
+    ///
+    /// # Errors
+    ///
+    /// Nothing runs, and the call raises:
+    /// - `PermissionError` with args `(policy_id, reason)` if the kernel's
+    ///   policy refuses it;
+    /// - `ValueError` if the agent isn't registered, or if `memory_limit` is
+    ///   below the [`NATIVE_SKILL_MEMORY_MB`] the kernel enforces;
+    /// - `RuntimeError` if the kernel refuses it for any other reason, such
+    ///   as an unknown tool.
+    #[allow(clippy::too_many_arguments)]
+    fn execute_tool<'py>(
         &mut self,
+        py: Python<'py>,
         tool_id: &str,
         agent_id: &str,
         action: &str,
-        params: Bound<'_, PyDict>,
+        params: Bound<'py, PyDict>,
         timeout_ms: u64,
-        _memory_limit: usize,
-    ) -> PyResult<HashMap<String, String>> {
+        memory_limit: u64,
+    ) -> PyResult<Bound<'py, PyDict>> {
         if !self.initialized {
             return Err(PyRuntimeError::new_err("Kernel not initialized"));
         }
 
-        if !self.agents.contains_key(agent_id) {
+        let Some(agent) = self.native_agents.get(agent_id).copied() else {
             return Err(PyValueError::new_err(format!(
                 "Agent not found: {}",
                 agent_id
             )));
+        };
+
+        let floor = NATIVE_SKILL_MEMORY_MB * 1024 * 1024;
+        if memory_limit < floor {
+            return Err(PyValueError::new_err(format!(
+                "memory_limit of {memory_limit} bytes is below the {NATIVE_SKILL_MEMORY_MB} MiB \
+                 the kernel gives every skill; it can't run a call under a tighter limit, \
+                 so nothing ran"
+            )));
         }
 
-        let request_id = uuid::Uuid::now_v7().to_string();
+        let params_val = py_to_json(params.as_any().clone())?;
+        let request = ToolRequest::new(
+            tool_id,
+            serde_json::json!({"action": action, "params": params_val}),
+        )
+        .with_timeout(timeout_ms);
 
-        // Log tool execution to audit trail
+        // Release the GIL while the tool runs.
+        let (kernel, runtime) = (Arc::clone(&self.kernel), Arc::clone(&self.runtime));
+        let outcome =
+            py.detach(move || runtime.block_on(kernel.execute(&agent.id, &agent.session, request)));
+
+        // The SDK's own audit trail records what the kernel decided.
+        let decision = match &outcome {
+            Ok(_) => AuditDecision::Allowed,
+            Err(KernelError::PolicyViolation { .. }) => AuditDecision::Denied,
+            Err(e) => AuditDecision::Error(e.to_string()),
+        };
         self.audit_logger
             .log(
                 agent_id,
                 format!("tool.execute:{}", tool_id),
                 action,
-                AuditDecision::Allowed,
+                decision,
             )
             .map_err(|e| PyRuntimeError::new_err(format!("Audit log unavailable: {e}")))?;
 
-        // Convert Python dictionary to serde_json::Value
-        let params_val = py_to_json(params.as_any().clone())?;
-        let params_json = serde_json::to_string(&params_val)
-            .map_err(|e| PyValueError::new_err(format!("Failed to serialize params: {}", e)))?;
+        let response = match outcome {
+            Ok(response) => response,
+            Err(KernelError::PolicyViolation { reason, policy_id }) => {
+                return Err(PyPermissionError::new_err((policy_id, reason)));
+            }
+            Err(e) => return Err(PyRuntimeError::new_err(e.to_string())),
+        };
 
-        let mut result = HashMap::new();
-        result.insert("request_id".to_string(), request_id);
-        result.insert("success".to_string(), "true".to_string());
-        result.insert(
-            "result".to_string(),
-            format!(
-                "{{\"tool\": \"{}\", \"action\": \"{}\", \"params\": {}, \"timeout_ms\": {}}}",
-                tool_id, action, params_json, timeout_ms
-            ),
-        );
-        result.insert("execution_time_ms".to_string(), "0.1".to_string());
-        result.insert("memory_used_bytes".to_string(), "0".to_string());
-
+        let result = PyDict::new(py);
+        result.set_item("request_id", response.request_id.to_string())?;
+        result.set_item("success", response.success)?;
+        result.set_item(
+            "result",
+            json_to_py(
+                py,
+                response.result.as_ref().unwrap_or(&serde_json::Value::Null),
+            )?,
+        )?;
+        result.set_item("error", response.error)?;
+        result.set_item("execution_time_ms", response.execution_time_ms)?;
+        let receipt = serde_json::to_value(&response.receipt)
+            .map_err(|e| PyValueError::new_err(format!("Failed to serialize receipt: {e}")))?;
+        result.set_item("receipt", json_to_py(py, &receipt)?)?;
         Ok(result)
     }
 
@@ -875,7 +1016,7 @@ impl PyKernel {
 ///     loop = asyncio.get_event_loop()
 ///     result = await loop.run_in_executor(
 ///         None,
-///         lambda: kernel.execute_tool(tool_id, agent_id, "execute", params, 30000, 1024*1024)
+///         lambda: kernel.execute_tool(tool_id, agent_id, "execute", params, 30000, 128 * 1024 * 1024)
 ///     )
 ///     return result
 /// ```
@@ -938,7 +1079,7 @@ async def execute_tool(tool_id: str, agent_id: str, params: dict):
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(
         None,
-        lambda: kernel.execute_tool(tool_id, agent_id, "execute", params, 30000, 1024*1024)
+        lambda: kernel.execute_tool(tool_id, agent_id, "execute", params, 30000, 128 * 1024 * 1024)
     )
     return result
 ```
@@ -1008,6 +1149,85 @@ mod tests {
     fn test_py_kernel_creation() {
         let kernel = PyKernel::default().unwrap();
         assert!(kernel.is_initialized());
+    }
+
+    /// A registered agent's call runs through `Kernel::execute`: the tool
+    /// runs, and the kernel records the decision and the outcome.
+    #[test]
+    fn execute_tool_runs_through_the_kernel() {
+        Python::initialize();
+
+        Python::attach(|py| {
+            let mut kernel = PyKernel::default().unwrap();
+            kernel
+                .register_agent("agent-1", "Agent One", PyDict::new(py))
+                .unwrap();
+            let params = PyDict::new(py);
+            params.set_item("text", "hello").unwrap();
+
+            let result = kernel
+                .execute_tool(py, "echo", "agent-1", "say", params, 5_000, 128 << 20)
+                .unwrap();
+            assert!(result
+                .get_item("success")
+                .unwrap()
+                .unwrap()
+                .extract::<bool>()
+                .unwrap());
+            let echoed = py_to_json(result.get_item("result").unwrap().unwrap()).unwrap();
+            assert_eq!(
+                echoed,
+                serde_json::json!({"action": "say", "params": {"text": "hello"}})
+            );
+            let receipt = result.get_item("receipt").unwrap().unwrap();
+            assert!(!receipt.is_none(), "the kernel's receipt comes back");
+
+            let log = kernel.runtime.block_on(kernel.kernel.get_audit_log());
+            let native = kernel.native_agents["agent-1"];
+            assert_eq!(log.len(), 2, "a decision leaf and an outcome leaf");
+            assert!(log.iter().all(|entry| entry.agent_id == native.id));
+            assert!(log[1].outcome.as_ref().unwrap().success);
+        });
+    }
+
+    /// Nothing is reported as run that didn't run.
+    #[test]
+    fn execute_tool_fails_closed() {
+        Python::initialize();
+
+        Python::attach(|py| {
+            let mut kernel = PyKernel::default().unwrap();
+            kernel
+                .register_agent("agent-1", "Agent One", PyDict::new(py))
+                .unwrap();
+            let run = |kernel: &mut PyKernel, tool: &str, agent: &str, memory: u64| {
+                kernel.execute_tool(py, tool, agent, "run", PyDict::new(py), 5_000, memory)
+            };
+
+            // A tool the kernel's policy doesn't allow.
+            let refused = run(&mut kernel, "no_such_tool", "agent-1", 128 << 20).unwrap_err();
+            assert!(refused.is_instance_of::<PyPermissionError>(py), "{refused}");
+            // An agent that isn't registered.
+            let unknown = run(&mut kernel, "echo", "nobody", 128 << 20).unwrap_err();
+            assert!(unknown.is_instance_of::<PyValueError>(py), "{unknown}");
+            // A memory limit tighter than the kernel enforces.
+            let tight = run(&mut kernel, "echo", "agent-1", 1 << 20).unwrap_err();
+            assert!(tight.to_string().contains("nothing ran"), "{tight}");
+
+            // Only the refusal reached the kernel, and nothing ran.
+            let log = kernel.runtime.block_on(kernel.kernel.get_audit_log());
+            assert_eq!(log.len(), 1);
+            assert!(log[0].outcome.is_none());
+
+            // A built-in that ran and failed reports failure.
+            let failed = run(&mut kernel, "calculator", "agent-1", 128 << 20).unwrap();
+            assert!(!failed
+                .get_item("success")
+                .unwrap()
+                .unwrap()
+                .extract::<bool>()
+                .unwrap());
+        });
     }
 
     #[test]

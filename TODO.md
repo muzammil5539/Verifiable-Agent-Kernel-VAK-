@@ -166,11 +166,12 @@ request path. In order of leverage:
       unknown or failed skill is an error result.
 
 - [ ] **The Python SDK's native `Kernel` is not the kernel** (finding I4).
-      `PyKernel` in `src/python.rs` has its own `PolicyEngine` and `AuditLogger`
-      instead of wrapping `vak::kernel::Kernel`, and `execute_tool` returns
-      `success: "true"` without running anything. Wrap `Kernel` (its `execute`,
-      receipts and audit proofs) and make an unknown tool an error. `AuditLogger`
-      can then be removed or kept on its own merits (`docs/adr/0007`).
+      `execute_tool` now runs through `Kernel::execute` and fails closed, in the
+      stub too (ADR 0011). Still to do: move `evaluate_policy`, the audit-log
+      methods (with the kernel's receipts and inclusion proofs) and the skill
+      registry methods onto the kernel, then remove `PyKernel`'s own
+      `PolicyEngine` and `AuditLogger` (`docs/adr/0007`). That also clears the 49
+      Python tests that fail against the native module.
 
 - [ ] **Python SDK silently substitutes a fake kernel.** `VakKernel` falls back
       to `_StubKernel` — a pure-Python in-memory imitation with no policy

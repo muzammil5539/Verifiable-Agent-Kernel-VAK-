@@ -210,6 +210,7 @@ class TestPolicyEvaluation:
 class TestToolExecution:
     """Tests for tool execution."""
 
+    @pytest.mark.usefixtures("fake_tools")
     def test_execute_tool_basic(self):
         """Test basic tool execution."""
         kernel = VakKernel.default()
@@ -226,6 +227,61 @@ class TestToolExecution:
         assert isinstance(response, ToolResponse)
         assert response.success
 
+    @pytest.mark.usefixtures("no_native")
+    def test_execute_tool_without_native_kernel_fails_closed(self):
+        """Without the native kernel nothing runs, and nothing says it did."""
+        kernel = VakKernel.default()
+        kernel.register_agent(AgentConfig(agent_id="test-agent", name="Test"))
+
+        with pytest.raises(ToolExecutionError, match="nothing ran"):
+            kernel.execute_tool(
+                agent_id="test-agent",
+                tool_id="calculator",
+                action="add",
+                parameters={"a": 1, "b": 2},
+            )
+
+    @pytest.mark.usefixtures("fake_tools")
+    def test_a_kernel_refusal_is_a_policy_violation(self):
+        """The native kernel's refusal, PermissionError(policy_id, reason),
+        reaches the caller as a PolicyViolationError."""
+        kernel = VakKernel.default()
+        kernel.register_agent(AgentConfig(agent_id="test-agent", name="Test"))
+
+        def refuse(*_args):
+            raise PermissionError("forbid-shell", "shell is blocked")
+
+        kernel._native_kernel.execute_tool = refuse
+        with pytest.raises(PolicyViolationError) as refused:
+            kernel.execute_tool(agent_id="test-agent", tool_id="shell", action="run")
+        assert refused.value.decision.policy_id == "forbid-shell"
+        assert refused.value.decision.reason == "shell is blocked"
+
+        def refuse_tersely(*_args):
+            raise PermissionError("blocked")
+
+        kernel._native_kernel.execute_tool = refuse_tersely
+        with pytest.raises(PolicyViolationError) as refused:
+            kernel.execute_tool(agent_id="test-agent", tool_id="shell", action="run")
+        assert refused.value.decision.policy_id == "kernel"
+        assert refused.value.decision.reason == "blocked"
+
+    @pytest.mark.usefixtures("fake_tools")
+    def test_a_failed_tool_is_not_a_success(self):
+        """A tool that ran and failed comes back with success False."""
+        kernel = VakKernel.default()
+        kernel.register_agent(AgentConfig(agent_id="test-agent", name="Test"))
+        kernel._native_kernel.execute_tool = lambda *_args: {
+            "request_id": "r-1",
+            "success": False,
+            "result": None,
+            "error": "Missing 'operation' parameter",
+            "execution_time_ms": 1,
+        }
+        response = kernel.execute_tool(agent_id="test-agent", tool_id="calculator", action="add")
+        assert not response.success
+        assert response.error == "Missing 'operation' parameter"
+
     def test_execute_tool_unregistered_agent(self):
         """Test that executing for unregistered agent raises."""
         kernel = VakKernel.default()
@@ -237,6 +293,7 @@ class TestToolExecution:
                 action="add"
             )
 
+    @pytest.mark.usefixtures("fake_tools")
     def test_execute_tool_custom_timeout(self):
         """Test tool execution with custom timeout."""
         kernel = VakKernel.default()
@@ -252,6 +309,7 @@ class TestToolExecution:
         
         assert response.success
 
+    @pytest.mark.usefixtures("fake_tools")
     def test_execute_tool_request_object(self):
         """Test executing with ToolRequest object."""
         kernel = VakKernel.default()
@@ -367,6 +425,7 @@ class TestAgentContext:
         with kernel.agent_context("test-agent") as ctx:
             assert ctx.agent_id == "test-agent"
 
+    @pytest.mark.usefixtures("fake_tools")
     def test_agent_context_execute_tool(self):
         """Test executing tool within agent context."""
         kernel = VakKernel.default()

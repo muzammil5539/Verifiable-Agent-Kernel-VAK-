@@ -101,7 +101,10 @@ regex = "1.10"
 petgraph = "0.6"
 
 # Python bindings
-pyo3 = { version = "0.29", features = ["extension-module"] }
+# No `extension-module` feature here: maturin sets it when it builds the
+# Python module (pyproject.toml), and without it `cargo test --features
+# python` links libpython, so the bindings' own tests run.
+pyo3 = "0.29"
 
 # Compression
 flate2 = "1.0"

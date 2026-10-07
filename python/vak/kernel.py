@@ -555,30 +555,37 @@ class VakKernel:
         if decision.is_denied():
             raise PolicyViolationError(decision)
 
-        # Execute via native kernel
-        if self._native_kernel and hasattr(self._native_kernel, "execute_tool"):
-            try:
-                result = self._native_kernel.execute_tool(
-                    tool_id, agent_id, action, parameters, timeout_ms, memory_limit,
-                )
-                return ToolResponse(
-                    request_id=result.get("request_id", ""),
-                    success=result.get("success", False),
-                    result=result.get("result"),
-                    error=result.get("error"),
-                    execution_time_ms=result.get("execution_time_ms", 0.0),
-                    memory_used_bytes=result.get("memory_used_bytes", 0),
-                    audit_trail=result.get("audit_trail", []),
-                )
-            except Exception as e:
-                raise ToolExecutionError(tool_id, str(e)) from e
-
-        # Stub response for development
+        # Execute through the native kernel (Kernel::execute). Nothing else
+        # can run a tool: without it the call fails rather than report a
+        # success that didn't happen.
+        if not (self._native_kernel and hasattr(self._native_kernel, "execute_tool")):
+            raise ToolExecutionError(tool_id, "no kernel is available to run it; nothing ran")
+        try:
+            result = self._native_kernel.execute_tool(
+                tool_id, agent_id, action, parameters, timeout_ms, memory_limit,
+            )
+        except PermissionError as e:
+            # The kernel's policy refused it: args are (policy_id, reason).
+            if len(e.args) >= 2:
+                policy_id, reason = e.args[0], e.args[1]
+            else:
+                policy_id, reason = "kernel", str(e)
+            raise PolicyViolationError(PolicyDecision(
+                effect=PolicyEffect.DENY,
+                policy_id=str(policy_id),
+                reason=str(reason),
+            )) from e
+        except Exception as e:
+            raise ToolExecutionError(tool_id, str(e)) from e
         return ToolResponse(
-            request_id=f"stub-{tool_id}-{action}",
-            success=True,
-            result={"stub": True, "tool_id": tool_id, "action": action},
-            execution_time_ms=0.1,
+            request_id=str(result.get("request_id", "")),
+            success=result.get("success") is True,
+            result=result.get("result"),
+            error=result.get("error"),
+            execution_time_ms=float(result.get("execution_time_ms", 0.0)),
+            memory_used_bytes=int(result.get("memory_used_bytes", 0)),
+            audit_trail=list(result.get("audit_trail", [])),
+            receipt=result.get("receipt"),
         )
 
     def execute_tool_request(self, request: ToolRequest) -> ToolResponse:

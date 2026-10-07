@@ -156,6 +156,20 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- **Breaking:** the Python SDK runs tools through `Kernel::execute` (finding I4, ADR
+  0011). The native `Kernel.execute_tool` returned `success: "true"` without running
+  anything, and so did the stub the SDK falls back to without the native module.
+  - **How a call runs.** The kernel's policy decides, its audit log records the call,
+    and the response carries its receipt.
+  - **The tool's input.** A tool gets `{"action": ..., "params": ...}`.
+  - **Refusals and failures.** A policy refusal raises `PolicyViolationError`, any
+    other refusal raises `ToolExecutionError`, and a tool that ran and failed has
+    `success=False`.
+  - **Memory.** A `memory_limit` below the 128 MiB the kernel gives every skill is
+    refused.
+  - **Without the native module,** `execute_tool` raises.
+  - **Tests.** `cargo test --features python` links and runs the bindings' tests
+    (PyO3's `extension-module` feature moved to `pyproject.toml`).
 - `ToolRequest::timeout_ms` is applied. It was ignored, so a caller that asked for a
   tighter limit got the kernel's `max_execution_time`. WASM skills and registered tool
   handlers now stop at whichever limit comes first; a request can't extend the

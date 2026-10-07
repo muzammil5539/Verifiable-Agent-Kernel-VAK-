@@ -117,12 +117,12 @@ class ToolResponse:
     Example::
 
         response = kernel.execute_tool(
-            "calc", "agent-1", "add", {"a": 1, "b": 2}, 5000, 1048576
+            "calc", "agent-1", "add", {"a": 1, "b": 2}, 5000, 128 * 1024 * 1024
         )
-        if response.success:
-            print(response.result)
+        if response["success"]:
+            print(response["result"])
         else:
-            print(response.error)
+            print(response["error"])
     """
 
     request_id: str
@@ -352,24 +352,38 @@ class Kernel:
         params: Dict[str, Any],
         timeout_ms: int,
         memory_limit: int,
-    ) -> Dict[str, str]:
-        """Execute a tool inside the WASM sandbox.
+    ) -> Dict[str, Any]:
+        """Execute a tool through the kernel (``Kernel::execute``).
+
+        The tool gets ``{"action": action, "params": params}``, the shape
+        WASM skills take. The kernel's policy decides, its audit log records
+        the decision before the tool runs and the outcome after, and the
+        call stops at ``timeout_ms`` or the kernel's own limit, whichever is
+        sooner.
 
         Args:
-            tool_id: The registered skill/tool identifier.
-            agent_id: The agent requesting execution.
+            tool_id: The tool or skill to run.
+            agent_id: The agent requesting execution (registered here).
             action: The operation to perform (skill-specific).
             params: Input parameters for the tool.
-            timeout_ms: Maximum execution time in milliseconds.
-            memory_limit: Maximum memory in bytes.
+            timeout_ms: Time limit for this call, in milliseconds.
+            memory_limit: Memory limit in bytes. The kernel gives every skill
+                128 MiB and takes no per-call limit, so a smaller value is
+                refused.
 
         Returns:
-            A dictionary with ``"request_id"``, ``"success"``, ``"result"``,
-            ``"execution_time_ms"``, and ``"memory_used_bytes"`` keys.
+            A dictionary with ``"request_id"`` (str), ``"success"`` (bool),
+            ``"result"`` (the tool's output), ``"error"`` (str or None),
+            ``"execution_time_ms"`` (int) and ``"receipt"`` (the kernel's
+            audit receipt). A tool that ran and failed has ``success`` False.
 
         Raises:
-            RuntimeError: If the kernel is not initialised.
-            ValueError: If the agent is not registered.
+            PermissionError: The kernel's policy refused the call; ``args``
+                is ``(policy_id, reason)``. Nothing ran.
+            ValueError: The agent is not registered, or ``memory_limit`` is
+                below 128 MiB. Nothing ran.
+            RuntimeError: The kernel is not initialised, or refused the call
+                for another reason (an unknown tool, say). Nothing ran.
         """
         ...
 

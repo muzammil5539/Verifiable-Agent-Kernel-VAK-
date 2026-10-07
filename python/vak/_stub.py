@@ -6,9 +6,10 @@ native module.  Build the real module with::
 
     maturin develop --features python
 
-The stub provides real in-memory implementations (not just empty
-returns) so that the Python SDK is fully functional for local
-development, testing, and prototyping without native compilation.
+The stub provides in-memory implementations of agent management,
+audit logging, memory and swarm coordination for local development.
+It cannot run tools: ``execute_tool`` raises, because a tool that
+didn't run must never be reported as a success.
 """
 
 from __future__ import annotations
@@ -79,15 +80,11 @@ class _StubKernel:
         timeout_ms: int,
         memory_limit: int,
     ) -> dict[str, Any]:
-        return {
-            "request_id": f"stub-{tool_id}-{action}-{uuid.uuid4().hex[:8]}",
-            "success": True,
-            "result": {"stub": True, "tool_id": tool_id, "action": action},
-            "error": None,
-            "execution_time_ms": 0.1,
-            "memory_used_bytes": 0,
-            "audit_trail": [],
-        }
+        # The stub can't run tools, and must not say it did.
+        raise RuntimeError(
+            f"cannot run '{tool_id}': the native kernel (vak._vak_native) is not "
+            "available, so nothing ran. Build it with `maturin develop`."
+        )
 
     def list_tools(self) -> list[str]:
         return list(self._skills.keys())
