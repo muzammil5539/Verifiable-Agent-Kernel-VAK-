@@ -97,6 +97,22 @@ class TestCastingVotes:
         assert result["success"] is True
         assert result["cost"] == 5  # Linear cost
 
+    def test_a_vote_over_budget_is_refused(self):
+        """Votes cost tokens out of a per-agent budget, and a vote the
+        agent can't pay for isn't counted."""
+        kernel = VakKernel.default()
+        session_id = kernel.create_voting_session(
+            "Test proposal", config={"token_budget": 30}
+        )
+        assert kernel.cast_vote(session_id, "agent-1", "for", weight=5)["success"]  # 25
+        refused = kernel.cast_vote(session_id, "agent-1", "for", weight=3)  # 9 more
+        assert refused["success"] is False
+        assert "tokens left" in refused["error"]
+        assert kernel.cast_vote(session_id, "agent-2", "for", weight=3)["success"]
+
+        tally = kernel.tally_votes(session_id)
+        assert tally["tally"] == {"for": 8}
+
     def test_cast_vote_invalid_session(self):
         """Test casting vote on nonexistent session fails."""
         kernel = VakKernel.default()

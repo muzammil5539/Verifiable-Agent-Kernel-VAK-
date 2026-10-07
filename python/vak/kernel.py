@@ -32,6 +32,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterator
 
+from vak._local import LocalMemory, LocalSwarm
 from vak._stub import _StubKernel
 from vak.agent import AgentConfig, _AgentContext
 from vak.audit import AuditEntry, AuditLevel
@@ -101,6 +102,8 @@ class VakKernel:
         )
         self._reasoner = ReasonerConfig()
         self._skills: dict[str, SkillManifest] = {}
+        self._memory = LocalMemory()
+        self._swarm = LocalSwarm()
 
     @classmethod
     def from_config(cls, config_path: str | Path) -> VakKernel:
@@ -672,6 +675,10 @@ class VakKernel:
 
     # =========================================================================
     # Memory Management
+    #
+    # Held in this Python process (vak._local), with or without the native
+    # module. The kernel doesn't see these calls: they decide no policy,
+    # write no audit record and run no tool.
     # =========================================================================
 
     def store_memory(
@@ -682,7 +689,7 @@ class VakKernel:
         metadata: dict[str, Any] | None = None,
     ) -> MemoryItem:
         """
-        Store an item in working memory.
+        Store an item in working memory, replacing any under ``key``.
 
         Args:
             key: Unique identifier for the memory item.
@@ -694,19 +701,13 @@ class VakKernel:
             The stored MemoryItem.
         """
         self._ensure_initialized()
-
-        if self._native_kernel and hasattr(self._native_kernel, "store_memory"):
-            result = self._native_kernel.store_memory(
-                key, value, priority, metadata or {}
-            )
-            return MemoryItem(
-                key=result.get("key", key),
-                content=result.get("content", value),
-                priority=result.get("priority", priority),
-                metadata=result.get("metadata", {}),
-            )
-
-        return MemoryItem(key=key, content=value, priority=priority, metadata=metadata or {})
+        item = self._memory.store_memory(key, value, priority, metadata)
+        return MemoryItem(
+            key=item["key"],
+            content=item["content"],
+            priority=item["priority"],
+            metadata=item["metadata"],
+        )
 
     def retrieve_memory(self, key: str) -> MemoryItem | None:
         """
@@ -719,26 +720,22 @@ class VakKernel:
             The MemoryItem if found, or None.
         """
         self._ensure_initialized()
-
-        if self._native_kernel and hasattr(self._native_kernel, "retrieve_memory"):
-            result = self._native_kernel.retrieve_memory(key)
-            if result is None:
-                return None
-            return MemoryItem(
-                key=result.get("key", key),
-                content=result.get("content"),
-                priority=result.get("priority", "normal"),
-                metadata=result.get("metadata", {}),
-            )
-
-        return None
+        item = self._memory.retrieve_memory(key)
+        if item is None:
+            return None
+        return MemoryItem(
+            key=item["key"],
+            content=item["content"],
+            priority=item["priority"],
+            metadata=item["metadata"],
+        )
 
     def store_episode(self, episode: Episode) -> str:
         """
-        Store an episode in episodic memory with Merkle chain linking.
+        Append an episode to episodic memory.
 
-        Each episode is linked to the previous via SHA-256 hash,
-        creating an unforgeable event log.
+        Each episode is linked to the previous one by a SHA-256 hash over
+        its id, its content and the previous hash.
 
         Args:
             episode: The episode to store.
@@ -747,20 +744,16 @@ class VakKernel:
             The hash of the stored episode.
         """
         self._ensure_initialized()
-
-        episode_data = {
-            "episode_id": episode.episode_id,
-            "episode_type": episode.episode_type,
-            "content": episode.content,
-            "agent_id": episode.agent_id,
-            "timestamp": episode.timestamp,
-            "metadata": dict(episode.metadata) if episode.metadata else {},
-        }
-
-        if self._native_kernel and hasattr(self._native_kernel, "store_episode"):
-            return self._native_kernel.store_episode(episode_data)
-
-        return ""
+        return self._memory.store_episode(
+            {
+                "episode_id": episode.episode_id,
+                "episode_type": episode.episode_type,
+                "content": episode.content,
+                "agent_id": episode.agent_id,
+                "timestamp": episode.timestamp,
+                "metadata": dict(episode.metadata) if episode.metadata else {},
+            }
+        )
 
     def retrieve_episodes(self, limit: int = 10) -> list[Episode]:
         """
@@ -773,31 +766,25 @@ class VakKernel:
             List of Episode objects, most recent first.
         """
         self._ensure_initialized()
-
-        if self._native_kernel and hasattr(self._native_kernel, "retrieve_episodes"):
-            results = self._native_kernel.retrieve_episodes(limit)
-            return [
-                Episode(
-                    episode_id=r.get("episode_id", ""),
-                    episode_type=r.get("episode_type", "observation"),
-                    content=r.get("content", ""),
-                    agent_id=r.get("agent_id", ""),
-                    timestamp=r.get("timestamp", ""),
-                    previous_hash=r.get("previous_hash", ""),
-                    hash=r.get("hash", ""),
-                    metadata=r.get("metadata", {}),
-                )
-                for r in results
-            ]
-
-        return []
+        return [
+            Episode(
+                episode_id=r["episode_id"],
+                episode_type=r["episode_type"],
+                content=r["content"],
+                agent_id=r["agent_id"],
+                timestamp=r["timestamp"],
+                previous_hash=r["previous_hash"],
+                hash=r["hash"],
+                metadata=r["metadata"],
+            )
+            for r in self._memory.retrieve_episodes(limit)
+        ]
 
     def search_semantic(self, query: str, top_k: int = 5) -> list[MemoryItem]:
         """
-        Search memory using semantic similarity.
-
-        In stub mode, this performs keyword matching. With the native
-        kernel, it uses embedding-based vector search.
+        Search working memory for items whose key or content contains
+        ``query``, ignoring case. This is keyword matching, not vector
+        search.
 
         Args:
             query: The search query.
@@ -807,23 +794,21 @@ class VakKernel:
             List of matching MemoryItem objects.
         """
         self._ensure_initialized()
-
-        if self._native_kernel and hasattr(self._native_kernel, "search_semantic"):
-            results = self._native_kernel.search_semantic(query, top_k)
-            return [
-                MemoryItem(
-                    key=r.get("key", ""),
-                    content=r.get("content"),
-                    priority=r.get("priority", "normal"),
-                    metadata=r.get("metadata", {}),
-                )
-                for r in results
-            ]
-
-        return []
+        return [
+            MemoryItem(
+                key=r["key"],
+                content=r["content"],
+                priority=r["priority"],
+                metadata=r["metadata"],
+            )
+            for r in self._memory.search(query, top_k)
+        ]
 
     # =========================================================================
     # Swarm Coordination
+    #
+    # Held in this Python process (vak._local), with or without the native
+    # module, like memory.
     # =========================================================================
 
     def create_voting_session(
@@ -845,11 +830,7 @@ class VakKernel:
             The session ID.
         """
         self._ensure_initialized()
-
-        if self._native_kernel and hasattr(self._native_kernel, "create_voting_session"):
-            return self._native_kernel.create_voting_session(proposal, config or {})
-
-        return ""
+        return self._swarm.create_voting_session(proposal, config)
 
     def cast_vote(
         self,
@@ -862,7 +843,8 @@ class VakKernel:
         Cast a vote in a voting session.
 
         In quadratic voting, the cost of casting N votes is N^2 tokens,
-        forcing agents to allocate influence carefully.
+        forcing agents to allocate influence carefully. A vote the agent's
+        remaining token budget can't pay for is refused.
 
         Args:
             session_id: The voting session ID.
@@ -871,14 +853,11 @@ class VakKernel:
             weight: Number of votes to cast (cost = weight^2 in quadratic mode).
 
         Returns:
-            Dict with "success", "cost", and "vote" keys.
+            Dict with "success", "cost", and "vote" keys, or "success" False
+            and an "error".
         """
         self._ensure_initialized()
-
-        if self._native_kernel and hasattr(self._native_kernel, "cast_vote"):
-            return self._native_kernel.cast_vote(session_id, agent_id, direction, weight)
-
-        return {"success": False, "error": "No kernel backend available"}
+        return self._swarm.cast_vote(session_id, agent_id, direction, weight)
 
     def tally_votes(self, session_id: str) -> dict[str, Any]:
         """
@@ -891,21 +870,15 @@ class VakKernel:
             Dict with tally results including "winner", "tally", and "unique_voters".
         """
         self._ensure_initialized()
-
-        if self._native_kernel and hasattr(self._native_kernel, "tally_votes"):
-            return self._native_kernel.tally_votes(session_id)
-
-        return {"success": False, "error": "No kernel backend available"}
+        return self._swarm.tally_votes(session_id)
 
     def detect_sycophancy(
         self,
         session_history: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """
-        Detect sycophancy patterns in voting or discussion history.
-
-        Analyzes agreement rates across sessions to detect groupthink
-        where agents blindly follow the majority.
+        Estimate sycophancy from voting history: how often votes agree with
+        their session's majority. A heuristic; above 90% is flagged.
 
         Args:
             session_history: List of session dicts, each containing a "votes" list.
@@ -915,16 +888,7 @@ class VakKernel:
             "risk_level" (str), and "details" (str).
         """
         self._ensure_initialized()
-
-        if self._native_kernel and hasattr(self._native_kernel, "detect_sycophancy"):
-            return self._native_kernel.detect_sycophancy(session_history)
-
-        return {
-            "sycophancy_detected": False,
-            "agreement_rate": 0.0,
-            "risk_level": "low",
-            "details": "No kernel backend available",
-        }
+        return self._swarm.detect_sycophancy(session_history)
 
     # =========================================================================
     # Audit Chain Verification
