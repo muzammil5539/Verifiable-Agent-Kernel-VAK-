@@ -223,13 +223,31 @@ request path. In order of leverage:
       status updates because nothing ran it. If CI already exists
       (`.github/workflows/ci.yml` is referenced in prior notes), verify it
       is *required* for merge, not merely present.
-- [ ] **Line coverage is 75.09% against the 80% floor.** The Code Coverage
-      job crashed under tarpaulin before it reached the floor. It runs under
-      cargo-llvm-cov now (ADR 0012) and fails on the floor, which is kept at
-      80%. Missed lines by module: memory 1,818; audit 1,704; sandbox 1,535;
-      reasoner 1,475; integrations 1,146; policy 894; kernel 879; llm 609;
-      swarm 465; dashboard 365; tools 286. About 2,250 more covered lines
-      reach 80%. `make coverage` writes the per-file report to `coverage/`.
+- [ ] **Coverage slice: reach the 80% line floor.** Line coverage is 75.09%
+      (34,402 of 45,813 lines). The Code Coverage job runs under cargo-llvm-cov
+      (ADR 0012) and fails on the floor, which stays at 80%. The red job is a
+      signal, not a blocker: other slices go ahead. This slice starts after
+      item 5 (the Guard port, information-flow labels, the sparse Merkle tree
+      fix), one module per commit, in this order:
+      1. **`audit`**, TCB-critical. 71.1%, 1,704 lines missed; 527 more
+         covered lines reach 80%. Most missed: `multi_region.rs` 329,
+         `mod.rs` 296, `flight_recorder.rs` 272, `streaming.rs` 222,
+         `otel.rs` 221, `s3_backend.rs` 149.
+      2. **`sandbox`**, security-critical. 71.2%, 1,535 missed; 470 more.
+         `marketplace.rs` 485, `host_funcs.rs` 284, `reasoning_host.rs` 209,
+         `async_host.rs` 205, `pooling.rs` 104.
+      3. **`memory`**. 78.8%, 1,818 missed; 106 more. `time_travel.rs` 504,
+         `mod.rs` 200, `content_addressable.rs` 187.
+      4. **`reasoner`**, last: outside the TCB. 78.8%, 1,475 missed; 81 more.
+         `z3_verifier.rs` 322, `datalog.rs` 221, `prm.rs` 141.
+
+      These four at 80% each add about 1,184 covered lines. The floor needs
+      about 2,249. The rest has to come from taking them past 80%, or from
+      modules this order doesn't rank: `integrations` 52.5% (664 more to
+      80%), `llm` 64.2% (269), `tools` 28.5% (206), and `policy` 78.8% (51),
+      which is in the TCB. `kernel` (82.5%) and `swarm` (81.1%) are above
+      80%. Tests follow the Definition of done below. `make coverage` writes
+      the per-file report to `coverage/`.
 - [ ] **Do not restore aggregate "N% complete" framing** in this file, the
       README, or CHANGELOG until every P0/P1 item above is closed and verified
       by a test that exercises `Kernel::execute`. Track items as done/open;
