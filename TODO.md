@@ -190,13 +190,13 @@ request path. In order of leverage:
       limit rather than enforce it. Add the field (a public-struct change) with
       the Guard port's per-call constraints, and let the binding pass it.
 
-- [ ] **Python SDK silently substitutes a fake kernel.** `VakKernel` falls back
+- [x] **Python SDK silently substitutes a fake kernel.** `VakKernel` falls back
       to `_StubKernel` — a pure-Python in-memory imitation with no policy
       enforcement and no real audit chain — whenever the PyO3 extension isn't
-      built, which is the default result of `pip install -e ./python`. Make the
-      fallback opt-in (`allow_stub=True` or an env var) and loud (a warning on
-      every call while active). A trust kernel must never quietly replace
-      itself with a mock.
+      built, which is the default result of `pip install -e ./python`.
+      *Fixed (ADR 0011, SDK 1.0):* the stub is deleted, not made opt-in. Without
+      the native module, methods that need the kernel raise `VakError` and
+      `execute_tool` raises `ToolExecutionError`.
 
 - [ ] **The flagship MVP demo doesn't use VAK.** `examples/code_auditor_python.py`
       — the Autonomous Code Auditor named in the vision as *the* MVP — uses

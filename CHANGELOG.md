@@ -78,6 +78,9 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
   `CustomHandlerRegistry::{register_arc, register_new}`.
 
 ### Changed
+- **Breaking:** the `vak` Python package is 1.0.0 (was 0.1.0), for the methods removed
+  and changed below. Its version is separate from the crate's. `docs/python-sdk.md`
+  has a migration note for each.
 - Coverage is measured with cargo-llvm-cov, not tarpaulin (ADR 0012). Tarpaulin's
   ptrace engine reported Wasmtime's signal-based traps as a segfault, so the job never
   finished. `make coverage` and `make coverage-check` run it; it needs
@@ -176,10 +179,31 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
     settings, through the new native `Kernel.from_settings`, which rejects unknown keys.
     `register_agent` passes `allowed_tools` as the agent's scope, and `role` and
     `attributes` for policy.
-  - **Removed from `VakKernel`.** `create_audit_entry`, `add_policy_hook`,
-    `remove_policy_hook`, `load_policies`, `policy_engine`, `add_safety_rule`,
-    `add_constraint`, `check_constraints`, `configure_reasoner`, `reasoner` and
-    `register_skill`. They answered from engines the kernel never consulted.
+  - **Removed.** Methods that answered from engines the kernel never consulted. Each
+    is listed under Removed, with its kernel equivalent if it has one.
+  - **Changed meaning.** These methods remain but answer differently:
+    - `VakKernel(config_path=...)` and `from_config` read a kernel configuration
+      file and raise `VakError` if it can't be loaded. They used to read the file as
+      policy rules for the binding's own engine, and ignore a file that didn't load.
+    - `config` together with `config_path` raises `VakError` when a setting the SDK
+      passes to the kernel is not the default. The file used to be read as policy
+      rules, and of `config` only the Python engine's default effect was used.
+    - `evaluate_policy`'s `action` is a tool name, and `context` the call's
+      parameters. An unregistered agent raises `AgentNotFoundError`; the agent
+      `"system"` used to be accepted. It records nothing; it used to write an audit
+      entry.
+    - `register_agent` no longer asks policy about `"agent.register"`.
+    - Audit entries come from the kernel's log, and `verify_audit_chain` checks it.
+      Native entries carry `policy_decision`, `details["hash"]` and
+      `details["previous_hash"]` instead of `decision`, `hash` and (from
+      `get_audit_entry`) `prev_hash`.
+    - `get_audit_root_hash` is the Merkle tree's root, not the last entry's hash.
+    - `export_audit_receipt` is the signed tree head (`head`, `timestamp_ms`,
+      `signature`, `public_key`). It used to be an empty dict with the native module,
+      and the stub's `receipt_id`, `timestamp`, `root_hash` and `entry_count`
+      without it.
+    - `list_tools`, `list_skills` and `get_skill` answer from the kernel: the tools
+      it can run, and the skills it has loaded, by name.
   - **Without the native module,** these methods raise. The stub is deleted.
   - **Defaults.** `ToolRequest.memory_limit_bytes` defaults to 128 MiB.
   - **Bug fix.** `get_audit_logs` compares naive time bounds as local time.
@@ -244,6 +268,53 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - A panicking host tool handler no longer unwinds through `Kernel::execute`.
 
 ### Removed
+- **Breaking:** Python SDK methods that answered from engines the kernel never consulted
+  (finding I4, ADR 0011). Each now has a kernel equivalent or none; the migration note
+  in `docs/python-sdk.md` gives it.
+  - **`VakKernel.create_audit_entry`, and `create_audit_entry` on the context from
+    `agent_context()`.** They wrote entries the kernel never decided, to the binding's
+    own audit logger, or without the native module to the stub's in-memory chain. The
+    SDK's audit methods then reported those as the audit log. The kernel's log records
+    only calls it mediates (ADR 0007). No equivalent.
+  - **`VakKernel.add_policy_hook` and `remove_policy_hook`.** A Python callable decided
+    beside the kernel, so the SDK's answer and the kernel's could differ. No equivalent.
+  - **`VakKernel.load_policies`.** It loaded rules into the Python `PolicyEngine`,
+    which the kernel doesn't consult. With the native module it then raised
+    `TypeError`: its arguments didn't match the native `add_policy_rule`. Equivalent:
+    a YAML policy file in `PolicyConfig.policy_paths`, read at startup. With policy
+    files, `SecurityConfig.allowed_tools` no longer applies, and `blocked_tools`
+    blocks only through rules that check `resource.restricted`.
+  - **`VakKernel.policy_engine`.** It returned that Python engine as if it were the
+    kernel's. No equivalent. `vak.policy.PolicyEngine` remains as a standalone
+    evaluator.
+  - **`VakKernel.add_safety_rule`.** A rule with action `"block"` stopped
+    `execute_tool` in Python, before the kernel saw the call. Equivalent: block the
+    call in the kernel, with a forbid rule in a policy file or a narrower
+    `AgentConfig.allowed_tools`, or, without policy files, `blocked_tools`.
+  - **`VakKernel.add_constraint` and `check_constraints`.** They delegated to
+    `ReasonerConfig`; nothing checked constraints before a call. No equivalent.
+    `ReasonerConfig.add_constraint` and `check_constraints` remain standalone.
+  - **`VakKernel.configure_reasoner` and `reasoner`.** They configured a Python
+    `ReasonerConfig` the Rust kernel never read, though the SDK's `execute_tool`
+    enforced its block rules. No equivalent; block those calls as for
+    `add_safety_rule`. `ReasonerConfig` remains as a standalone evaluator.
+  - **`VakKernel.register_skill(SkillManifest)`.** It recorded the manifest in Python.
+    With the native module it then raised `TypeError`: its arguments didn't match the
+    native `register_skill`. Without it, the stub stored the manifest. Nothing was
+    loaded or verified. Equivalent: `load_skill(manifest_path)`.
+  - **Native `Kernel.add_policy_rule`.** It added a rule to the binding's own policy
+    engine. Equivalent: as `load_policies`.
+  - **Native `Kernel.validate_policy_config`, `has_allow_policies` and
+    `policy_rule_count`.** They described that engine. No equivalent.
+  - **Native `Kernel.register_skill` and `get_skill_info`, and the Rust type
+    `vak::python::SkillInfo` (feature `python`).** They managed a map of names beside
+    the kernel's registry. Equivalents: `load_skill` and `get_skill`.
+  - **Native `Kernel.unregister_skill` and `set_skill_enabled`.** Same map: they
+    changed only what `list_tools` and `get_skill_info` reported. The kernel has no call to unload or
+    disable a skill. No equivalent; block the tool at startup instead.
+  - **Native `Kernel.create_audit_entry`.** As `VakKernel.create_audit_entry`.
+  - **`vak._stub`.** Without the native module it answered in the kernel's place and
+    allowed every policy question. Kernel-backed methods now raise `VakError`.
 - The unused `rs_merkle` dependency.
 - `src/prelude.rs`, which was never compiled (`lib.rs` defines `prelude` inline) and
   referenced types that don't exist.

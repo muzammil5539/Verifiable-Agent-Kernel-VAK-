@@ -205,6 +205,11 @@ All public APIs from v0.1, v0.2, and v0.3 remain available and unchanged in v1.0
 
 All Python SDK APIs remain backward compatible. The `VakKernel`, `AgentConfig`, policy evaluation, tool execution, memory, swarm, and audit APIs are all stable.
 
+> **Since then:** the `vak` Python package, versioned separately from the crate, is 1.0.0
+> and breaks compatibility with its 0.1. It removes the methods that answered without the
+> kernel and changes what others answer (ADR 0011). See "Migrating the Python package from
+> 0.1 to 1.0" in `docs/python-sdk.md`.
+
 ---
 
 ## Python SDK Migration

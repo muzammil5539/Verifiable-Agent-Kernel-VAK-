@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "vak"
-version = "0.1.0"
+version = "1.0.0"
 description = "Verifiable Agent Kernel - Secure, policy-enforced AI agent execution with audit logging"
 readme = "README.md"
 license = {text = "MIT OR Apache-2.0"}

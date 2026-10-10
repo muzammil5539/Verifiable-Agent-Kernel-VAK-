@@ -504,7 +504,7 @@ impl PyKernel {
         Ok(Self::from_kernel(runtime, kernel))
     }
 
-    /// A kernel configured by the file at `path` (YAML, JSON or TOML, as
+    /// A kernel configured by the file at `path` (YAML or JSON, as
     /// `KernelConfig::from_file` reads): its policies, skills and limits.
     ///
     /// # Errors

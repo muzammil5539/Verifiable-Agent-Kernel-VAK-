@@ -116,7 +116,7 @@ class VakKernel:
 
         Args:
             config_path: Optional path to the kernel's configuration file
-                (YAML, JSON or TOML, as the Rust ``KernelConfig`` reads).
+                (YAML or JSON, as the Rust ``KernelConfig`` reads).
             config: Optional KernelConfig for programmatic configuration.
                 Its security and policy settings configure the kernel. Give
                 either a file or settings: a file together with non-default
