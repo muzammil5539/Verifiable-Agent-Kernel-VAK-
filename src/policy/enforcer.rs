@@ -958,16 +958,7 @@ impl CedarEnforcer {
 
     /// Simple glob-style pattern matching
     fn pattern_matches(&self, pattern: &str, value: &str) -> bool {
-        if pattern == "*" {
-            return true;
-        }
-        if let Some(prefix) = pattern.strip_suffix('*') {
-            return value.starts_with(prefix);
-        }
-        if let Some(suffix) = pattern.strip_prefix('*') {
-            return value.ends_with(suffix);
-        }
-        pattern == value
+        pattern_matches(pattern, value)
     }
 
     /// Get the configuration
@@ -1225,6 +1216,22 @@ pub fn forbid_rule(
         conditions: vec![],
         description: None,
     }
+}
+
+/// Glob matching for rule patterns: `*`, `prefix*`, `*suffix`, or an exact
+/// value. The kernel's `policy.min_assurance` patterns use it too, so the two
+/// mean the same thing.
+pub(crate) fn pattern_matches(pattern: &str, value: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    if let Some(prefix) = pattern.strip_suffix('*') {
+        return value.starts_with(prefix);
+    }
+    if let Some(suffix) = pattern.strip_prefix('*') {
+        return value.ends_with(suffix);
+    }
+    pattern == value
 }
 
 #[cfg(test)]

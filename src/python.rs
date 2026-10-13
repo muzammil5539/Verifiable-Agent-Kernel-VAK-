@@ -469,6 +469,20 @@ impl PyKernel {
                 None,
             ),
         };
+        let mut details = serde_json::json!({
+            "kind": kind,
+            "leaf_index": index,
+            "kernel_agent_id": entry.agent_id.to_string(),
+            "session_id": entry.session_id.to_string(),
+            "hash": entry.hash,
+            "previous_hash": entry.previous_hash,
+            "outcome": entry.outcome,
+        });
+        // What each guard that ran said (docs/adr/0013), on entries for calls
+        // that reached the Guard stage.
+        if let (Some(guards), Some(map)) = (&entry.guards, details.as_object_mut()) {
+            map.insert("guards".to_string(), serde_json::json!(guards));
+        }
         serde_json::json!({
             "entry_id": entry.audit_id.to_string(),
             "timestamp": entry.timestamp.to_rfc3339(),
@@ -477,15 +491,7 @@ impl PyKernel {
             "action": entry.action,
             "resource": entry.action,
             "policy_decision": decision_json(&entry.decision, decided_by),
-            "details": {
-                "kind": kind,
-                "leaf_index": index,
-                "kernel_agent_id": entry.agent_id.to_string(),
-                "session_id": entry.session_id.to_string(),
-                "hash": entry.hash,
-                "previous_hash": entry.previous_hash,
-                "outcome": entry.outcome,
-            },
+            "details": details,
             "parent_entry_id": parent,
         })
     }
@@ -1161,6 +1167,82 @@ mod tests {
 
     fn get(dict: &Bound<'_, PyAny>, key: &str) -> serde_json::Value {
         py_to_json(dict.get_item(key).unwrap()).unwrap()
+    }
+
+    /// A guard's refusal reaches Python as `PermissionError`, and its verdict
+    /// is in the decision entry's details (docs/adr/0013).
+    #[test]
+    fn guard_verdicts_reach_python() {
+        use crate::kernel::{Assurance, FunctionGuard, GuardVerdict};
+
+        Python::initialize();
+        let runtime = Arc::new(
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .unwrap(),
+        );
+        let guarded = runtime
+            .block_on(
+                Kernel::builder(KernelConfig::default())
+                    .with_guard(Arc::new(FunctionGuard::new(
+                        "judge",
+                        Assurance::Heuristic,
+                        |req| {
+                            if req.request.parameters["params"]["text"] == "drop tables" {
+                                GuardVerdict::deny("looks destructive")
+                            } else {
+                                GuardVerdict::Pass
+                            }
+                        },
+                    )))
+                    .build(),
+            )
+            .unwrap();
+        let mut kernel = PyKernel::from_kernel(runtime, Arc::new(guarded));
+
+        Python::attach(|py| {
+            kernel
+                .register_agent("agent-1", "Agent One", PyDict::new(py))
+                .unwrap();
+            let params = PyDict::new(py);
+            params.set_item("text", "drop tables").unwrap();
+            let refused = kernel
+                .execute_tool(py, "echo", "agent-1", "say", params, 5_000, u64::MAX)
+                .unwrap_err();
+            assert!(refused.is_instance_of::<PyPermissionError>(py), "{refused}");
+            assert!(refused.to_string().contains("guard.judge"), "{refused}");
+
+            let params = PyDict::new(py);
+            params.set_item("text", "hello").unwrap();
+            kernel
+                .execute_tool(py, "echo", "agent-1", "say", params, 5_000, u64::MAX)
+                .unwrap();
+
+            let logs = kernel.get_audit_logs(py, PyDict::new(py)).unwrap();
+            let entries: Vec<_> = logs
+                .iter()
+                .map(|e| py_to_json(e.clone()).unwrap())
+                .collect();
+            assert_eq!(
+                entries.len(),
+                3,
+                "a refusal, then a decision and an outcome"
+            );
+            let checks = &entries[0]["details"]["guards"]["checks"];
+            assert_eq!(checks[0]["guard"], "judge");
+            assert_eq!(checks[0]["assurance"], "heuristic");
+            assert_eq!(checks[0]["verdict"], "deny");
+            assert_eq!(
+                entries[1]["details"]["guards"]["checks"][0]["verdict"],
+                "pass"
+            );
+            assert!(
+                entries[2]["details"].get("guards").is_none(),
+                "outcome entries don't repeat the verdicts"
+            );
+        });
     }
 
     /// A registered agent's call runs through `Kernel::execute`: the tool

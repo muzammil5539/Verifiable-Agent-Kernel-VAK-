@@ -296,7 +296,9 @@ class VakKernel:
         with ``context`` as its parameters.
 
         This is the Decide stage of ``execute_tool`` alone: nothing runs and
-        nothing is recorded. ``execute_tool`` sends a tool
+        nothing is recorded. Guards and ``policy.min_assurance`` aren't
+        applied, so ``execute_tool`` can still refuse a call this allows.
+        ``execute_tool`` sends a tool
         ``{"action": ..., "params": ...}``; to ask about exactly that call,
         pass those as ``context``.
 

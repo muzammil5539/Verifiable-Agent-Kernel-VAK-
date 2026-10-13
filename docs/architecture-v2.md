@@ -53,7 +53,7 @@ stub or a placeholder.
 | K2 | WASM skills run with a time limit | Epoch interruption is enabled and `epoch_deadline_trap()` is set, but `set_epoch_deadline` is never called. Per the Wasmtime docs the default deadline is 0, so **every skill traps on its first epoch check**. No test runs a real module through the kernel, so this went unnoticed. | `src/sandbox/mod.rs:211-277` | S2 |
 | K3 | Sandbox is scalable | A new `wasmtime::Engine` is created, and the module recompiled, on **every** tool call. Execution is synchronous inside an `async fn`, blocking a Tokio worker for the skill's whole runtime. **Fixed in slice 1b:** `SandboxRuntime` (one engine, SHA-256-keyed module cache, one parked epoch ticker), execution on `spawn_blocking` (ADR 0004). | `src/kernel/mod.rs:634`, `src/sandbox/mod.rs:217` | S2 |
 | K4 | Skills are cryptographically signed | The registry's "signature" is an unkeyed SHA-256 over name, version and description, which anyone can recompute. If the module was missing it hashed the module's *path*. `trusted_keys` was never read, and there was an `unwrap()` on that path. (This table originally said `sandbox/verified_publisher.rs` had real Ed25519. It doesn't: it stores key and signature strings and never verifies one.) **Fixed in slice 1c:** Ed25519 over the module digest and the manifest, verified against `security.trusted_skill_keys`, with each skill pinned to the verified module (ADR 0005). | `src/sandbox/registry.rs:519,540` | S1 |
-| K5 | Rate limiting, constitution, neuro-symbolic checks protect execution | `RateLimiter`, `Constitution`, `NeuroSymbolicPipeline` and `AsyncPipeline` are declared in `kernel/` but never called by `Kernel::execute`. **v2.1:** rate limiting is enforced by the Budget stage; the others wait for the Guard port. | `src/kernel/mod.rs:31-54,503` | S2 |
+| K5 | Rate limiting, constitution, neuro-symbolic checks protect execution | `RateLimiter`, `Constitution`, `NeuroSymbolicPipeline` and `AsyncPipeline` are declared in `kernel/` but never called by `Kernel::execute`. **v2.1:** rate limiting is enforced by the Budget stage. **Slice 2c (ADR 0013):** the Guard port exists and `Kernel::execute` runs registered guards; no adapter wraps the constitution or the reasoner's checks yet, so they are still not called. | `src/kernel/mod.rs:59-96`; stage 4 at `src/kernel/mod.rs:781` | S2 |
 | K6 | Audit module provides persistent, signed, rotatable logs | `audit::AuditLogger` (file, SQLite, S3 backends, Ed25519) is **not used by the kernel**. The kernel keeps its own `Vec<AuditEntry>` in RAM, which grows without bound; `get_audit_log` clones all of it. **v2.1:** the kernel's log is the `AuditLog` port; `FileAuditLog` persists it when `audit.log_path` is set. **Fixed in slice 1e:** the port is the only audit path for mediated actions; `SqliteAuditLog` (`audit.format: sqlite`) gives it durable, queryable storage; both durable adapters finish an append even if the caller stops waiting. It is deliberately not rotated, and `AuditLogger` remains a standalone event log (ADR 0007). Entries are still all held in memory until Phase 3's tiles. | `src/kernel/mod.rs:115,875` | S2 |
 | K7 | `audit::AuditLogger` hashes are collision-free | Fields are concatenated without length prefixes, so `("ab","c")` and `("a","bc")` hash identically, and `metadata` isn't hashed at all. (The kernel's own entry hash was fixed in `a9076d8`; this one wasn't.) `log` also returned entries its backend failed to store, and rotation broke `verify_chain`. **Fixed in slice 1e:** a version 2 hash with a domain tag, length prefixes and `metadata`; old logs verify only as a prefix, counted in `AuditReport::legacy_entries`; `log` returns `Result`; rotation keeps the chain verifiable and never evicts what it couldn't archive (ADR 0007). | `src/audit/mod.rs:1270-1290` | S1 |
 | K8 | Policy attributes reflect the agent | Every principal gets `internal = true`, whoever the agent is. **Fixed in v2.1:** attributes come from the agent's `AgentRecord`; anonymous agents are not internal. | `src/kernel/mod.rs:272` | S2 |
@@ -405,7 +405,11 @@ flowchart TB
 4. **Guard.** Run zero or more guards. Each guard returns `Pass`, `Deny` or `Escalate`
    with its `Assurance` level. A policy can require, for example, `min_assurance =
    Enforced` for `payment:*`, so an LLM judge can *add* denials but never be the only
-   thing standing between an agent and a high-risk action.
+   thing standing between an agent and a high-risk action. As built (ADR 0013):
+   - **Abstain.** Guards can also return `Abstain` ("not mine").
+   - **The floor.** It is `policy.min_assurance` in kernel configuration. Only a
+     guard's `Pass` counts toward it; the PDP's allow doesn't.
+   - **Escalation.** It refuses until there is an `ApprovalChannel`.
 5. **Record.** Append the decision leaf (written *before* execution) and get back an
    index and a tree head.
 6. **Execute.** The executor registry resolves the tool in this order: built-in,
@@ -422,7 +426,7 @@ flowchart TB
 | `AgentRegistry` | agent → record (attributes, status, tool scope) | `InMemoryAgentRegistry` | **added in v2.1** |
 | `Budget` | charge one request to an agent's budget | `AgentRateBudget` (token bucket) or `Unlimited` | **added in v2.1** |
 | `AuditLog` | append; tree head; inclusion and consistency proofs | `MemoryAuditLog`, or `FileAuditLog` / `SqliteAuditLog` (by `audit.format`) when `audit.log_path` is set | **added in v2.1**; SQLite in 1e |
-| `Guard` | extra pre-execution checks with an assurance level | none | next |
+| `Guard` | extra pre-execution checks with an assurance level | none (`KernelBuilder::with_guard`); `FunctionGuard` for closures | **added in 2c** (ADR 0013); no adapters yet |
 | `Signer` | sign tree heads | Ed25519 (`ed25519-dalek`) | tree-head signing added |
 | `StateStore`, `Clock`, `ApprovalChannel` | persistence, time, human-in-the-loop | memory, system clock, deny | later |
 
@@ -503,6 +507,7 @@ let proof = kernel.prove_audit_inclusion(0).await?;  // anyone can verify
 | Mediation (`Kernel::execute`) | Checked (unknown tools fake success) | **Enforced** (fail closed) | Enforced + model-checked pipeline |
 | Policy (YAML CedarEnforcer) | Enforced (post-a9076d8) | Enforced, behind a port | real Cedar + SymCC: Enforced + analyzed |
 | Admission and budget | none: constant attributes (K8), unenforced rate limit (K5) | **Enforced** (v2.1: registry, session binding, scope, token bucket) | shared adapters for fleets |
+| Guards and `min_assurance` | none (stage 4 was a placeholder) | **Enforced** for the stage itself (2c): failures deny, floors count only guard passes; each guard's level is its own | constitution, prompt-injection and Ascent Datalog adapters |
 | Audit | Enforced, but in-RAM and O(n) | **Enforced, with O(log n) inclusion and consistency proofs** | + persistent tiles, witness cosigning |
 | WASM sandbox | broken (traps immediately) | **works, with wall-clock deadline; shared engine and module cache, off the async executor (1b)** | Component Model, signed skills |
 | Skill signatures | none (unkeyed hash) | **Ed25519 against a trust root, module pinned (1c)** | Sigstore, witness-logged |
@@ -587,7 +592,14 @@ phase's exit criterion.
       finance agent use a blocked tool.
 - IFC labels on tool results and arguments; label-aware policies; the AgentDojo harness
   as a benchmark.
-- `Guard` port with assurance levels; Datalog rules on Ascent with canonical paths.
+- [x] Slice 2c (ADR 0013): the `Guard` port with assurance levels. `Kernel::execute`
+      runs each guard added with `KernelBuilder::with_guard` on calls the policy
+      allowed. A deny or an escalation from any guard refuses the call, as does a
+      guard that panics or overruns. `policy.min_assurance` requires a guard of some
+      level to *pass* a tool's calls; the policy's own allow doesn't count. The
+      decision's audit entry records each verdict and level. No adapters yet.
+- Guard adapters: the constitution (core, Enforced), the prompt-injection detector
+  (Heuristic); Datalog rules on Ascent with canonical paths.
 - Correct sparse Merkle tree (V4); episodic memory on the transparency log.
 - Exit criterion: on AgentDojo, attack success rate with VAK IFC policies is ≤ the
   published CaMeL and Progent numbers, at equal or better utility.

@@ -21,6 +21,18 @@ that language is exactly how the gap went unnoticed for thirteen sprints.
 
 ## Done (verified, not just present)
 
+- [x] The Guard stage (`docs/adr/0013`), driven through `Kernel::execute` in
+      `tests/guard_port.rs`. The `Guard` port has four assurance levels. Guards
+      added with `KernelBuilder::with_guard` run on calls the policy allowed:
+      - a deny or an escalation from any guard refuses the call, as does a guard
+        that panics or overruns;
+      - `policy.min_assurance` requires a guard of some level to *pass* a tool's
+        calls, and the policy's own allow doesn't count;
+      - the decision's audit entry records every verdict, and old logs still
+        verify.
+      Adapters (the constitution, the prompt-injection detector) are separate
+      items below.
+
 - [x] Audit entries commit to the decision and the predecessor hash; tampering,
       reordering and deletion are all now detected — `AuditEntry::verify_chain`
       (`src/kernel/types.rs`, `tests/audit_chain_integrity.rs`)
@@ -122,6 +134,23 @@ request path. In order of leverage:
       and memory, JSONL and SQLite adapters. `AuditLogger` stays a standalone event
       log; it was not made the kernel's.
 
+- [ ] **Guard adapters for the constitution and the reasoner.** The Guard port
+      exists (ADR 0013), with no adapters. In order:
+      1. **`ConstitutionalEngine`, as an Enforced guard in the core.** It must
+         answer `Abstain`, not `Pass`, when no rule objects, because its rules
+         are a blocklist. It should evaluate its `PrePolicy` and `PreExecution`
+         rules, and always supply `resource`, or rule R-003 denies every call.
+         Fix `Exists` to resolve dotted paths, and make `constitution_hash`
+         cover each rule's constraint and flags.
+      2. **`PromptInjectionDetector`, as a Heuristic guard behind `reasoner`.**
+         First fix its UTF-8 slicing panic (`prompt_injection.rs`
+         `&input[..max_input_length]`), and drop the allowlist short-circuit,
+         which skips detection entirely.
+      3. **Datalog on Ascent with canonical paths (V3)**, as an Enforced guard.
+
+      Until one is added, a `min_assurance` floor refuses its tools. The Python
+      SDK and `VakRuntime` build kernels with `Kernel::new` and can't add guards.
+      Any floor in their config file therefore refuses every matching call.
 - [ ] **Gate high-risk actions on the neuro-symbolic reasoner.** PRM scoring,
       the Datalog safety engine (`src/reasoner/datalog.rs`), and the Z3
       verification gateway are implemented and unit-tested, but
@@ -188,7 +217,11 @@ request path. In order of leverage:
 - [ ] **Per-call memory limits.** `ToolRequest` has no memory field, so the
       Python binding refuses a `memory_limit` below the kernel's per-skill
       limit rather than enforce it. Add the field (a public-struct change) with
-      the Guard port's per-call constraints, and let the binding pass it.
+      the Guard port's per-call constraints, and let the binding pass it. The
+      Guard port has landed (ADR 0013) without per-call constraints: guards can
+      refuse a call, not tighten its limits. This needs a decision on how a
+      constraint reaches the executor (a field on `PolicyDecision::Allow`, or
+      a guard verdict that carries limits).
 
 - [x] **Python SDK silently substitutes a fake kernel.** `VakKernel` falls back
       to `_StubKernel` — a pure-Python in-memory imitation with no policy

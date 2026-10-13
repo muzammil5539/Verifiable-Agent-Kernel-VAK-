@@ -178,10 +178,11 @@ The kernel orchestrates the full request lifecycle:
 | `neurosymbolic_pipeline.rs` | PRM/reasoning integration pipeline |
 | `rate_limiter.rs` | Token-bucket and sliding-window primitives; `TokenBucket` backs `AgentRateBudget` |
 | `custom_handlers.rs` | Registry for user-defined tool handlers |
-| `ports.rs` | The pipeline's ports, one per stage: `AgentRegistry`, `Budget`, `PolicyDecisionPoint`, `AuditLog`, `ToolHandler` |
+| `ports.rs` | The pipeline's ports, one per stage: `AgentRegistry`, `Budget`, `PolicyDecisionPoint`, `Guard`, `AuditLog`, `ToolHandler` |
 | `identity.rs` | `AgentRecord`, `AgentRegistry`, `InMemoryAgentRegistry` (Admit stage) |
 | `budget.rs` | `Budget`, `AgentRateBudget`, `Unlimited` (Budget stage) |
 | `pdp.rs` | `ConfigPolicy`, `EnforcerPolicy` (Decide stage) |
+| `guard.rs` | `Guard`, `Assurance`, `GuardVerdict`, `GuardRequest`, `FunctionGuard`, `GuardChecks` (Guard stage, ADR 0013) |
 | `audit_log.rs` | `AuditLog`, `MemoryAuditLog`, `FileAuditLog`, `SqliteAuditLog` (Record stages; the one audit path, ADR 0007) |
 
 **Built-in tools:**
@@ -654,9 +655,14 @@ reasoning and `docs/architecture-v2.md` §5.1 for the target design.
        │        agent's record as principal
        │        ── deny ────► Deny entry + PolicyViolation
        ▼
-4. Guard        (planned: Phase 2)
+4. Guard        each Guard in order (KernelBuilder::with_guard); then the level
+       │        policy.min_assurance requires must have a guard Pass (ADR 0013)
+       │        ── deny / escalate / panic / overrun / floor unmet ──►
+       │                      Deny entry with the verdicts + PolicyViolation
+       │                      ("guard.<name>" / "policy.min_assurance")
        ▼
-5. Record       AuditLog::append(decision)  ── fails ──► AuditUnavailable, nothing runs
+5. Record       AuditLog::append(decision, guard verdicts)
+       │        ── fails ──► AuditUnavailable, nothing runs
        ▼
 6. Execute      built-in ──► host handler (panic boundary, timeout) ──► WASM skill
        │        (fuel, epoch deadline) ──► otherwise ToolNotFound

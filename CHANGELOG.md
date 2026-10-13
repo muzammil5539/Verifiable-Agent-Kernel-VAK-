@@ -12,6 +12,28 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 `docs/adr/0003-admit-budget-record-outcome-pipeline-stages.md` for the decision records.
 
 ### Added
+- The Guard stage (ADR 0013; slice 2c).
+  - **The port.** `kernel::guard`, in the core: the `Guard` port (`check`, `name`,
+    `assurance`), `Assurance` (`Experimental < Heuristic < Checked < Enforced`),
+    `GuardVerdict` (`Pass`, `Abstain`, `Deny`, `Escalate`), `GuardRequest`,
+    `FunctionGuard` and `GuardChecks`.
+  - **Running guards.** `KernelBuilder::with_guard` adds a guard, and `Kernel::guards`
+    lists them. `Kernel::execute` runs them on calls the policy allowed, in order.
+  - **Refusals.** A deny or an escalation refuses the call as
+    `KernelError::PolicyViolation` with `policy_id` `guard.<name>`. So does a guard
+    that panics, or doesn't answer within `max_execution_time`. A guard that blocks
+    the thread can't be interrupted, so its late answer becomes a denial. There is
+    no approval channel yet, so escalations refuse.
+  - **`policy.min_assurance`.** It maps tool-name patterns to the level a guard must
+    have *passed* a call at; the policy's own allow doesn't count. A shortfall is
+    refused as `policy.min_assurance`. Malformed patterns and the level
+    `experimental` are refused at startup.
+  - **The record.** `AuditEntry::guards`, on entries for calls that reached the
+    Guard stage, holds the level required and each guard that ran, with its verdict
+    and level. It is hashed only when present, so existing logs verify.
+  - **No adapters yet,** and nothing changes without guards or a floor.
+  - **Breaking:** `AuditEntry` gains the public field `guards`, and `PolicyConfig`
+    the public field `min_assurance`.
 - `Kernel::load_skill` and `Kernel::skill_manifest` (feature `wasm`): load a WASM skill
   while the kernel runs, verified as skills loaded at startup are, and read a loaded
   skill's manifest. Loading authorizes no one; policy still decides every call.

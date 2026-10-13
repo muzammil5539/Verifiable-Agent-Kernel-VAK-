@@ -65,13 +65,13 @@ Features: the trusted core (`kernel`, `policy`, `audit`, `secrets`, `lib_integra
 
 VAK is a Cargo workspace: the root crate (`vak`) plus WASM skill crates under `.github/skills/*` (`calculator`, `crypto-hasher`, `json-validator`, `text-analyzer`, `regex-matcher`) as workspace members. Build skills with `cargo build -p <skill> --target wasm32-unknown-unknown --release`.
 
-Request lifecycle: `ToolRequest` → rate limiter → policy engine (ABAC, default-deny) → audit logger (hash-chained, logged before execution) → dispatcher (built-in handler or WASM sandbox) → `ToolResponse`. High-stakes actions additionally route through the neuro-symbolic reasoner (PRM score → Datalog safety rules → Z3 formal verification) before approval.
+Request lifecycle (`Kernel::execute`, docs/adr/0003): admit (agent registry, session, scope) → budget → policy decision point (default-deny) → guards (zero or more, each with an assurance level; `policy.min_assurance` can require one to pass; docs/adr/0013) → audit (decision recorded before execution) → dispatcher (built-in, host handler or WASM sandbox) → outcome recorded → `ToolResponse` with a receipt. The neuro-symbolic reasoner (PRM, Datalog, Z3) and the constitution are not on this path yet; they join as guard adapters (TODO.md).
 
 Core modules under `src/`:
 
 | Module | Responsibility |
 |---|---|
-| `kernel/` | Orchestration: `Kernel` struct, request dispatch, `AgentId`/`SessionId`/`AuditId` (UUIDv7), `PolicyDecision`, rate limiting, constitution (immutable safety principles enforced pre-policy/pre-execution/post-execution) |
+| `kernel/` | Orchestration: `Kernel` struct, request dispatch, `AgentId`/`SessionId`/`AuditId` (UUIDv7), `PolicyDecision`, rate limiting, guards (`guard.rs`), constitution (immutable safety principles; not yet on the request path, finding K5) |
 | `policy/` | ABAC engine — Cedar-style YAML rules, hot-reload via `arc-swap`, conflict analysis; real Cedar (`policy::cedar`, feature `cedar`, `policy.format: cedar`; schema and ported policies in `policies/cedar/`, ADR 0008); SymCC proofs of policy-set properties and checked reloads (`policy::cedar::analysis`, feature `cedar-analysis`, ADR 0009) |
 | `audit/` | RFC 9162 transparency log behind the kernel's `AuditLog` port (adapters in `kernel/audit_log.rs`: memory, JSONL, SQLite; the one audit path, ADR 0007); standalone hash-chained `AuditLogger`, Ed25519 signing, flight recorder (shadow mode), replay, S3/multi-region backends |
 | `memory/` | Three-tier memory: working (hot) / episodic (warm, Merkle chain via `rs_merkle`) / semantic (cold, knowledge graph + vector store); time-travel rollback by hash |
@@ -92,6 +92,7 @@ Any tool name not matching a built-in (`echo`, `calculator`, `data_processor`, `
 - **Default deny**: no matching policy rule = inadmissible. Never make an action fall through to allow.
 - **No fake success**: a tool that doesn't exist or didn't run is an error (`ToolNotFound`, `ToolExecutionFailed`), never a success response.
 - **Policy is a port**: the kernel decides through `kernel::ports::PolicyDecisionPoint`; add policy logic in an implementation of it (see `kernel::pdp`), not inline in `Kernel`.
+- **Guards only narrow**: extra checks on allowed calls are `kernel::ports::Guard` implementations, not inline in `Kernel`. A guard can refuse what the policy allowed, never allow what it denied; a guard that fails denies; only a guard's `Pass` counts toward `policy.min_assurance` (docs/adr/0013).
 - **Audit before execution**: the audit logger records the decision before the tool runs, not after.
 - **WASM isolation**: untrusted/skill code must run inside the sandbox, never inline in the kernel.
 - **Panic boundary**: host functions catch panics at the WASM/host boundary; the kernel must never crash from sandboxed code.

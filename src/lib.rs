@@ -106,13 +106,16 @@
 //! ## Assurance Status
 //!
 //! No external security audit has been performed. The levels below follow
-//! `docs/architecture-v2.md` §6: *Enforced* means deterministic and
-//! fail-closed, *Heuristic* means a useful signal that must not be the only
-//! control on a dangerous action, *Experimental* means not sound.
+//! `docs/architecture-v2.md` §3.4 and §6, and are the levels guards declare
+//! ([`kernel::guard::Assurance`]): *Enforced* means deterministic, total and
+//! fail-closed, *Checked* means sound but partial (a schema), *Heuristic*
+//! means a useful signal that must not be the only control on a dangerous
+//! action, *Experimental* means not sound.
 //!
 //! | Component | Level | Notes |
 //! |-----------|-------|-------|
 //! | Kernel mediation | Enforced | Default deny; unknown tools fail closed |
+//! | Guard stage | Enforced, for the stage | Guards only narrow; a guard that fails denies; `policy.min_assurance` counts only guard passes. Each guard's own check is at the level it declares; no adapters ship yet (ADR 0013) |
 //! | Policy (`CedarEnforcer`, YAML) | Enforced | Cedar-style, not the `cedar-policy` engine |
 //! | Policy (`CedarPolicy`, feature `cedar`) | Enforced | The `cedar-policy` engine; schema-validated; errors deny |
 //! | Policy analysis (feature `cedar-analysis`) | Enforced, for the properties stated | SymCC with cvc5: ceilings, floors, never-errors, no-widening reloads |
@@ -121,7 +124,7 @@
 //! | `reasoner` (PRM, ToT, Datalog, prompt-injection) | Heuristic | LLM judge, closures, regexes |
 //! | `reasoner::zk_proof` | Experimental | Not a sound proof system |
 //! | `swarm` consensus | Heuristic | Votes are unauthenticated |
-//! | Python bindings (`python`) | Experimental | `vak.Kernel` doesn't call the kernel; `execute_tool` runs nothing (finding I4) |
+//! | Python bindings (`python`) | Enforced, for calls through the kernel | Tool calls, policy questions, skills and the audit log go through the Rust kernel (ADR 0011); the SDK's memory and voting are Python and not mediated |
 //!
 //! ## License
 //!
