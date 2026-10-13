@@ -7,7 +7,9 @@
 //! # Features
 //! - Skill manifest loading and validation
 //! - Permission-based access control
-//! - Cryptographic signature verification (SBX-002)
+//! - Ed25519 signature verification against trusted publisher keys
+//!   ([`super::signing`]), with each skill pinned to the digest of the module
+//!   it was verified with
 //!
 //! # Example
 //!
@@ -24,12 +26,14 @@
 //! ```
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 use uuid::Uuid;
+
+use super::signing::{module_digest, read_module};
+pub use super::signing::{SkillSignatureVerifier, VerifiedSkill};
 
 /// Unique identifier for a loaded skill
 ///
@@ -149,10 +153,16 @@ pub struct SkillManifest {
     /// JSON Schema for validating output from the skill
     pub output_schema: serde_json::Value,
 
-    /// Path to the WASM binary (relative to manifest or absolute)
+    /// Path to the WASM binary (relative to manifest or absolute). Not
+    /// signed: the module is bound to the signature by its digest instead.
     pub wasm_path: PathBuf,
 
-    /// Optional cryptographic signature for skill verification (SBX-002)
+    /// Hex Ed25519 public key of the publisher that signed this skill.
+    #[serde(default)]
+    pub signed_by: Option<String>,
+
+    /// Hex Ed25519 signature by `signed_by` over the module's digest and
+    /// every other field of this manifest (see [`super::signing`]).
     #[serde(default)]
     pub signature: Option<String>,
 }
@@ -334,20 +344,18 @@ pub enum SignatureError {
     },
 
     /// Signature verification failed
-    #[error("Signature verification failed for skill '{skill_name}': computed={computed}, expected={expected}")]
+    #[error("Signature verification failed for skill '{skill_name}': {reason}")]
     VerificationFailed {
         /// Name of the skill that failed verification
         skill_name: String,
-        /// The computed signature
-        computed: String,
-        /// The expected signature from the manifest
-        expected: String,
+        /// Why it failed
+        reason: String,
     },
 
     /// Public key not found in trusted keys
     #[error("Public key '{key_id}' is not in the trusted key set")]
     UntrustedKey {
-        /// The key ID that was not found
+        /// The hex public key that signed, which is not trusted
         key_id: String,
     },
 
@@ -367,7 +375,7 @@ pub struct SignatureConfig {
     /// Whether signature verification is required
     pub require_signatures: bool,
 
-    /// Trusted public key IDs (SHA-256 of the key)
+    /// Trusted publisher keys: hex-encoded Ed25519 public keys.
     pub trusted_keys: Vec<String>,
 
     /// Whether to allow unsigned skills in development mode
@@ -417,187 +425,6 @@ impl SignatureConfig {
     }
 }
 
-/// Signature verification result
-#[derive(Debug, Clone)]
-pub struct SignatureVerificationResult {
-    /// Whether verification passed
-    pub valid: bool,
-
-    /// The computed signature hash
-    pub computed_signature: String,
-
-    /// The expected signature (from manifest)
-    pub expected_signature: Option<String>,
-
-    /// Key ID that was used (if applicable)
-    pub key_id: Option<String>,
-
-    /// Additional details about the verification
-    pub details: String,
-}
-
-impl SignatureVerificationResult {
-    /// Create a successful verification result
-    pub fn success(computed: impl Into<String>, expected: impl Into<String>) -> Self {
-        Self {
-            valid: true,
-            computed_signature: computed.into(),
-            expected_signature: Some(expected.into()),
-            key_id: None,
-            details: "Signature verification successful".to_string(),
-        }
-    }
-
-    /// Create a failed verification result
-    pub fn failure(
-        computed: impl Into<String>,
-        expected: impl Into<String>,
-        details: impl Into<String>,
-    ) -> Self {
-        Self {
-            valid: false,
-            computed_signature: computed.into(),
-            expected_signature: Some(expected.into()),
-            key_id: None,
-            details: details.into(),
-        }
-    }
-
-    /// Create a result for unsigned skill (allowed)
-    pub fn unsigned_allowed() -> Self {
-        Self {
-            valid: true,
-            computed_signature: String::new(),
-            expected_signature: None,
-            key_id: None,
-            details: "No signature present, unsigned skills allowed".to_string(),
-        }
-    }
-}
-
-/// Skill signature verifier
-///
-/// Verifies that skill manifests and WASM binaries have valid cryptographic
-/// signatures from trusted sources. This provides integrity verification
-/// and supply chain security for loaded skills.
-#[derive(Debug)]
-pub struct SkillSignatureVerifier {
-    config: SignatureConfig,
-}
-
-impl SkillSignatureVerifier {
-    /// Create a new signature verifier with the given configuration
-    pub fn new(config: SignatureConfig) -> Self {
-        Self { config }
-    }
-
-    /// Create a verifier with default (permissive) configuration
-    pub fn permissive() -> Self {
-        Self::new(SignatureConfig::permissive_dev())
-    }
-
-    /// Create a verifier with strict configuration
-    pub fn strict() -> Self {
-        Self::new(SignatureConfig::strict())
-    }
-
-    /// Verify a skill manifest and its WASM binary
-    pub fn verify_skill(
-        &self,
-        manifest: &SkillManifest,
-    ) -> Result<SignatureVerificationResult, SignatureError> {
-        // If no signature and signatures are not required, allow
-        if manifest.signature.is_none() {
-            if self.config.require_signatures && !self.config.allow_unsigned_in_dev {
-                return Err(SignatureError::SignatureRequired {
-                    skill_name: manifest.name.clone(),
-                });
-            }
-            return Ok(SignatureVerificationResult::unsigned_allowed());
-        }
-
-        let signature = manifest.signature.as_ref().unwrap();
-
-        // Compute the expected signature
-        let computed = self.compute_signature(manifest)?;
-
-        // Verify the signature matches
-        if computed != *signature {
-            return Ok(SignatureVerificationResult::failure(
-                &computed,
-                signature,
-                "Computed signature does not match manifest signature",
-            ));
-        }
-
-        Ok(SignatureVerificationResult::success(&computed, signature))
-    }
-
-    /// Compute the signature for a manifest
-    ///
-    /// The signature is computed as:
-    /// SHA256(name || version || description || permissions_json || wasm_sha256)
-    pub fn compute_signature(&self, manifest: &SkillManifest) -> Result<String, SignatureError> {
-        let mut hasher = Sha256::new();
-
-        // Include manifest metadata
-        hasher.update(manifest.name.as_bytes());
-        hasher.update(b"|");
-        hasher.update(manifest.version.as_bytes());
-        hasher.update(b"|");
-        hasher.update(manifest.description.as_bytes());
-        hasher.update(b"|");
-
-        // Include permissions as JSON
-        let permissions_json = serde_json::to_string(&manifest.permissions).map_err(|e| {
-            SignatureError::InvalidFormat {
-                message: format!("Failed to serialize permissions: {}", e),
-            }
-        })?;
-        hasher.update(permissions_json.as_bytes());
-        hasher.update(b"|");
-
-        // Include WASM binary hash if the file exists
-        if manifest.wasm_path.exists() {
-            let wasm_bytes =
-                std::fs::read(&manifest.wasm_path).map_err(|e| SignatureError::WasmNotFound {
-                    path: manifest.wasm_path.clone(),
-                    message: e.to_string(),
-                })?;
-
-            let wasm_hash = Sha256::digest(&wasm_bytes);
-            hasher.update(wasm_hash);
-        } else {
-            // For manifests without WASM yet, use the path
-            hasher.update(manifest.wasm_path.to_string_lossy().as_bytes());
-        }
-
-        let result = hasher.finalize();
-        Ok(hex::encode(result))
-    }
-
-    /// Sign a manifest (returns the signature to be added to the manifest)
-    pub fn sign_manifest(&self, manifest: &SkillManifest) -> Result<String, SignatureError> {
-        self.compute_signature(manifest)
-    }
-
-    /// Check if a key is trusted
-    pub fn is_key_trusted(&self, key_id: &str) -> bool {
-        self.config.trusted_keys.contains(&key_id.to_string())
-    }
-
-    /// Get the configuration
-    pub fn config(&self) -> &SignatureConfig {
-        &self.config
-    }
-}
-
-impl Default for SkillSignatureVerifier {
-    fn default() -> Self {
-        Self::strict()
-    }
-}
-
 /// Registry for managing loaded skills
 ///
 /// The registry maintains a collection of loaded skill manifests,
@@ -612,6 +439,10 @@ pub struct SkillRegistry {
 
     /// Map from skill name to SkillId for name-based lookup
     name_index: HashMap<String, SkillId>,
+
+    /// SHA-256 of the module each skill was verified with at load. Only
+    /// these bytes may run under the skill's name.
+    module_digests: HashMap<SkillId, [u8; 32]>,
 
     /// Optional signature verifier for SBX-002
     signature_verifier: Option<SkillSignatureVerifier>,
@@ -643,6 +474,7 @@ impl SkillRegistry {
             skills_directory,
             skills: HashMap::new(),
             name_index: HashMap::new(),
+            module_digests: HashMap::new(),
             signature_verifier: Some(SkillSignatureVerifier::new(signature_config)),
         }
     }
@@ -661,6 +493,7 @@ impl SkillRegistry {
             skills_directory,
             skills: HashMap::new(),
             name_index: HashMap::new(),
+            module_digests: HashMap::new(),
             signature_verifier: Some(verifier),
         }
     }
@@ -670,7 +503,9 @@ impl SkillRegistry {
         self.signature_verifier = Some(verifier);
     }
 
-    /// Disable signature verification
+    /// Disable signature verification: skills load without any signature
+    /// check, signed or not. Each is still pinned to the module it was
+    /// loaded with.
     pub fn disable_signature_verification(&mut self) {
         self.signature_verifier = None;
     }
@@ -680,11 +515,12 @@ impl SkillRegistry {
         self.signature_verifier.is_some()
     }
 
-    /// Verify a skill's signature (returns error if verification is required and fails)
+    /// Verify a skill's signature against the module at its `wasm_path`.
+    /// `Ok(None)` means verification is disabled.
     pub fn verify_skill_signature(
         &self,
         manifest: &SkillManifest,
-    ) -> Result<Option<SignatureVerificationResult>, SignatureError> {
+    ) -> Result<Option<VerifiedSkill>, SignatureError> {
         match &self.signature_verifier {
             Some(verifier) => Ok(Some(verifier.verify_skill(manifest)?)),
             None => Ok(None),
@@ -708,35 +544,40 @@ impl SkillRegistry {
         let manifest = SkillManifest::from_file(manifest_path)?;
         manifest.validate()?;
 
+        // Read the module once: these exact bytes are what gets verified,
+        // and their digest is what the skill is pinned to.
+        let module = read_module(&manifest.wasm_path).map_err(|e| RegistryError::IoError {
+            path: manifest.wasm_path.clone(),
+            message: e.to_string(),
+        })?;
+        let digest = module_digest(&module);
+
         // Verify signature if enabled
         if let Some(verifier) = &self.signature_verifier {
-            let result =
-                verifier
-                    .verify_skill(&manifest)
-                    .map_err(|e| RegistryError::ValidationError {
-                        field: "signature".to_string(),
-                        message: e.to_string(),
-                    })?;
-
-            if !result.valid {
-                return Err(RegistryError::ValidationError {
+            let verified = verifier.verify(&manifest, &digest).map_err(|e| {
+                RegistryError::ValidationError {
                     field: "signature".to_string(),
-                    message: result.details,
-                });
-            }
+                    message: e.to_string(),
+                }
+            })?;
 
-            if result.expected_signature.is_none() {
-                warn!(
+            match &verified.signed_by {
+                Some(publisher) => info!(
+                    skill = %manifest.name,
+                    publisher = %publisher,
+                    module_sha256 = %hex::encode(digest),
+                    "Skill signature verified"
+                ),
+                None => warn!(
                     skill = %manifest.name,
                     "Loaded unsigned skill (explicitly allowed by configuration)"
-                );
-            } else {
-                info!(
-                    skill = %manifest.name,
-                    computed = %result.computed_signature,
-                    "Skill signature verified"
-                );
+                ),
             }
+        } else {
+            warn!(
+                skill = %manifest.name,
+                "Loaded skill with signature verification disabled"
+            );
         }
 
         // Check for duplicate
@@ -750,6 +591,7 @@ impl SkillRegistry {
         let id = SkillId::new();
         self.name_index.insert(manifest.name.clone(), id);
         self.skills.insert(id, manifest);
+        self.module_digests.insert(id, digest);
 
         Ok(id)
     }
@@ -823,6 +665,15 @@ impl SkillRegistry {
     /// * A reference to the manifest, or None if not found
     pub fn get_skill_by_name(&self, name: &str) -> Option<&SkillManifest> {
         self.name_index.get(name).and_then(|id| self.skills.get(id))
+    }
+
+    /// The SHA-256 of the module a skill was verified with at load. Run only
+    /// a module with this digest under the skill's name.
+    pub fn module_digest(&self, name: &str) -> Option<[u8; 32]> {
+        self.name_index
+            .get(name)
+            .and_then(|id| self.module_digests.get(id))
+            .copied()
     }
 
     /// Get the SkillId for a skill by name
@@ -959,6 +810,7 @@ impl SkillRegistry {
     pub fn unload_skill(&mut self, id: &SkillId) -> bool {
         if let Some(manifest) = self.skills.remove(id) {
             self.name_index.remove(&manifest.name);
+            self.module_digests.remove(id);
             true
         } else {
             false
@@ -969,6 +821,7 @@ impl SkillRegistry {
     pub fn clear(&mut self) {
         self.skills.clear();
         self.name_index.clear();
+        self.module_digests.clear();
     }
 }
 
@@ -978,10 +831,15 @@ mod tests {
     use std::io::Write;
     use tempfile::TempDir;
 
+    /// Writes a manifest, and a module at the path it names: a skill without
+    /// its module can't be loaded.
     fn create_test_manifest(dir: &Path, name: &str, content: &str) -> PathBuf {
         let path = dir.join(format!("{}.yaml", name));
         let mut file = std::fs::File::create(&path).unwrap();
         file.write_all(content.as_bytes()).unwrap();
+        if let Ok(manifest) = SkillManifest::from_file(&path) {
+            std::fs::write(&manifest.wasm_path, b"(module)").unwrap();
+        }
         path
     }
 
@@ -1248,6 +1106,7 @@ wasm_path: "./test.wasm"
         let yml_content = sample_manifest_yaml().replace("calculator", "skill3");
         let yml_path = temp_dir.path().join("skill3.yml");
         std::fs::write(&yml_path, yml_content).unwrap();
+        std::fs::write(temp_dir.path().join("skill3.wasm"), b"(module)").unwrap();
 
         let mut registry = permissive_registry(temp_dir.path());
         let ids = registry.load_all_skills().unwrap();
@@ -1561,6 +1420,7 @@ wasm_path: "./test.wasm"
             input_schema: serde_json::json!({ "type": "object" }),
             output_schema: serde_json::json!({ "type": "object" }),
             wasm_path: PathBuf::from("./test.wasm"),
+            signed_by: None,
             signature: None,
         };
 
@@ -1613,11 +1473,8 @@ wasm_path: "./test.wasm"
         assert!(config.allow_unsigned_in_dev);
     }
 
-    #[test]
-    fn test_signature_verifier_permissive_unsigned() {
-        let verifier = SkillSignatureVerifier::permissive();
-
-        let manifest = SkillManifest {
+    fn unsigned_manifest(wasm_path: PathBuf) -> SkillManifest {
+        SkillManifest {
             name: "test".to_string(),
             version: "1.0.0".to_string(),
             description: "Test skill".to_string(),
@@ -1625,162 +1482,111 @@ wasm_path: "./test.wasm"
             permissions: SkillPermissions::default(),
             input_schema: serde_json::json!({}),
             output_schema: serde_json::json!({}),
-            wasm_path: PathBuf::from("./test.wasm"),
+            wasm_path,
+            signed_by: None,
             signature: None,
-        };
+        }
+    }
 
-        let result = verifier.verify_skill(&manifest).unwrap();
-        assert!(result.valid);
-        assert!(result.expected_signature.is_none());
+    fn publisher() -> ed25519_dalek::SigningKey {
+        ed25519_dalek::SigningKey::from_bytes(&[9u8; 32])
+    }
+
+    fn publisher_hex() -> String {
+        hex::encode(publisher().verifying_key().to_bytes())
+    }
+
+    /// Writes `module` and a manifest for it signed by [`publisher`], and
+    /// returns the manifest's path.
+    fn write_signed_skill(dir: &Path, module: &[u8]) -> PathBuf {
+        let wasm = dir.join("test.wasm");
+        std::fs::write(&wasm, module).unwrap();
+        let mut manifest = unsigned_manifest(PathBuf::from("test.wasm"));
+        super::super::signing::sign_skill(&mut manifest, module, &publisher()).unwrap();
+        let path = dir.join("test.yaml");
+        std::fs::write(&path, serde_yaml::to_string(&manifest).unwrap()).unwrap();
+        path
+    }
+
+    fn trusting_registry(dir: &Path) -> SkillRegistry {
+        SkillRegistry::new_with_signature_config(
+            dir.to_path_buf(),
+            SignatureConfig::strict().with_trusted_key(publisher_hex()),
+        )
+    }
+
+    #[test]
+    fn test_signature_verifier_permissive_unsigned() {
+        let manifest = unsigned_manifest(PathBuf::from("./test.wasm"));
+        let verified = SkillSignatureVerifier::permissive()
+            .verify(&manifest, &module_digest(b"(module)"))
+            .unwrap();
+        assert!(verified.signed_by.is_none());
     }
 
     #[test]
     fn test_signature_verifier_strict_requires_signature() {
-        let verifier = SkillSignatureVerifier::strict();
-
-        let manifest = SkillManifest {
-            name: "test".to_string(),
-            version: "1.0.0".to_string(),
-            description: "Test skill".to_string(),
-            author: None,
-            permissions: SkillPermissions::default(),
-            input_schema: serde_json::json!({}),
-            output_schema: serde_json::json!({}),
-            wasm_path: PathBuf::from("./test.wasm"),
-            signature: None,
-        };
-
-        let result = verifier.verify_skill(&manifest);
+        let manifest = unsigned_manifest(PathBuf::from("./test.wasm"));
         assert!(matches!(
-            result,
+            SkillSignatureVerifier::strict().verify(&manifest, &module_digest(b"(module)")),
             Err(SignatureError::SignatureRequired { .. })
         ));
     }
 
     #[test]
-    fn test_signature_computation_deterministic() {
-        let verifier = SkillSignatureVerifier::permissive();
+    fn test_registry_loads_skill_signed_by_trusted_key() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_signed_skill(temp_dir.path(), b"(module)");
 
-        let manifest = SkillManifest {
-            name: "test".to_string(),
-            version: "1.0.0".to_string(),
-            description: "Test skill".to_string(),
-            author: None,
-            permissions: SkillPermissions::default(),
-            input_schema: serde_json::json!({}),
-            output_schema: serde_json::json!({}),
-            wasm_path: PathBuf::from("./test.wasm"),
-            signature: None,
-        };
-
-        let sig1 = verifier.compute_signature(&manifest).unwrap();
-        let sig2 = verifier.compute_signature(&manifest).unwrap();
-
-        assert_eq!(sig1, sig2);
-        assert!(!sig1.is_empty());
+        let mut registry = trusting_registry(temp_dir.path());
+        registry.load_skill(&path).unwrap();
+        assert_eq!(
+            registry.module_digest("test"),
+            Some(module_digest(b"(module)"))
+        );
     }
 
     #[test]
-    fn test_signature_changes_with_content() {
-        let verifier = SkillSignatureVerifier::permissive();
+    fn test_registry_refuses_untrusted_or_tampered_skills() {
+        // Signed, but by a key the registry doesn't trust.
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_signed_skill(temp_dir.path(), b"(module)");
+        let mut strict = SkillRegistry::new(temp_dir.path().to_path_buf());
+        assert!(matches!(
+            strict.load_skill(&path),
+            Err(RegistryError::ValidationError { field, message })
+                if field == "signature" && message.contains("not in the trusted key set")
+        ));
 
-        let manifest1 = SkillManifest {
-            name: "test1".to_string(),
-            version: "1.0.0".to_string(),
-            description: "Test skill".to_string(),
-            author: None,
-            permissions: SkillPermissions::default(),
-            input_schema: serde_json::json!({}),
-            output_schema: serde_json::json!({}),
-            wasm_path: PathBuf::from("./test.wasm"),
-            signature: None,
-        };
-
-        let manifest2 = SkillManifest {
-            name: "test2".to_string(), // Different name
-            version: "1.0.0".to_string(),
-            description: "Test skill".to_string(),
-            author: None,
-            permissions: SkillPermissions::default(),
-            input_schema: serde_json::json!({}),
-            output_schema: serde_json::json!({}),
-            wasm_path: PathBuf::from("./test.wasm"),
-            signature: None,
-        };
-
-        let sig1 = verifier.compute_signature(&manifest1).unwrap();
-        let sig2 = verifier.compute_signature(&manifest2).unwrap();
-
-        assert_ne!(sig1, sig2);
+        // The module replaced after signing.
+        std::fs::write(temp_dir.path().join("test.wasm"), b"(module (func))").unwrap();
+        let mut registry = trusting_registry(temp_dir.path());
+        assert!(matches!(
+            registry.load_skill(&path),
+            Err(RegistryError::ValidationError { field, .. }) if field == "signature"
+        ));
+        assert_eq!(registry.skill_count(), 0);
     }
 
     #[test]
-    fn test_signature_verification_valid() {
-        let verifier = SkillSignatureVerifier::permissive();
-
-        let mut manifest = SkillManifest {
-            name: "test".to_string(),
-            version: "1.0.0".to_string(),
-            description: "Test skill".to_string(),
-            author: None,
-            permissions: SkillPermissions::default(),
-            input_schema: serde_json::json!({}),
-            output_schema: serde_json::json!({}),
-            wasm_path: PathBuf::from("./test.wasm"),
-            signature: None,
-        };
-
-        // Sign the manifest
-        let signature = verifier.sign_manifest(&manifest).unwrap();
-        manifest.signature = Some(signature.clone());
-
-        // Verify
-        let result = verifier.verify_skill(&manifest).unwrap();
-        assert!(result.valid);
-        assert_eq!(result.expected_signature, Some(signature));
+    fn test_registry_refuses_skill_without_module() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_signed_skill(temp_dir.path(), b"(module)");
+        std::fs::remove_file(temp_dir.path().join("test.wasm")).unwrap();
+        assert!(matches!(
+            trusting_registry(temp_dir.path()).load_skill(&path),
+            Err(RegistryError::IoError { .. })
+        ));
     }
 
     #[test]
-    fn test_signature_verification_tampered() {
-        let verifier = SkillSignatureVerifier::permissive();
-
-        let mut manifest = SkillManifest {
-            name: "test".to_string(),
-            version: "1.0.0".to_string(),
-            description: "Test skill".to_string(),
-            author: None,
-            permissions: SkillPermissions::default(),
-            input_schema: serde_json::json!({}),
-            output_schema: serde_json::json!({}),
-            wasm_path: PathBuf::from("./test.wasm"),
-            signature: None,
-        };
-
-        // Sign the manifest
-        let signature = verifier.sign_manifest(&manifest).unwrap();
-        manifest.signature = Some(signature);
-
-        // Tamper with the manifest
-        manifest.description = "Tampered description".to_string();
-
-        // Verify should fail
-        let result = verifier.verify_skill(&manifest).unwrap();
-        assert!(!result.valid);
-    }
-
-    #[test]
-    fn test_signature_verification_result_display() {
-        let result = SignatureVerificationResult::success("abc123", "abc123");
-        assert!(result.valid);
-        assert_eq!(result.computed_signature, "abc123");
-
-        let result = SignatureVerificationResult::failure("abc", "def", "Mismatch");
-        assert!(!result.valid);
-        assert!(result.details.contains("Mismatch"));
-
-        let result = SignatureVerificationResult::unsigned_allowed();
-        assert!(result.valid);
-        assert!(result.expected_signature.is_none());
+    fn test_unload_forgets_the_pinned_digest() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = write_signed_skill(temp_dir.path(), b"(module)");
+        let mut registry = trusting_registry(temp_dir.path());
+        let id = registry.load_skill(&path).unwrap();
+        assert!(registry.unload_skill(&id));
+        assert!(registry.module_digest("test").is_none());
     }
 
     #[test]
@@ -1797,8 +1603,7 @@ wasm_path: "./test.wasm"
 
         let err = SignatureError::VerificationFailed {
             skill_name: "test".to_string(),
-            computed: "abc".to_string(),
-            expected: "def".to_string(),
+            reason: "does not cover this module".to_string(),
         };
         assert!(err.to_string().contains("verification failed"));
     }
@@ -1820,34 +1625,28 @@ wasm_path: "./test.wasm"
     #[test]
     fn test_registry_verify_skill_signature() {
         let temp_dir = TempDir::new().unwrap();
-        let verifier = SkillSignatureVerifier::permissive();
+        let wasm = temp_dir.path().join("test.wasm");
+        std::fs::write(&wasm, b"(module)").unwrap();
 
-        let registry =
-            SkillRegistry::with_signature_verification(temp_dir.path().to_path_buf(), verifier);
-
-        let manifest = SkillManifest {
-            name: "test".to_string(),
-            version: "1.0.0".to_string(),
-            description: "Test skill".to_string(),
-            author: None,
-            permissions: SkillPermissions::default(),
-            input_schema: serde_json::json!({}),
-            output_schema: serde_json::json!({}),
-            wasm_path: PathBuf::from("./test.wasm"),
-            signature: None,
-        };
-
-        let result = registry.verify_skill_signature(&manifest).unwrap();
-        assert!(result.is_some());
-        assert!(result.unwrap().valid);
+        let registry = SkillRegistry::with_signature_verification(
+            temp_dir.path().to_path_buf(),
+            SkillSignatureVerifier::permissive(),
+        );
+        let verified = registry
+            .verify_skill_signature(&unsigned_manifest(wasm))
+            .unwrap()
+            .unwrap();
+        assert_eq!(verified.module_sha256, module_digest(b"(module)"));
     }
 
     #[test]
     fn test_is_key_trusted() {
-        let config = SignatureConfig::default().with_trusted_key("trusted_key_123");
+        let config = SignatureConfig::default().with_trusted_key(publisher_hex());
         let verifier = SkillSignatureVerifier::new(config);
 
-        assert!(verifier.is_key_trusted("trusted_key_123"));
+        assert!(verifier.is_key_trusted(&publisher_hex()));
+        let stranger = ed25519_dalek::SigningKey::from_bytes(&[3u8; 32]);
+        assert!(!verifier.is_key_trusted(&hex::encode(stranger.verifying_key().to_bytes())));
         assert!(!verifier.is_key_trusted("untrusted_key"));
     }
 }

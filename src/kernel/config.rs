@@ -123,8 +123,15 @@ impl KernelConfig {
     /// Returns an error if:
     /// - `max_concurrent_agents` is 0
     /// - `max_execution_time` is 0
-    /// - Policy paths don't exist (if specified)
+    /// - `policy.format` is `cedar` in a build without the `cedar` feature
     pub fn validate(&self) -> Result<(), KernelError> {
+        if self.policy.format == PolicyFormat::Cedar && !cfg!(feature = "cedar") {
+            return Err(KernelError::InvalidConfiguration {
+                message: "policy.format is cedar, but this build of vak lacks the `cedar` feature"
+                    .to_string(),
+            });
+        }
+
         if self.max_concurrent_agents == 0 {
             return Err(KernelError::InvalidConfiguration {
                 message: "max_concurrent_agents must be greater than 0".to_string(),
@@ -230,91 +237,99 @@ impl KernelConfig {
         let mut config = Self::default();
 
         // Load top-level settings
-        if let Ok(name) = std::env::var("VAK_NAME") {
+        if let Some(name) = env_var("VAK_NAME") {
             config.name = name;
         }
-
-        if let Ok(max_agents) = std::env::var("VAK_MAX_CONCURRENT_AGENTS") {
-            if let Ok(n) = max_agents.parse() {
-                config.max_concurrent_agents = n;
-            }
+        if let Some(n) = env_parse("VAK_MAX_CONCURRENT_AGENTS") {
+            config.max_concurrent_agents = n;
         }
-
-        if let Ok(max_exec_secs) = std::env::var("VAK_MAX_EXECUTION_TIME_SECS") {
-            if let Ok(secs) = max_exec_secs.parse() {
-                config.max_execution_time = Duration::from_secs(secs);
-            }
+        if let Some(secs) = env_parse("VAK_MAX_EXECUTION_TIME_SECS") {
+            config.max_execution_time = Duration::from_secs(secs);
         }
 
         // Load security settings
-        if let Ok(sandboxing) = std::env::var("VAK_SECURITY__ENABLE_SANDBOXING") {
-            config.security.enable_sandboxing = sandboxing.to_lowercase() == "true";
+        if let Some(on) = env_bool("VAK_SECURITY__ENABLE_SANDBOXING") {
+            config.security.enable_sandboxing = on;
         }
-
-        if let Ok(signed_requests) = std::env::var("VAK_SECURITY__REQUIRE_SIGNED_REQUESTS") {
-            config.security.require_signed_requests = signed_requests.to_lowercase() == "true";
+        if let Some(on) = env_bool("VAK_SECURITY__REQUIRE_SIGNED_REQUESTS") {
+            config.security.require_signed_requests = on;
         }
-
-        if let Ok(rate_limiting) = std::env::var("VAK_SECURITY__ENABLE_RATE_LIMITING") {
-            config.security.enable_rate_limiting = rate_limiting.to_lowercase() == "true";
+        if let Some(on) = env_bool("VAK_SECURITY__ENABLE_RATE_LIMITING") {
+            config.security.enable_rate_limiting = on;
         }
-
-        if let Ok(rate_limit) = std::env::var("VAK_SECURITY__MAX_REQUESTS_PER_MINUTE") {
-            if let Ok(n) = rate_limit.parse() {
-                config.security.max_requests_per_minute = n;
-            }
+        if let Some(n) = env_parse("VAK_SECURITY__MAX_REQUESTS_PER_MINUTE") {
+            config.security.max_requests_per_minute = n;
         }
 
         // Load audit settings
-        if let Ok(audit_enabled) = std::env::var("VAK_AUDIT__ENABLED") {
-            config.audit.enabled = audit_enabled.to_lowercase() == "true";
+        if let Some(on) = env_bool("VAK_AUDIT__ENABLED") {
+            config.audit.enabled = on;
         }
-
-        if let Ok(include_bodies) = std::env::var("VAK_AUDIT__INCLUDE_BODIES") {
-            config.audit.include_bodies = include_bodies.to_lowercase() == "true";
+        if let Some(on) = env_bool("VAK_AUDIT__INCLUDE_BODIES") {
+            config.audit.include_bodies = on;
         }
-
-        if let Ok(log_path) = std::env::var("VAK_AUDIT__LOG_PATH") {
+        if let Some(log_path) = env_var("VAK_AUDIT__LOG_PATH") {
             config.audit.log_path = Some(PathBuf::from(log_path));
+        }
+        if let Some(format) = env_var("VAK_AUDIT__FORMAT") {
+            config.audit.format = match format.to_lowercase().as_str() {
+                "sqlite" => AuditLogFormat::Sqlite,
+                _ => AuditLogFormat::Jsonl,
+            };
         }
 
         // Load policy settings
-        if let Ok(policy_enabled) = std::env::var("VAK_POLICY__ENABLED") {
-            config.policy.enabled = policy_enabled.to_lowercase() == "true";
+        if let Some(on) = env_bool("VAK_POLICY__ENABLED") {
+            config.policy.enabled = on;
         }
-
-        if let Ok(default_decision) = std::env::var("VAK_POLICY__DEFAULT_DECISION") {
+        if let Some(default_decision) = env_var("VAK_POLICY__DEFAULT_DECISION") {
             config.policy.default_decision = match default_decision.to_lowercase().as_str() {
                 "allow" => DefaultPolicyDecision::Allow,
                 _ => DefaultPolicyDecision::Deny,
             };
         }
-
-        if let Ok(caching) = std::env::var("VAK_POLICY__ENABLE_CACHING") {
-            config.policy.enable_caching = caching.to_lowercase() == "true";
+        if let Some(format) = env_var("VAK_POLICY__FORMAT") {
+            config.policy.format = match format.to_lowercase().as_str() {
+                "cedar" => PolicyFormat::Cedar,
+                _ => PolicyFormat::Yaml,
+            };
+        }
+        if let Some(schema) = env_var("VAK_POLICY__CEDAR_SCHEMA") {
+            config.policy.cedar_schema = Some(PathBuf::from(schema));
+        }
+        if let Some(on) = env_bool("VAK_POLICY__ENABLE_CACHING") {
+            config.policy.enable_caching = on;
         }
 
         // Load resource limits
-        if let Ok(max_memory) = std::env::var("VAK_RESOURCES__MAX_MEMORY_MB") {
-            if let Ok(n) = max_memory.parse() {
-                config.resources.max_memory_mb = n;
-            }
+        if let Some(n) = env_parse("VAK_RESOURCES__MAX_MEMORY_MB") {
+            config.resources.max_memory_mb = n;
         }
-
-        if let Ok(max_cpu) = std::env::var("VAK_RESOURCES__MAX_CPU_TIME_MS") {
-            if let Ok(n) = max_cpu.parse() {
-                config.resources.max_cpu_time_ms = n;
-            }
+        if let Some(n) = env_parse("VAK_RESOURCES__MAX_CPU_TIME_MS") {
+            config.resources.max_cpu_time_ms = n;
         }
-
-        if let Ok(max_connections) = std::env::var("VAK_RESOURCES__MAX_CONNECTIONS") {
-            if let Ok(n) = max_connections.parse() {
-                config.resources.max_connections = n;
-            }
+        if let Some(n) = env_parse("VAK_RESOURCES__MAX_CONNECTIONS") {
+            config.resources.max_connections = n;
         }
 
         config
     }
+}
+
+/// The environment variable `name`, if it is set to valid Unicode.
+fn env_var(name: &str) -> Option<String> {
+    std::env::var(name).ok()
+}
+
+/// `true` if `name` is set to "true" in any case, `false` if it is set to
+/// anything else, and `None` if it is unset.
+fn env_bool(name: &str) -> Option<bool> {
+    env_var(name).map(|value| value.to_lowercase() == "true")
+}
+
+/// `name`'s value parsed as `T`, if it is set and parses.
+fn env_parse<T: std::str::FromStr>(name: &str) -> Option<T> {
+    env_var(name)?.parse().ok()
 }
 
 /// Builder for `KernelConfig`.
@@ -424,6 +439,32 @@ pub struct SecurityConfig {
     /// Maximum requests per minute per agent.
     #[serde(default = "default_rate_limit")]
     pub max_requests_per_minute: u32,
+
+    /// Whether agents must be registered before they may act.
+    ///
+    /// When `false`, an agent the registry doesn't know is admitted with an
+    /// anonymous record (not internal, no attributes), and policy decides.
+    /// When `true`, it is refused with `AgentNotFound`. Recommended for
+    /// production; off by default for compatibility.
+    #[serde(default)]
+    pub require_registered_agents: bool,
+
+    /// Directory of WASM skill manifests. Unset: `VAK_SKILLS_PATH`, else
+    /// `.github/skills`, else `skills`.
+    #[serde(default)]
+    pub skills_path: Option<PathBuf>,
+
+    /// Publishers whose skills the kernel loads: hex Ed25519 public keys.
+    /// Every skill must be signed by one of them, unless
+    /// `allow_unsigned_skills` is set. Empty means no signed skill loads.
+    #[serde(default)]
+    pub trusted_skill_keys: Vec<String>,
+
+    /// Load skills that carry no signature. For development only: an
+    /// unsigned skill is code nobody vouched for. A skill that carries a bad
+    /// signature is refused either way.
+    #[serde(default)]
+    pub allow_unsigned_skills: bool,
 }
 
 fn default_true() -> bool {
@@ -450,14 +491,22 @@ impl Default for SecurityConfig {
             blocked_tools: Vec::new(),
             enable_rate_limiting: true,
             max_requests_per_minute: default_rate_limit(),
+            require_registered_agents: false,
+            skills_path: None,
+            trusted_skill_keys: Vec::new(),
+            allow_unsigned_skills: false,
         }
     }
 }
 
 /// Audit logging configuration.
+///
+/// The kernel records every decision and outcome whatever these settings say
+/// (`docs/adr/0007`); they choose where the record is kept.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditConfig {
-    /// Whether audit logging is enabled.
+    /// Reported in the kernel's status. The kernel records every request
+    /// either way: a reference monitor can't run unaudited.
     #[serde(default = "default_true")]
     pub enabled: bool,
 
@@ -465,21 +514,40 @@ pub struct AuditConfig {
     #[serde(default = "default_log_level")]
     pub log_level: LogLevel,
 
-    /// Path to store audit logs.
+    /// Where the kernel's audit log is kept. When unset, the log is in
+    /// memory and lost on exit.
     #[serde(default)]
     pub log_path: Option<PathBuf>,
+
+    /// How the log at `log_path` is stored. Ignored when `log_path` is unset.
+    #[serde(default)]
+    pub format: AuditLogFormat,
 
     /// Whether to include request/response bodies in audit logs.
     #[serde(default)]
     pub include_bodies: bool,
 
-    /// Maximum size of the audit log before rotation (in bytes).
+    /// Not applied to the kernel's audit log, which is append-only: deleting
+    /// old entries would invalidate the proofs already handed out for them.
     #[serde(default = "default_max_log_size")]
     pub max_log_size_bytes: u64,
 
-    /// Number of rotated log files to keep.
+    /// Not applied to the kernel's audit log; see `max_log_size_bytes`.
     #[serde(default = "default_log_retention")]
     pub retention_count: u32,
+}
+
+/// How the kernel's durable audit log is stored (`audit.format`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AuditLogFormat {
+    /// One JSON entry per line, in an append-only file
+    /// ([`FileAuditLog`](super::FileAuditLog)).
+    #[default]
+    Jsonl,
+    /// A SQLite database ([`SqliteAuditLog`](super::SqliteAuditLog)): each
+    /// append is a transaction, so a crash can't leave a torn entry.
+    Sqlite,
 }
 
 fn default_log_level() -> LogLevel {
@@ -500,6 +568,7 @@ impl Default for AuditConfig {
             enabled: true,
             log_level: LogLevel::Info,
             log_path: None,
+            format: AuditLogFormat::default(),
             include_bodies: false,
             max_log_size_bytes: default_max_log_size(),
             retention_count: default_log_retention(),
@@ -536,9 +605,20 @@ pub struct PolicyConfig {
     #[serde(default)]
     pub default_decision: DefaultPolicyDecision,
 
-    /// Paths to policy definition files.
+    /// Paths to policy definition files. With `format: cedar`, a directory
+    /// contributes every `*.cedar` file directly in it.
     #[serde(default)]
     pub policy_paths: Vec<PathBuf>,
+
+    /// The language of the files in `policy_paths`.
+    #[serde(default)]
+    pub format: PolicyFormat,
+
+    /// With `format: cedar`, the Cedar schema to validate policies and
+    /// requests against. Unset means the kernel's own schema
+    /// (`policies/cedar/vak.cedarschema`).
+    #[serde(default)]
+    pub cedar_schema: Option<PathBuf>,
 
     /// Whether to enable policy caching.
     #[serde(default = "default_true")]
@@ -559,10 +639,24 @@ impl Default for PolicyConfig {
             enabled: true,
             default_decision: DefaultPolicyDecision::Deny,
             policy_paths: Vec::new(),
+            format: PolicyFormat::default(),
+            cedar_schema: None,
             enable_caching: true,
             cache_ttl_seconds: default_cache_ttl(),
         }
     }
+}
+
+/// The language of policy files (`policy.format`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PolicyFormat {
+    /// Cedar-style YAML rules, decided by `CedarEnforcer` (docs/adr/0001).
+    #[default]
+    Yaml,
+    /// Cedar, decided by the `cedar-policy` crate (docs/adr/0008). Needs the
+    /// `cedar` feature.
+    Cedar,
 }
 
 /// Default policy decision when no policy matches.
@@ -660,8 +754,10 @@ mod tests {
 
     #[test]
     fn test_invalid_config() {
-        let mut config = KernelConfig::default();
-        config.max_concurrent_agents = 0;
+        let config = KernelConfig {
+            max_concurrent_agents: 0,
+            ..KernelConfig::default()
+        };
         assert!(config.validate().is_err());
     }
 

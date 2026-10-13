@@ -41,7 +41,10 @@ use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::sync::RwLock;
+// A lock is poisoned only if a thread panicked while holding it. These locks
+// guard plain collections, so the data stays usable: recover the guard rather
+// than spread the panic to every later caller.
+use std::sync::{PoisonError, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tracing::info;
@@ -358,18 +361,20 @@ impl CryptoReceipt {
             Err(_) => return false,
         };
 
-        // Parse public key
-        let verifying_key =
-            match VerifyingKey::from_bytes(pk_bytes.as_slice().try_into().unwrap_or(&[0u8; 32])) {
-                Ok(key) => key,
-                Err(_) => return false,
-            };
-
-        // Parse signature
-        let signature =
-            match Signature::from_bytes(sig_bytes.as_slice().try_into().unwrap_or(&[0u8; 64])) {
-                sig => sig,
-            };
+        // A key or signature of the wrong length fails verification. It
+        // used to be replaced with zero bytes, and an all-zero key is a
+        // small-order point that non-strict verification can be forged
+        // against.
+        let Ok(pk_bytes) = <&[u8; 32]>::try_from(pk_bytes.as_slice()) else {
+            return false;
+        };
+        let Ok(sig_bytes) = <&[u8; 64]>::try_from(sig_bytes.as_slice()) else {
+            return false;
+        };
+        let Ok(verifying_key) = VerifyingKey::from_bytes(pk_bytes) else {
+            return false;
+        };
+        let signature = Signature::from_bytes(sig_bytes);
 
         // Verify signature over root hash
         verifying_key
@@ -464,8 +469,9 @@ impl ReceiptBuilder {
 
         self.sequence += 1;
         let step = ExecutionStep::new(self.sequence, step_type, content, prev_hash);
+        let at = self.steps.len();
         self.steps.push(step);
-        self.steps.last().unwrap()
+        &self.steps[at]
     }
 
     fn current_hash(&self) -> String {
@@ -527,7 +533,10 @@ impl ReceiptGenerator {
         }
 
         let session_id = session_id.into();
-        let mut builders = self.builders.write().unwrap();
+        let mut builders = self
+            .builders
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
 
         if builders.contains_key(&session_id) {
             return Err(ReceiptError::AlreadyFinalized(session_id));
@@ -572,7 +581,10 @@ impl ReceiptGenerator {
         }
 
         let session_key = format!("{}:{}", agent_id, session_id);
-        let mut builders = self.builders.write().unwrap();
+        let mut builders = self
+            .builders
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
 
         // Auto-start receipt if not exists
         if !builders.contains_key(&session_key) {
@@ -619,7 +631,10 @@ impl ReceiptGenerator {
 
         // Update the step with input/output hashes
         let session_key = format!("{}:{}", agent_id, session_id);
-        let mut builders = self.builders.write().unwrap();
+        let mut builders = self
+            .builders
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
         if let Some(builder) = builders.get_mut(&session_key) {
             if let Some(step) = builder.steps.last_mut() {
                 if let Some(ih) = input_hash {
@@ -651,7 +666,10 @@ impl ReceiptGenerator {
 
         // Update success status
         let session_key = format!("{}:{}", agent_id, session_id);
-        let mut builders = self.builders.write().unwrap();
+        let mut builders = self
+            .builders
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
         if let Some(builder) = builders.get_mut(&session_key) {
             if let Some(step) = builder.steps.last_mut() {
                 step.success = allowed;
@@ -674,7 +692,10 @@ impl ReceiptGenerator {
         }
 
         let session_key = format!("{}:{}", agent_id, session_id);
-        let mut builders = self.builders.write().unwrap();
+        let mut builders = self
+            .builders
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
 
         // Auto-start receipt if not exists
         if !builders.contains_key(&session_key) {
@@ -708,7 +729,10 @@ impl ReceiptGenerator {
         }
 
         let session_key = format!("{}:{}", agent_id, session_id);
-        let mut builders = self.builders.write().unwrap();
+        let mut builders = self
+            .builders
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
 
         let builder = builders
             .remove(&session_key)
@@ -751,14 +775,14 @@ impl ReceiptGenerator {
     /// Get current hash for a session (without finalizing)
     pub fn get_current_hash(&self, agent_id: &str, session_id: &str) -> Option<String> {
         let session_key = format!("{}:{}", agent_id, session_id);
-        let builders = self.builders.read().unwrap();
+        let builders = self.builders.read().unwrap_or_else(PoisonError::into_inner);
         builders.get(&session_key).map(|b| b.current_hash())
     }
 
     /// Check if a session has an active receipt
     pub fn has_active_receipt(&self, agent_id: &str, session_id: &str) -> bool {
         let session_key = format!("{}:{}", agent_id, session_id);
-        let builders = self.builders.read().unwrap();
+        let builders = self.builders.read().unwrap_or_else(PoisonError::into_inner);
         builders.contains_key(&session_key)
     }
 
@@ -856,6 +880,38 @@ mod tests {
         assert!(receipt.signature.is_some());
         assert!(receipt.public_key.is_some());
         assert!(receipt.verify_signature());
+    }
+
+    #[test]
+    fn test_a_key_or_signature_of_the_wrong_length_fails() {
+        let config = ReceiptConfig {
+            sign_receipts: true,
+            ..Default::default()
+        };
+        let generator = ReceiptGenerator::new(config);
+        generator
+            .start_receipt("agent-1", "session-1", "initial")
+            .unwrap();
+        generator
+            .add_observation("agent-1", "session-1", "test")
+            .unwrap();
+        let receipt = generator.finalize("agent-1", "session-1").unwrap();
+        assert!(receipt.verify_signature());
+
+        // Truncated key; truncated signature; an all-zero key, the value a
+        // wrong-length key used to be replaced with.
+        let key = receipt.public_key.clone().unwrap();
+        let signature = receipt.signature.clone().unwrap();
+        for (public_key, signature) in [
+            (key[..62].to_string(), signature.clone()),
+            (key.clone(), signature[..126].to_string()),
+            ("00".repeat(32), signature),
+        ] {
+            let mut tampered = receipt.clone();
+            tampered.public_key = Some(public_key);
+            tampered.signature = Some(signature);
+            assert!(!tampered.verify_signature());
+        }
     }
 
     #[test]

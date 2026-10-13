@@ -74,6 +74,8 @@ struct CodeFinding {
     confidence: f64,
 }
 
+// The full taxonomy, though this demo's checks report only some of it.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FindingSeverity {
     Critical,
@@ -95,6 +97,7 @@ impl std::fmt::Display for FindingSeverity {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 enum FindingCategory {
     SecurityVulnerability,
@@ -123,11 +126,16 @@ struct CodeAuditor {
     config: CodeAuditorConfig,
     episodic_memory: EpisodicMemory,
     time_travel: TimeTravelManager,
+    // Built to show the subsystems wiring up; the demo's checks don't
+    // consult them yet.
+    #[allow(dead_code)]
     knowledge_graph: KnowledgeGraph,
     audit_logger: AuditLogger,
+    #[allow(dead_code)]
     policy_engine: PolicyEngine,
     constraint_verifier: ConstraintVerifier,
     prm: MockPrm,
+    #[allow(dead_code)]
     skill_registry: SkillRegistry,
     step_count: usize,
     files_analyzed: Vec<String>,
@@ -279,12 +287,14 @@ impl CodeAuditor {
         // Check if file is forbidden
         if self.is_forbidden_file(file_path) {
             // Log the denied access
-            self.audit_logger.log(
-                "code-auditor",
-                "read_file",
-                file_path,
-                AuditDecision::Denied,
-            );
+            self.audit_logger
+                .log(
+                    "code-auditor",
+                    "read_file",
+                    file_path,
+                    AuditDecision::Denied,
+                )
+                .map_err(|e| format!("audit log: {e}"))?;
             return Err(format!(
                 "Access denied: '{}' is a forbidden file",
                 file_path
@@ -292,12 +302,14 @@ impl CodeAuditor {
         }
 
         // Log the allowed access
-        self.audit_logger.log(
-            "code-auditor",
-            "read_file",
-            file_path,
-            AuditDecision::Allowed,
-        );
+        self.audit_logger
+            .log(
+                "code-auditor",
+                "read_file",
+                file_path,
+                AuditDecision::Allowed,
+            )
+            .map_err(|e| format!("audit log: {e}"))?;
 
         // Record the observation
         self.record_observation(&format!("Reading file: {}", file_path));
@@ -394,12 +406,14 @@ impl CodeAuditor {
                     ));
 
                     // Log the finding
-                    self.audit_logger.log(
-                        "code-auditor",
-                        "report_finding",
-                        format!("{}:{}", file_path, line_num + 1),
-                        AuditDecision::Allowed,
-                    );
+                    self.audit_logger
+                        .log(
+                            "code-auditor",
+                            "report_finding",
+                            format!("{}:{}", file_path, line_num + 1),
+                            AuditDecision::Allowed,
+                        )
+                        .map_err(|e| format!("audit log: {e}"))?;
                 }
             }
         }

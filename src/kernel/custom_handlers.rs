@@ -79,6 +79,10 @@ pub enum HandlerError {
     /// Policy violation
     #[error("Policy violation: {0}")]
     PolicyViolation(String),
+
+    /// A handler with this name is already registered
+    #[error("Handler already registered: {0}")]
+    AlreadyRegistered(String),
 }
 
 /// Result type for handler operations
@@ -165,8 +169,28 @@ impl CustomHandlerRegistry {
         }
     }
 
-    /// Register a custom handler
+    /// Register a custom handler, replacing any handler with the same name.
     pub async fn register<H: ToolHandler + 'static>(&self, handler: H) -> HandlerResult<()> {
+        self.insert(Arc::new(handler), true).await
+    }
+
+    /// Register a shared handler, replacing any handler with the same name.
+    pub async fn register_arc(&self, handler: Arc<dyn ToolHandler>) -> HandlerResult<()> {
+        self.insert(handler, true).await
+    }
+
+    /// Register a shared handler, failing with
+    /// [`HandlerError::AlreadyRegistered`] if the name is taken.
+    ///
+    /// The check and the insert happen under one lock, so two concurrent
+    /// registrations of the same name cannot both succeed. The kernel uses
+    /// this: silently swapping the code behind a tool name is a security
+    /// event, not a convenience.
+    pub async fn register_new(&self, handler: Arc<dyn ToolHandler>) -> HandlerResult<()> {
+        self.insert(handler, false).await
+    }
+
+    async fn insert(&self, handler: Arc<dyn ToolHandler>, replace: bool) -> HandlerResult<()> {
         let name = handler.name().to_string();
 
         let metadata = HandlerMetadata {
@@ -182,10 +206,13 @@ impl CustomHandlerRegistry {
         let mut meta_map = self.metadata.write().await;
 
         if handlers.contains_key(&name) {
+            if !replace {
+                return Err(HandlerError::AlreadyRegistered(name));
+            }
             warn!(tool = %name, "Overwriting existing handler");
         }
 
-        handlers.insert(name.clone(), Arc::new(handler));
+        handlers.insert(name.clone(), handler);
         meta_map.insert(name.clone(), metadata);
 
         info!(tool = %name, "Registered custom handler");
@@ -254,17 +281,18 @@ impl CustomHandlerRegistry {
             "Executing custom handler"
         );
 
-        // Execute with timeout
+        // Execute with the registry's timeout, or the request's if sooner.
         let handler = Arc::clone(handler);
         let call_clone = tool_call.clone();
         let agent_clone = *agent_id;
+        let limit = tool_call.time_limit(std::time::Duration::from_millis(self.default_timeout_ms));
+        let limit_ms = u64::try_from(limit.as_millis()).unwrap_or(u64::MAX);
 
-        let result = tokio::time::timeout(
-            std::time::Duration::from_millis(self.default_timeout_ms),
-            async move { handler.execute(&call_clone, &agent_clone).await },
-        )
+        let result = tokio::time::timeout(limit, async move {
+            handler.execute(&call_clone, &agent_clone).await
+        })
         .await
-        .map_err(|_| HandlerError::Timeout(self.default_timeout_ms))?;
+        .map_err(|_| HandlerError::Timeout(limit_ms))?;
 
         result
     }

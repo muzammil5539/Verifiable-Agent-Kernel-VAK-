@@ -1,9 +1,9 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use std::fs;
-use std::path::PathBuf;
-use vak::audit::{AuditBackend, AuditDecision, AuditLogger, FileAuditBackend};
+use std::path::{Path, PathBuf};
+use vak::audit::{AuditDecision, AuditLogger, FileAuditBackend};
 
-fn setup_benchmark(temp_dir: &PathBuf) -> PathBuf {
+fn setup_benchmark(temp_dir: &Path) -> PathBuf {
     let backend_path = temp_dir.join("audit_bench");
     if backend_path.exists() {
         fs::remove_dir_all(&backend_path).unwrap();
@@ -15,12 +15,14 @@ fn setup_benchmark(temp_dir: &PathBuf) -> PathBuf {
     let mut logger = AuditLogger::with_backend(Box::new(backend)).unwrap();
 
     for i in 1..=1000 {
-        logger.log(
-            format!("agent-{}", i),
-            "test",
-            "/test",
-            AuditDecision::Allowed,
-        );
+        logger
+            .log(
+                format!("agent-{}", i),
+                "test",
+                "/test",
+                AuditDecision::Allowed,
+            )
+            .unwrap();
     }
     logger.flush().unwrap();
     backend_path

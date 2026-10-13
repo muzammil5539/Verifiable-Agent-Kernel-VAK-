@@ -6,7 +6,7 @@ Thank you for your interest in contributing to the Verifiable Agent Kernel (VAK)
 
 ### Prerequisites
 
-- Rust 1.75+ (`rustup update stable`)
+- Rust 1.96+ (`rustup update stable`)
 - `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
 - Python 3.9+ (for Python bindings, optional)
 - `maturin` (`pip install maturin`, optional)
@@ -25,7 +25,7 @@ Thank you for your interest in contributing to the Verifiable Agent Kernel (VAK)
    ```
 4. Run tests:
    ```bash
-   cargo test
+   cargo test --features full
    ```
 
 ## Development Workflow
@@ -46,8 +46,8 @@ Thank you for your interest in contributing to the Verifiable Agent Kernel (VAK)
    # Or manually:
    cargo fmt --all
    cargo clippy --all-targets --all-features -- -D warnings
-   cargo test
-   cargo tarpaulin --config tarpaulin.toml --fail-under 80
+   cargo test --features full
+   make coverage-check   # cargo-llvm-cov; see docs/adr/0012
    ```
 5. Commit with a descriptive message (see commit conventions below).
 6. Push and create a pull request against `main`.
@@ -98,16 +98,16 @@ chore(deps): update wasmtime to 41.0.3
 
 ```bash
 # All Rust tests
-cargo test
+cargo test --features full
 
 # Unit tests only (fast)
-cargo test --lib
+cargo test --lib --features full
 
 # Integration tests only
-cargo test --test '*'
+cargo test --test '*' --features full
 
 # Doc tests only
-cargo test --doc
+cargo test --doc --features full
 
 # Python tests
 pytest python/tests/

@@ -66,7 +66,7 @@ use tracing::{info, instrument};
 
 use crate::kernel::config::KernelConfig;
 use crate::kernel::types::{AgentId, KernelError, SessionId, ToolRequest};
-use crate::kernel::Kernel;
+use crate::kernel::{AgentRecord, Kernel};
 
 // ============================================================================
 // Error Types
@@ -415,35 +415,10 @@ impl VakAgent {
     ///
     /// Handles the full lifecycle: policy check -> execute -> audit -> return result.
     pub async fn execute_tool_call(&self, tool_call: &ToolCall) -> IntegrationResult<ToolResult> {
-        // Check agent-level tool restrictions
-        if let Some(ref allowed) = self.allowed_tools {
-            if !allowed.contains(&tool_call.name) {
-                return Ok(ToolResult {
-                    tool_call_id: tool_call.id.clone(),
-                    success: false,
-                    content: format!(
-                        "Tool '{}' is not in the allowed tools list for agent '{}'",
-                        tool_call.name, self.name
-                    ),
-                    execution_time_ms: 0,
-                    audit_hash: None,
-                });
-            }
-        }
-
-        if self.blocked_tools.contains(&tool_call.name) {
-            return Ok(ToolResult {
-                tool_call_id: tool_call.id.clone(),
-                success: false,
-                content: format!(
-                    "Tool '{}' is blocked for agent '{}'",
-                    tool_call.name, self.name
-                ),
-                execution_time_ms: 0,
-                audit_hash: None,
-            });
-        }
-
+        // The agent's allowed and blocked tools are enforced by the kernel,
+        // which has this agent's record (see `AgentBuilder::build`). They
+        // used to be checked here, so other callers of the kernel bypassed
+        // them and the refusals were never audited.
         // Create kernel tool request
         let request = ToolRequest {
             request_id: uuid::Uuid::new_v4(),
@@ -452,12 +427,28 @@ impl VakAgent {
             timeout_ms: Some(30_000),
         };
 
-        // Execute through kernel (includes policy check and audit)
-        let response = self
+        // Execute through kernel (includes scope, budget, policy and audit)
+        let response = match self
             .kernel
             .execute(&self.agent_id, &self.session_id, request)
             .await
-            .map_err(|e| IntegrationError::ToolExecutionFailed(e.to_string()))?;
+        {
+            Ok(response) => response,
+            // Outside this agent's own scope: report it as a failed call,
+            // as this API always has, rather than an error.
+            Err(KernelError::PolicyViolation { policy_id, reason })
+                if policy_id == "agent.scope" =>
+            {
+                return Ok(ToolResult {
+                    tool_call_id: tool_call.id.clone(),
+                    success: false,
+                    content: reason,
+                    execution_time_ms: 0,
+                    audit_hash: None,
+                });
+            }
+            Err(e) => return Err(IntegrationError::ToolExecutionFailed(e.to_string())),
+        };
 
         let tool_result = ToolResult {
             tool_call_id: tool_call.id.clone(),
@@ -587,11 +578,27 @@ impl AgentBuilder {
     }
 
     /// Build the agent
+    ///
+    /// Registers the agent with the kernel, so the kernel enforces its
+    /// allowed and blocked tools on every call and records each refusal.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IntegrationError::KernelError`] if the kernel's agent
+    /// registry doesn't accept registrations.
     pub async fn build(self) -> IntegrationResult<VakAgent> {
         info!(agent_name = %self.name, "Creating VAK agent");
 
+        let agent_id = AgentId::new();
+        let mut record = AgentRecord::new(agent_id, self.name.clone())
+            .with_blocked_tools(self.blocked_tools.clone());
+        if let Some(allowed) = &self.allowed_tools {
+            record = record.with_allowed_tools(allowed.clone());
+        }
+        self.kernel.register_agent(record).await?;
+
         Ok(VakAgent {
-            agent_id: AgentId::new(),
+            agent_id,
             session_id: SessionId::new(),
             name: self.name,
             kernel: self.kernel,
@@ -805,13 +812,20 @@ impl RuntimeBuilder {
         self
     }
 
-    /// Enable or disable audit logging
+    /// Enable or disable audit logging (`KernelConfig::audit.enabled`).
+    ///
+    /// This controls the configured audit backends. The kernel's own record
+    /// of policy decisions is always kept: recording a decision before acting
+    /// on it is the reference monitor's job, not an option.
     pub fn with_audit_logging(mut self, enabled: bool) -> Self {
         self.audit_enabled = enabled;
         self
     }
 
-    /// Enable or disable policy enforcement
+    /// Enable or disable policy enforcement (`KernelConfig::policy.enabled`).
+    ///
+    /// With enforcement disabled, the tool blocklist and allowlist still
+    /// apply; only the policy engine and default decision are skipped.
     pub fn with_policy_enforcement(mut self, enabled: bool) -> Self {
         self.policy_enabled = enabled;
         self
@@ -851,11 +865,19 @@ impl RuntimeBuilder {
     pub async fn build(self) -> IntegrationResult<VakRuntime> {
         info!(name = %self.name, "Building VAK runtime");
 
+        // An explicit kernel config wins outright. Otherwise the builder's
+        // settings must reach the kernel; they used to be stored in
+        // RuntimeConfig and never applied.
         let kernel_config = self.kernel_config.unwrap_or_else(|| {
-            KernelConfig::builder()
+            let mut config = KernelConfig::builder()
                 .name(&self.name)
                 .max_concurrent_agents(self.max_agents as usize)
-                .build()
+                .max_execution_time(self.default_timeout)
+                .build();
+            config.audit.enabled = self.audit_enabled;
+            config.policy.enabled = self.policy_enabled;
+            config.security.enable_sandboxing = self.sandboxing_enabled;
+            config
         });
 
         let kernel = Arc::new(Kernel::new(kernel_config).await?);
@@ -1086,6 +1108,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_runtime_builder_settings_reach_kernel() {
+        // Regression: these were stored in RuntimeConfig and never applied.
+        let runtime = VakRuntime::builder()
+            .with_audit_logging(false)
+            .with_policy_enforcement(false)
+            .with_sandboxing(false)
+            .with_default_timeout(Duration::from_secs(7))
+            .build()
+            .await
+            .unwrap();
+        let config = runtime.kernel().config();
+        assert!(!config.audit.enabled);
+        assert!(!config.policy.enabled);
+        assert!(!config.security.enable_sandboxing);
+        assert_eq!(config.max_execution_time, Duration::from_secs(7));
+    }
+
+    #[tokio::test]
     async fn test_runtime_tool_definitions() {
         let runtime = VakRuntime::builder().build().await.unwrap();
 
@@ -1161,6 +1201,34 @@ mod tests {
             .unwrap();
         assert!(!result.success);
         assert!(result.content.contains("blocked"));
+    }
+
+    #[tokio::test]
+    async fn test_agent_scope_is_enforced_by_the_kernel() {
+        // Regression: allowed/blocked tools were checked inside VakAgent, so
+        // calling the kernel directly with the agent's ID bypassed them, and
+        // refusals were never audited.
+        let runtime = VakRuntime::builder().build().await.unwrap();
+        let agent = runtime
+            .create_agent("restricted-agent")
+            .with_blocked_tools(vec!["calculator"])
+            .build()
+            .await
+            .unwrap();
+
+        let result = runtime
+            .kernel()
+            .execute(
+                agent.id(),
+                agent.session_id(),
+                ToolRequest::new("calculator", serde_json::json!({})),
+            )
+            .await;
+        assert!(
+            matches!(result, Err(KernelError::PolicyViolation { ref policy_id, .. }) if policy_id == "agent.scope"),
+            "got {result:?}"
+        );
+        assert_eq!(runtime.kernel().get_audit_log().await.len(), 1);
     }
 
     #[tokio::test]

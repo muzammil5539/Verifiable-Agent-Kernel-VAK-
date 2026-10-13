@@ -1014,10 +1014,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_budget_limit() {
-        let mut config = CostConfig::default();
-        config.rates = PricingRates {
-            input_tokens_per_1k: 1.0, // $1 per 1K tokens for easy testing
-            ..PricingRates::default()
+        let config = CostConfig {
+            rates: PricingRates {
+                input_tokens_per_1k: 1.0, // $1 per 1K tokens for easy testing
+                ..PricingRates::default()
+            },
+            ..CostConfig::default()
         };
         let accountant = CostAccountant::new(config);
 

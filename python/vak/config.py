@@ -45,9 +45,14 @@ class SecurityConfig:
     Attributes:
         enable_sandboxing: Whether to enable WASM sandboxing for tools.
         signature_verification: Whether to verify skill signatures.
-        default_policy_effect: Default policy when no rules match ("deny" or "allow").
-        allowed_tools: Whitelist of tool IDs that can be executed.
-        blocked_tools: Blacklist of tool IDs that cannot be executed.
+        default_policy_effect: Default decision when no rules match ("deny" or
+            "allow"). It has no effect through ``KernelConfig``: the kernel's
+            allowlist is never empty, and tools outside it are denied first.
+        allowed_tools: Tool names agents may call. Empty keeps the kernel's
+            built-in tools. Not applied while policy files decide.
+        blocked_tools: Tool names agents may not call. With policy files, a
+            blocked tool reaches the rules as ``resource.restricted``, and is
+            blocked only by rules that check it (ADR 0008).
         max_memory_bytes: Maximum memory per tool execution.
         sandbox_timeout_ms: Default timeout for sandboxed operations.
         rate_limit_per_second: Maximum requests per agent per second.
@@ -87,12 +92,16 @@ class PolicyConfig:
     """Policy engine configuration.
 
     Attributes:
-        enabled: Whether policy enforcement is enabled.
+        enabled: Whether the kernel reads ``policy_paths``. False ignores them,
+            and the allowlist and blocklist decide.
         default_decision: Default decision when no rules match ("deny" or "allow").
-        policy_paths: Paths to policy definition files (YAML).
-        cache_enabled: Whether to cache policy decisions.
-        cache_ttl_seconds: Time-to-live for cached decisions.
-        hot_reload: Whether to watch policy files for changes.
+            It has no effect through ``KernelConfig``; see
+            ``SecurityConfig.default_policy_effect``.
+        policy_paths: YAML policy files the kernel reads at startup. They then
+            decide in place of ``SecurityConfig.allowed_tools``.
+        cache_enabled: Not applied by the kernel (ADR 0011).
+        cache_ttl_seconds: Not applied by the kernel (ADR 0011).
+        hot_reload: Not applied by the kernel (ADR 0011).
     """
     enabled: bool = True
     default_decision: str = "deny"

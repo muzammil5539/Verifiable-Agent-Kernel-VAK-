@@ -51,7 +51,6 @@
 //! - Gap Analysis Section 3.1: Panic Safety at WASM/Host Boundary
 //! - RT-005: Implement `std::panic::catch_unwind` wrapper
 
-use anyhow::{anyhow, Result as AnyhowResult};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::panic;
@@ -59,6 +58,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, error, warn};
+use wasmtime::{format_err, Result as HostResult};
 use wasmtime::{Caller, Engine, Linker};
 
 /// Errors that can occur in host functions
@@ -616,7 +616,7 @@ impl HostFuncLinker {
                 move |mut caller: Caller<'_, HostFuncState>,
                       path_ptr: i32,
                       path_len: i32|
-                      -> AnyhowResult<i64> {
+                      -> HostResult<i64> {
                     let state = caller.data().clone();
 
                     // Read the path from WASM memory
@@ -641,9 +641,9 @@ impl HostFuncLinker {
                     };
 
                     if catch_panics {
-                        with_panic_boundary(operation).map_err(|e| anyhow!(e))
+                        with_panic_boundary(operation).map_err(|e| format_err!(e))
                     } else {
-                        operation().map_err(|e| anyhow!(e))
+                        operation().map_err(|e| format_err!(e))
                     }
                 },
             )
@@ -663,7 +663,7 @@ impl HostFuncLinker {
                       path_len: i32,
                       _data_ptr: i32,
                       _data_len: i32|
-                      -> AnyhowResult<i64> {
+                      -> HostResult<i64> {
                     let state = caller.data().clone();
 
                     // Read the path from WASM memory
@@ -688,9 +688,9 @@ impl HostFuncLinker {
                     };
 
                     if catch_panics {
-                        with_panic_boundary(operation).map_err(|e| anyhow!(e))
+                        with_panic_boundary(operation).map_err(|e| format_err!(e))
                     } else {
-                        operation().map_err(|e| anyhow!(e))
+                        operation().map_err(|e| format_err!(e))
                     }
                 },
             )
@@ -714,7 +714,7 @@ impl HostFuncLinker {
                 move |_caller: Caller<'_, HostFuncState>,
                       _key_ptr: i32,
                       _key_len: i32|
-                      -> AnyhowResult<i64> {
+                      -> HostResult<i64> {
                     let operation = || {
                         // Environment variables are typically restricted
                         // Return -1 to indicate not found/not allowed
@@ -722,9 +722,9 @@ impl HostFuncLinker {
                     };
 
                     if catch_panics {
-                        with_panic_boundary(operation).map_err(|e| anyhow!(e))
+                        with_panic_boundary(operation).map_err(|e| format_err!(e))
                     } else {
-                        operation().map_err(|e| anyhow!(e))
+                        operation().map_err(|e| format_err!(e))
                     }
                 },
             )
@@ -749,7 +749,7 @@ impl HostFuncLinker {
                       level: i32,
                       _msg_ptr: i32,
                       _msg_len: i32|
-                      -> AnyhowResult<()> {
+                      -> HostResult<()> {
                     let operation = || {
                         // In practice, we'd read the message from WASM memory
                         // and log it at the appropriate level
@@ -758,9 +758,9 @@ impl HostFuncLinker {
                     };
 
                     if catch_panics {
-                        with_panic_boundary(operation).map_err(|e| anyhow!(e))
+                        with_panic_boundary(operation).map_err(|e| format_err!(e))
                     } else {
-                        operation().map_err(|e| anyhow!(e))
+                        operation().map_err(|e| format_err!(e))
                     }
                 },
             )

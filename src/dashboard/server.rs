@@ -285,7 +285,7 @@ fn generate_dashboard_html(
         include_str!("dashboard.html"),
         refresh = config.refresh_interval_secs,
         title = escape_html(&config.title),
-        status = format!("{:?}", health_check.status),
+        status = format_args!("{:?}", health_check.status),
         status_class = match health_check.status {
             HealthStatus::Healthy => "healthy",
             HealthStatus::Degraded => "degraded",
@@ -542,8 +542,10 @@ mod tests {
 
     #[test]
     fn test_dashboard_xss_vulnerability() {
-        let mut config = DashboardConfig::default();
-        config.title = "<script>alert('xss-title')</script>".to_string();
+        let config = DashboardConfig {
+            title: "<script>alert('xss-title')</script>".to_string(),
+            ..DashboardConfig::default()
+        };
 
         let metrics = Arc::new(MetricsCollector::default());
         let health = Arc::new(HealthChecker::new());

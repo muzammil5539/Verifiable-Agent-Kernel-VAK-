@@ -141,12 +141,49 @@ let config: &KernelConfig = kernel.config();
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `new` | `async fn new(config: KernelConfig) -> Result<Self, KernelError>` | Creates a kernel instance. Validates config, loads skills, configures sandbox. |
-| `execute` | `async fn execute(&self, agent_id: &AgentId, session_id: &SessionId, request: ToolRequest) -> Result<ToolResponse, KernelError>` | Evaluates policy, logs decision, dispatches tool, returns response. |
-| `evaluate_policy` | `async fn evaluate_policy(&self, agent_id: &AgentId, request: &ToolRequest) -> PolicyDecision` | Evaluates policy for a request without executing it. |
-| `get_audit_log` | `async fn get_audit_log(&self) -> Vec<AuditEntry>` | Returns all audit entries. |
-| `list_tools` | `async fn list_tools(&self) -> Vec<String>` | Lists built-in tools and registered WASM skills. |
-| `active_session_count` | `async fn active_session_count(&self) -> usize` | Returns number of active sessions. |
+| `execute` | `async fn execute(&self, agent_id: &AgentId, session_id: &SessionId, request: ToolRequest) -> Result<ToolResponse, KernelError>` | Runs the mediation pipeline: admit, budget, decide, record the decision, execute, record the outcome, respond with an `AuditReceipt`. Refusals at any stage are recorded. |
+| `evaluate_policy` | `async fn evaluate_policy(&self, agent_id: &AgentId, request: &ToolRequest) -> PolicyDecision` | The Decide stage alone, with the agent's record as principal. No admission, budget or audit. |
+| `register_agent` | `async fn register_agent(&self, record: AgentRecord) -> Result<(), KernelError>` | Adds or replaces an agent record: attributes, status, own tool scope. |
+| `end_session` | `async fn end_session(&self, session_id: &SessionId) -> bool` | Releases a session's binding to its agent. |
+| `get_audit_log` | `async fn get_audit_log(&self) -> Vec<AuditEntry>` | Returns all audit entries: decisions, and outcomes (`outcome` set). |
+| `audit_tree_head` | `async fn audit_tree_head(&self) -> SignedTreeHead` | Current Merkle tree head, signed with the kernel's Ed25519 key. |
+| `prove_audit_inclusion` / `prove_audit_consistency` | `async fn(&self, u64, u64) -> Result<_, KernelError>` | RFC 9162 proofs, verifiable without trusting the kernel. |
+| `list_tools` | `async fn list_tools(&self) -> Vec<String>` | Lists built-in tools, registered host handlers and WASM skills. |
+| `load_skill` | `async fn load_skill(&self, manifest: &Path) -> Result<String, KernelError>` | Loads a WASM skill while the kernel runs, verified as at startup (signed unless `security.allow_unsigned_skills`). Authorizes no one; policy still decides each call. Feature `wasm`. |
+| `skill_manifest` | `async fn skill_manifest(&self, name: &str) -> Option<SkillManifest>` | The manifest of a loaded skill. Feature `wasm`. |
+| `active_session_count` | `async fn active_session_count(&self) -> usize` | Returns the number of sessions bound to an agent. |
 | `config` | `fn config(&self) -> &KernelConfig` | Returns kernel configuration reference. |
+
+### KernelBuilder and ports
+
+`Kernel::builder(config)` injects an implementation for any pipeline stage. Anything
+not supplied is built from `config`, as `Kernel::new` would. See `docs/adr/0003`.
+
+```rust
+use vak::kernel::{AgentRecord, InMemoryAgentRegistry, Kernel, KernelConfig};
+
+let registry = Arc::new(InMemoryAgentRegistry::new());
+let kernel = Kernel::builder(config)
+    .with_agent_registry(registry.clone())   // Admit: Arc<dyn AgentRegistry>
+    .with_budget(budget)                     // Budget: Arc<dyn Budget>
+    .with_policy(pdp)                        // Decide: Arc<dyn PolicyDecisionPoint>
+    .with_audit_log(log)                     // Record: Arc<dyn AuditLog>
+    .with_audit_signing_key(key)             // signs tree heads
+    .with_tool(handler)                      // Execute: impl ToolHandler
+    .build()
+    .await?;
+
+kernel.register_agent(AgentRecord::new(agent_id, "billing").internal(true)
+    .with_allowed_tools(["invoice_lookup"])).await?;
+registry.suspend(&agent_id, "key rotated").await?;  // refused from the next request
+```
+
+| Port | Default | Selected by |
+|------|---------|-------------|
+| `AgentRegistry` | `InMemoryAgentRegistry` (unknown agents get an anonymous record) | `security.require_registered_agents` refuses unknown agents |
+| `Budget` | `AgentRateBudget::per_minute(n)` | `security.enable_rate_limiting`, `security.max_requests_per_minute` |
+| `PolicyDecisionPoint` | `CedarPolicy` (feature `cedar`), `EnforcerPolicy` (YAML) or `ConfigPolicy`; `DenyAll` if configured policies don't load | `policy.format`, `policy.policy_paths`, `policy.cedar_schema` |
+| `AuditLog` | `FileAuditLog` (JSONL) or `SqliteAuditLog`, else `MemoryAuditLog` | `audit.log_path`, `audit.format` (`jsonl` or `sqlite`) |
 
 ---
 
@@ -179,7 +216,8 @@ let config = KernelConfig::builder()
     .audit(AuditConfig {
         enabled: true,
         log_level: LogLevel::Info,
-        log_path: Some("/var/log/vak/audit.log".into()),
+        log_path: Some("/var/log/vak/audit.db".into()),
+        format: AuditLogFormat::Sqlite,
         include_bodies: false,
         max_log_size_bytes: 100 * 1024 * 1024,
         retention_count: 10,
@@ -215,8 +253,8 @@ config.validate()?;
 | Struct | Key Fields |
 |--------|------------|
 | `SecurityConfig` | `enable_sandboxing`, `require_signed_requests`, `allowed_tools`, `blocked_tools`, `enable_rate_limiting`, `max_requests_per_minute` |
-| `AuditConfig` | `enabled`, `log_level`, `log_path`, `include_bodies`, `max_log_size_bytes`, `retention_count` |
-| `PolicyConfig` | `enabled`, `default_decision`, `policy_paths`, `enable_caching`, `cache_ttl_seconds` |
+| `AuditConfig` | `enabled`, `log_level`, `log_path`, `format`, `include_bodies`, `max_log_size_bytes`, `retention_count` (the last two don't apply to the kernel's log, which is never rotated) |
+| `PolicyConfig` | `enabled`, `default_decision`, `policy_paths`, `format` (`yaml` or `cedar`), `cedar_schema`, `enable_caching`, `cache_ttl_seconds` |
 | `ResourceConfig` | `max_memory_mb`, `max_cpu_time_ms`, `max_connections`, `max_request_size_bytes`, `max_response_size_bytes` |
 
 **Defaults:**
@@ -414,6 +452,12 @@ pub enum KernelError {
     SerializationError(serde_json::Error),        // E008
     Timeout { timeout_ms },                       // E009
     ResourceLimitExceeded { resource, limit, requested }, // E010
+    AuditProof { message },                       // E011
+    AgentSuspended { agent_id, reason },          // E012
+    SessionConflict { session_id },               // E013
+    RateLimited { reason, retry_after_ms },       // E014
+    AuditUnavailable { message },                 // E015
+    SkillRejected { manifest, reason },           // E016
 }
 ```
 
@@ -421,8 +465,8 @@ pub enum KernelError {
 
 | Method | Return | Description |
 |--------|--------|-------------|
-| `is_recoverable()` | `bool` | `true` for `Timeout` and `ResourceLimitExceeded` |
-| `error_code()` | `&str` | Returns code string (E001-E010) |
+| `is_recoverable()` | `bool` | `true` for `Timeout`, `ResourceLimitExceeded` and `RateLimited` |
+| `error_code()` | `&str` | Returns code string (E001-E016) |
 
 ---
 
@@ -495,6 +539,104 @@ let result: ExecutionResult = pipeline.evaluate(plan).await?;
 
 ## Policy API
 
+### Cedar policies (feature `cedar`)
+
+**Module:** `vak::policy::cedar`; decision point `vak::kernel::CedarPolicy` (ADR 0008)
+
+Policies in Cedar, evaluated by the `cedar-policy` crate and validated against a schema
+when they load. Enable the `cedar` feature and set:
+
+```yaml
+policy:
+  format: cedar
+  policy_paths: ["policies/cedar"]        # .cedar files, or directories of them
+  cedar_schema: "policies/cedar/vak.cedarschema"   # optional; this is the default
+```
+
+Every tool call reaches Cedar as:
+
+| | |
+|---|---|
+| principal | `Vak::Agent::"<agent id>"`, with `internal`, `name` and the record's attributes |
+| action | `Vak::Action::"<tool>"` if the schema declares it, else `Vak::Action::"call"` |
+| resource | `Vak::Tool::"<tool>"`, with `restricted` (blocked) and `builtin` |
+| context | `{ session, arguments }`, where `arguments` is `{}` for `call` |
+
+```cedar
+@id("forbid-dd")
+forbid (principal, action in Vak::Action::"call", resource == Vak::Tool::"dd");
+
+@id("permit-safe-tools")
+permit (principal, action in Vak::Action::"call", resource) when { !resource.restricted };
+```
+
+To let policies read a tool's arguments, declare an action for it in the schema, with the
+argument types (see `policies/cedar/examples/payments.cedarschema`):
+
+```cedar
+@id("finance-transfers-up-to-1000")
+permit (principal, action == Vak::Action::"transfer_funds", resource)
+when { principal has team && principal.team == "finance" && context.arguments.amount <= 1000 };
+```
+
+Requests that can't be decided cleanly are denied:
+
+- a call whose arguments don't match its action's declared types, including extra
+  fields and fractional numbers;
+- an agent whose record carries an attribute the schema doesn't declare;
+- a call on which any policy fails to evaluate.
+
+A policy set that doesn't load (a parse or validation error, duplicate `@id`s, no
+policies) makes the kernel deny everything, giving the load error as the reason.
+
+`CedarPolicySet::load(schema, paths)` and `authorize(&CedarRequest)` use the engine
+directly. `CedarPolicy::new(set, &config)` plus `KernelBuilder::with_policy` injects it.
+
+### Proving properties of Cedar policies (feature `cedar-analysis`)
+
+**Module:** `vak::policy::cedar::analysis` (ADR 0009). Needs cvc5 1.3.1 (`CVC5` or `PATH`).
+
+Properties are Cedar policy sets, named with `@property` and typed with `@kind`. A
+*ceiling* bounds what the policies may allow; a *floor* is what they must keep allowing.
+SymCC proves them over every request the schema admits.
+
+```cedar
+@property("restricted-tools-are-never-called")
+@kind("ceiling")
+permit (principal, action, resource) when { !resource.restricted };
+```
+
+```rust
+use vak::policy::cedar::analysis::{Analyzer, PolicyProperties};
+
+let properties = PolicyProperties::load(&policies, &["policies/cedar/properties".into()])?;
+let mut analyzer = Analyzer::new()?;                 // starts cvc5
+let report = analyzer.check(&policies, &properties).await?;
+assert!(report.holds(), "{report}");                 // counterexamples on failure
+```
+
+Every policy is also checked never to error. `check_no_widening(old, new)` proves `new`
+allows nothing `old` didn't. From the command line, for CI:
+
+```bash
+cargo run --example cedar_check --features cedar-analysis -- \
+  --policies policies/cedar --properties policies/cedar/properties [--baseline <old policies>]
+```
+
+A running `CedarPolicy` can swap in a new set:
+
+```rust
+let pdp = Arc::new(CedarPolicy::new(policies, &config));
+let kernel = Kernel::builder(config).with_policy(pdp.clone()).build().await?;
+
+pdp.reload(new_set).await;                           // unchecked
+pdp.reload_checked(new_set, &properties, &mut analyzer, Widening::Refuse).await?;
+```
+
+`reload_checked` swaps the set in only if the properties hold, no policy can error, the
+schema is unchanged and, with `Widening::Refuse`, nothing new is allowed. Otherwise the
+current set stays in force and `ReloadRefused` carries the counterexamples.
+
 ### CedarEnforcer
 
 **Module:** `vak::policy`
@@ -566,15 +708,48 @@ assert!(entry.verify_integrity());
 | `hash` | `String` | SHA-256 of entry contents |
 | `previous_hash` | `Option<String>` | Link to previous entry |
 
+### The kernel's audit log
+
+**Module:** `vak::kernel::audit_log`
+
+Everything `Kernel::execute` decides or does is recorded through the `AuditLog` port,
+and nothing else (ADR 0007). Each entry is a leaf of an RFC 9162 Merkle tree; see
+`Kernel::audit_tree_head` and the proof methods above.
+
+| Adapter | Selected by | Storage |
+|---------|-------------|---------|
+| `MemoryAuditLog` | no `audit.log_path` | In memory; lost on exit |
+| `FileAuditLog` | `audit.log_path`, `audit.format: jsonl` (default) | One JSON entry per line, `fsync`ed per append |
+| `SqliteAuditLog` | `audit.log_path`, `audit.format: sqlite` | One row per entry, each append a durable transaction; query with `json_extract(entry, '$.action')` |
+
+The durable adapters verify every entry when they open and refuse a log that doesn't
+verify (`AuditLogError::Corrupt`), one VAK didn't create, or one in the other format
+(`AuditLogError::Format`). `Kernel::build` then fails; it never starts on a fresh log
+instead. After a failed write a log refuses further appends until it is reopened, and
+the kernel refuses requests (`KernelError::AuditUnavailable`) rather than run tools
+unrecorded.
+
 ### AuditLogger
 
-Main audit system with chain management.
+**Module:** `vak::audit`
+
+A standalone hash-chained event log for events an application records itself, outside
+the kernel. It is not the kernel's audit trail.
 
 ```rust
-logger.log(agent_id, action, resource, decision).await?;
-logger.verify_chain().await?;           // Verify full chain integrity
-logger.export_receipt().await?;         // Generate cryptographic receipt
+use vak::audit::{AuditDecision, AuditLogger, SqliteAuditBackend};
+
+let backend = SqliteAuditBackend::new("/var/lib/app/events.db")?;
+let mut logger = AuditLogger::with_backend(Box::new(backend))?; // verifies on open
+logger.log("agent-1", "read", "/data/a.txt", AuditDecision::Allowed)?; // Err if not stored
+logger.verify_chain()?;
+let report = logger.export()?; // counts, chain_valid, legacy_entries
 ```
+
+Each entry's hash (`vak::audit::entry_hash`) covers a domain tag and every field,
+length-prefixed, `metadata` included. Entries written before ADR 0007 used a weaker
+hash; they still verify when they come first in the log, and `report.legacy_entries`
+counts them.
 
 ### FlightRecorder
 
@@ -681,6 +856,37 @@ sandbox.load_skill_from_file("skill.wasm")?;
 let result = sandbox.execute("execute", &json_input)?;
 ```
 
+`execute` blocks until the skill returns or a limit stops it; from async code, call it on
+`tokio::task::spawn_blocking`.
+
+### SandboxRuntime
+
+One engine, a compiled-module cache keyed by the module's SHA-256, and one epoch ticker
+thread that runs only while a skill is executing. `WasmSandbox::new` builds one per
+sandbox; share one instead:
+
+```rust
+use std::sync::Arc;
+use vak::sandbox::{SandboxRuntime, SandboxRuntimeConfig, WasmSandbox};
+
+let runtime = Arc::new(SandboxRuntime::new(SandboxRuntimeConfig::default())?);
+let sandbox = WasmSandbox::with_runtime(runtime.clone(), config);
+
+// The kernel builds its own on the first skill call, or takes one:
+let kernel = Kernel::builder(kernel_config)
+    .with_sandbox_runtime(runtime.clone())
+    .with_skill_registry(registry)
+    .build()
+    .await?;
+let stats = runtime.stats(); // compiled_modules, cache_hits, executions, ...
+```
+
+| `SandboxRuntimeConfig` field | Default | Description |
+|-------|---------|-------------|
+| `tick` | 10 ms | Epoch interval: the precision of the wall-clock deadline |
+| `max_cached_modules` | 64 | Compiled modules kept; the oldest is evicted |
+| `pooling` | `None` | `Some(PoolingConfig)` uses the pooling allocator, which reserves virtual memory up front |
+
 ### SandboxConfig
 
 | Field | Type | Default | Description |
@@ -700,7 +906,42 @@ let mut registry = SkillRegistry::new("skills/".into());
 let loaded_ids = registry.load_all_skills()?;
 let manifest = registry.get_skill_by_name("calculator");
 let skills = registry.list_skills();
+let pinned: Option<[u8; 32]> = registry.module_digest("calculator");
 ```
+
+`SkillRegistry::new` requires every skill to carry a valid signature from a trusted key;
+with no trusted keys, nothing loads. Trust publishers with
+`SkillRegistry::new_with_signature_config(dir, SignatureConfig::strict().with_trusted_key(hex))`,
+or in the kernel with `security.trusted_skill_keys`. Loading reads the module once,
+verifies the signature over those bytes, and pins the skill to their SHA-256.
+
+### Skill signing
+
+**Module:** `vak::sandbox::signing` (ADR 0005)
+
+```rust
+use vak::sandbox::signing::{sign_skill, module_digest, SkillSignatureVerifier};
+
+// Publisher side (or: cargo run --example sign_skill -- sign skill.yaml key.hex)
+sign_skill(&mut manifest, &module_bytes, &signing_key)?;   // sets signed_by, signature
+
+// Kernel side
+let verifier = SkillSignatureVerifier::try_new(
+    SignatureConfig::strict().with_trusted_key(publisher_public_key_hex),
+)?;
+let verified = verifier.verify(&manifest, &module_digest(&module_bytes))?;
+```
+
+The signed statement is `vak.skill-signature.v1\n` followed by the canonical JSON (sorted
+keys, no whitespace) of `author`, `description`, `input_schema`, `module_sha256`, `name`,
+`output_schema`, `permissions` and `version`. `wasm_path` is not signed: the module is
+bound by its digest.
+
+| `KernelConfig` field | Default | Effect |
+|---|---|---|
+| `security.skills_path` | unset | Skill manifest directory; else `VAK_SKILLS_PATH`, `.github/skills`, `skills` |
+| `security.trusted_skill_keys` | empty | Hex Ed25519 public keys whose signatures are trusted. A key that doesn't parse fails `Kernel::build` |
+| `security.allow_unsigned_skills` | `false` | Load unsigned skills (development only). A bad signature is refused regardless |
 
 ### Verified Publishers
 
@@ -1229,14 +1470,19 @@ let tools: Vec<ToolDefinition> = agent.available_tools();
 
 **Module:** `vak::integrations`
 
-JSON-RPC Model Context Protocol server.
+JSON-RPC Model Context Protocol server. `create_vak_mcp_server` registers the VAK
+tools; its `execute_skill` runs each call through `Kernel::execute` on the kernel it is
+given, and answers with the skill's result and the kernel's receipt, or an error result
+if the kernel refused or the skill failed. MCP agent names map to agent IDs with
+`mcp_agent_id`.
 
 ```rust
-use vak::integrations::McpServer;
+use std::sync::Arc;
+use vak::integrations::mcp::create_vak_mcp_server;
 
-let server = McpServer::new(kernel);
-server.register_tool(McpTool { /* ... */ })?;
-server.start("0.0.0.0:3000").await?;
+let kernel = Arc::new(Kernel::new(KernelConfig::default()).await?);
+let server = create_vak_mcp_server(kernel).await;
+server.serve_stdio().await?;
 ```
 
 ### LangChainAdapter
@@ -1411,7 +1657,8 @@ security:
 audit:
   enabled: true
   log_level: "info"
-  log_path: "/var/log/vak/audit.log"
+  log_path: "/var/log/vak/audit.db"
+  format: "sqlite"   # or "jsonl" (default)
   include_bodies: false
   max_log_size_bytes: 104857600
   retention_count: 10
@@ -1420,6 +1667,7 @@ policy:
   enabled: true
   default_decision: "deny"
   policy_paths: ["policies/"]
+  format: "yaml"     # or "cedar" (feature `cedar`)
   enable_caching: true
   cache_ttl_seconds: 300
 
@@ -1503,6 +1751,12 @@ exports:
 | E008 | `SerializationError` | No | JSON serialization/deserialization failed |
 | E009 | `Timeout` | Yes | Operation exceeded time limit |
 | E010 | `ResourceLimitExceeded` | Yes | Memory, CPU, or connection limit exceeded |
+| E011 | `AuditProof` | No | An audit proof was requested for an index or size the log doesn't have |
+| E012 | `AgentSuspended` | No | The agent is registered but suspended |
+| E013 | `SessionConflict` | No | The session is bound to a different agent |
+| E014 | `RateLimited` | Yes | The agent is over its request budget; retry after `retry_after_ms` |
+| E015 | `AuditUnavailable` | No | The decision couldn't be recorded, so the tool didn't run |
+| E016 | `SkillRejected` | No | A skill manifest or module couldn't be read or didn't verify; nothing was loaded |
 
 ---
 

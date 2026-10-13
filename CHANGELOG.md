@@ -7,6 +7,318 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+See `docs/architecture-v2.md` for the audit and design behind these changes, and
+`docs/adr/0002-reference-monitor-core-with-ports-and-transparency-log.md` and
+`docs/adr/0003-admit-budget-record-outcome-pipeline-stages.md` for the decision records.
+
+### Added
+- `Kernel::load_skill` and `Kernel::skill_manifest` (feature `wasm`): load a WASM skill
+  while the kernel runs, verified as skills loaded at startup are, and read a loaded
+  skill's manifest. Loading authorizes no one; policy still decides every call.
+  `KernelError::SkillRejected` (E016) when a manifest or module can't be read or
+  doesn't verify.
+- `sandbox::MAX_TABLE_ELEMENTS` (ADR 0010): a skill's tables are capped at 10,000
+  elements, at instantiation and on `table.grow`, with either allocator. Tables live in
+  host memory, outside the linear-memory limit.
+- `tests/sandbox_escapes.rs`: the escape paths named by the Wasmtime advisories in
+  finding K11, through `Kernel::execute`.
+- The `cedar-analysis` feature (ADR 0009): `policy::cedar::analysis` (`Analyzer`,
+  `PolicyProperties`, `AnalysisReport`, `check_reload`, `Widening`, `ReloadRefused`)
+  proves properties of Cedar policy sets with SymCC and cvc5 1.3.1. `CedarPolicy::reload`
+  and `reload_checked`. `examples/cedar_check.rs` runs the checks in CI.
+  `policies/cedar/properties/` holds the default policies' properties.
+- The `cedar` feature (ADR 0008; needs Rust 1.89): `policy::cedar` (`CedarPolicySet`,
+  `CedarRequest`, `CedarDecision`, `CedarPolicyError`, `VAK_SCHEMA`) and
+  `kernel::CedarPolicy`, a `PolicyDecisionPoint` over the `cedar-policy` crate. Selected
+  with `policy.format: cedar` (`PolicyFormat`, `VAK_POLICY__FORMAT`), with
+  `policy.cedar_schema` (`VAK_POLICY__CEDAR_SCHEMA`) for a schema of your own.
+  `policies/cedar/` holds the kernel's schema, the default tool rules in Cedar, and a
+  typed-arguments example.
+- `kernel::DenyAll`: the decision point used when configured policies can't be loaded.
+- `kernel::SqliteAuditLog` (ADR 0007): the kernel's audit log in SQLite, selected with
+  `audit.format: sqlite` (`AuditLogFormat`, `VAK_AUDIT__FORMAT`). Each append is a
+  durable transaction; opening verifies every row and refuses a database VAK didn't
+  create. `AuditLogError::Format`.
+- `audit::entry_hash` and `AuditReport::legacy_entries` (ADR 0007).
+- Cargo features (ADR 0006): `wasm`, `llm`, `memory`, `reasoner`, `experimental-zk`,
+  `swarm`, `integrations`, `dashboard`, `legacy-tools`, `python`, and `full` (everything
+  but `python`). `default-features = false` builds the trusted core alone.
+- `sandbox::signing` (ADR 0005): Ed25519 skill signatures over the module's SHA-256 and
+  every manifest field except `wasm_path`, verified against trusted publisher keys.
+  `SkillManifest::signed_by`, `SkillRegistry::module_digest`,
+  `SandboxRuntime::prepare_file_pinned`, `SandboxError::ModuleChanged`,
+  `AuditOutcome::module_sha256`, and `security.{skills_path, trusted_skill_keys,
+  allow_unsigned_skills}`. `examples/sign_skill.rs` generates publisher keys and signs
+  manifests.
+- `sandbox::SandboxRuntime` (ADR 0004): one Wasmtime engine, a compiled-module cache
+  keyed by SHA-256, and one epoch ticker that parks while idle. The kernel runs every
+  WASM skill on it, on `tokio::task::spawn_blocking`. `KernelBuilder::{with_sandbox_runtime,
+  with_skill_registry}`, `Kernel::sandbox_runtime`, `WasmSandbox::with_runtime`.
+- Mediation pipeline stages (ADR 0003). `kernel::identity` (`AgentRegistry`,
+  `AgentRecord`, `InMemoryAgentRegistry`) for the Admit stage, `kernel::budget`
+  (`Budget`, `AgentRateBudget`, `Unlimited`) for the Budget stage, and
+  `kernel::audit_log` (`AuditLog`, `MemoryAuditLog`, `FileAuditLog`) for the Record
+  stages. Injected with `KernelBuilder::{with_agent_registry, with_budget,
+  with_audit_log}`.
+- `Kernel::register_agent`, `Kernel::end_session`, and
+  `security.require_registered_agents`.
+- Outcome leaves (`AuditEntry::outcome`, `AuditOutcome`) and receipts
+  (`ToolResponse::receipt`, `AuditReceipt`).
+- `KernelError::{AgentSuspended, SessionConflict, RateLimited, AuditUnavailable}`
+  (E012 to E015). `PolicyRequest` gained `principal` and `session_id`.
+- `audit::transparency`: RFC 9162 Merkle tree log with inclusion and consistency proofs,
+  stand-alone verifiers, and Ed25519-signed tree heads. Tested against the Certificate
+  Transparency reference vectors.
+- `kernel::ports::PolicyDecisionPoint` and `Kernel::builder`, so embedders can inject a
+  policy engine, host-side tool handlers (`with_tool`, `Kernel::register_tool`) and an
+  audit signing key.
+- `Kernel::audit_tree_head`, `prove_audit_inclusion`, `prove_audit_consistency` and
+  `audit_leaf_hash`: any decision can be proven to a third party.
+- `KernelError::AuditProof`, `HandlerError::AlreadyRegistered`,
+  `CustomHandlerRegistry::{register_arc, register_new}`.
+
+### Changed
+- **Breaking:** the `vak` Python package is 1.0.0 (was 0.1.0), for the methods removed
+  and changed below. Its version is separate from the crate's. `docs/python-sdk.md`
+  has a migration note for each.
+- Coverage is measured with cargo-llvm-cov, not tarpaulin (ADR 0012). Tarpaulin's
+  ptrace engine reported Wasmtime's signal-based traps as a segfault, so the job never
+  finished. `make coverage` and `make coverage-check` run it; it needs
+  `llvm-tools-preview`. The floor stays at 80% of lines, and the first measurement is
+  75.09%, so the job now fails on the floor (`TODO.md`). `tarpaulin.toml` is removed.
+- **Breaking:** Wasmtime 49.0.2 (was 41.0.4), for the 16 advisories in finding K11
+  (ADR 0010). Default features are off: Cranelift is the only compiler, and Winch, the
+  component model, GC, threads and WASI aren't compiled in. `cargo deny check` passes.
+  - **Fuel.** Wasmtime now charges fuel per byte for bulk memory operations, so the
+    kernel's fuel budget bounds them too.
+  - **Pooling.** `PoolingConfig::max_instances`, `max_memories` and `max_tables` now
+    limit core instances; they used to set the component-instance limits, which had no
+    effect.
+  - **Trap reasons.** A skill that traps fails with the trap's reason ("wasm trap: out
+    of bounds memory access"), not only its backtrace.
+- PyO3 0.29 (was 0.24), for RUSTSEC-2026-0176 and RUSTSEC-2026-0177 (finding K11). The
+  native classes no longer derive `FromPyObject` (`skip_from_py_object`); nothing took
+  them by value.
+- **Toolchain:** the minimum supported Rust is 1.96, the highest among dependencies
+  (Wasmtime 49); it was declared as 1.75, which nothing could build. CI tests stable
+  and 1.96, and checks formatting and clippy on stable only. The Dockerfile builds on
+  1.96 (it was on 1.75). The metrics endpoint's
+  `rust_version` and the Python module's `__rust_version__` come from
+  `Cargo.toml` instead of a hardcoded "1.75".
+- CI's clippy (`--all-targets --all-features -D warnings`, with `RUSTFLAGS=-D warnings`)
+  passes: 24 lints from newer toolchains fixed, plus warnings that only show with some
+  features off. The security clippy job (`unwrap_used`, `expect_used`, `panic`) checks
+  production code, as CLAUDE.md describes, and passes. Its 96 hits are gone:
+  - poisoned locks are recovered rather than unwrapped;
+  - an empty plan and a missing "default" role in the neuro-symbolic pipeline no longer
+    panic;
+  - a missing CAS `base_path` is a configuration error;
+  - constant regex patterns carry a scoped, commented `allow`.
+- **Breaking:** `audit::streaming::WebhookSink::new` returns a `Result`; it panicked if
+  the HTTP client couldn't be built.
+- **Breaking:** `CedarPolicy::policies` returns the current set as an
+  `Arc<CedarPolicySet>`. The policy loader refuses policies that carry `@property`
+  (`CedarPolicyError::PropertyAsPolicy`).
+- `policies/cedar/examples/payments.cedar` forbids restricted tools. SymCC showed that
+  without it a finance agent could still call a blocked `transfer_funds`.
+- `KernelError::PolicyViolation::policy_id` names the policies that denied, when the
+  decision point reports them. It used to be `"default"` for every denial.
+- **Breaking:** `AuditLogger::log` and `log_with_metadata` return
+  `Result<&AuditEntry, AuditError>`. A write the backend refused used to be logged and
+  returned as if stored; it is now an error, and the chain is left as it was.
+- **Breaking:** `AuditLogger` entries use a version 2 hash: a domain tag and every field
+  length-prefixed, `metadata` included (finding K7). Logs written before still verify
+  if their version 1 entries come first; `AuditReport::legacy_entries` counts them.
+- `serde_json` is built with `float_roundtrip`, so hashed JSON metadata reads back
+  exactly.
+- `audit.max_log_size_bytes` and `audit.retention_count` are documented as not applying
+  to the kernel's log, which is never rotated.
+- **Breaking:** default features are now `wasm` and `memory`. `reasoner`, `swarm`,
+  `integrations`, `dashboard`, `api` and `tools` need their features (or `full`), and
+  `reasoner::zk_proof` needs `experimental-zk`. `kernel::neurosymbolic_pipeline` and
+  `sandbox::reasoning_host` need `reasoner`.
+- `tools::skill_sign` is behind `legacy-tools`: its signatures don't cover permissions
+  and the skill registry can't read them. Use `sandbox::signing`.
+- **Breaking:** skill signatures are Ed25519 (`signed_by` + `signature`). The old unkeyed
+  SHA-256 "signatures" no longer verify. `SkillSignatureVerifier::{compute_signature,
+  sign_manifest}` and `SignatureVerificationResult` are removed; use
+  `signing::sign_skill` and `VerifiedSkill`. `SignatureConfig::trusted_keys` now holds hex
+  Ed25519 public keys and is enforced.
+- **Behaviour change:** a skill loads only if its module file exists, and runs only with
+  the module bytes it was verified with at load.
+- **Behaviour change:** `security.enable_rate_limiting` and `max_requests_per_minute`
+  are enforced (default 60 per agent per minute). They were previously ignored.
+- **Behaviour change:** principals reach policy with `internal` from their agent
+  record, not a constant `true`. Unregistered agents are not internal.
+- **Behaviour change:** an executed call is recorded as two audit entries, a decision
+  and an outcome. A session is bound to the first agent that uses it.
+- `VakAgent`'s allowed and blocked tools are enforced by the kernel, and refusals are
+  audited. `audit.log_path` selects a durable `FileAuditLog`; a log there that can't be
+  opened or doesn't verify fails `Kernel::build`.
+- **Breaking:** `Kernel::execute` on a permitted tool that doesn't exist now returns
+  `Err(KernelError::ToolNotFound)`. It used to return `success: true` from a "default
+  handler" that executed nothing.
+- The allowlist and `CedarEnforcer` logic moved out of `Kernel` into `kernel::pdp`
+  (`ConfigPolicy`, `EnforcerPolicy`). Behaviour is unchanged.
+- `VakRuntime::builder()` settings (`with_audit_logging`, `with_policy_enforcement`,
+  `with_sandboxing`, `with_default_timeout`) now reach `KernelConfig`.
+- Memory Merkle tier hashes with SHA-256 over `(key, value)`, using the RFC 9162 tree
+  shape. Proofs carry real sibling paths. `MerkleProof` gained `key` and `verify_for`.
+- Z3 verifier: `Matches`, `Forbidden` and list values are rejected instead of being
+  translated incorrectly.
+- `lib.rs` status table states assurance levels instead of claiming an external audit.
+
+### Fixed
+- **Breaking:** the Python SDK answers only from the kernel (finding I4, ADR 0011).
+  - **What goes through the kernel.** `evaluate_policy`, `list_tools`, the audit-log
+    methods (`get_audit_logs`, `get_audit_entry`, `verify_audit_chain`,
+    `get_audit_root_hash`, `export_audit_receipt`) and skills (`load_skill`,
+    `list_skills`, `get_skill`) read the Rust kernel's policy decision point, audit log
+    and skill registry.
+  - **What reaches the kernel's configuration.** `KernelConfig` security and policy
+    settings, through the new native `Kernel.from_settings`, which rejects unknown keys.
+    `register_agent` passes `allowed_tools` as the agent's scope, and `role` and
+    `attributes` for policy.
+  - **Removed.** Methods that answered from engines the kernel never consulted. Each
+    is listed under Removed, with its kernel equivalent if it has one.
+  - **Changed meaning.** These methods remain but answer differently:
+    - `VakKernel(config_path=...)` and `from_config` read a kernel configuration
+      file and raise `VakError` if it can't be loaded. They used to read the file as
+      policy rules for the binding's own engine, and ignore a file that didn't load.
+    - `config` together with `config_path` raises `VakError` when a setting the SDK
+      passes to the kernel is not the default. The file used to be read as policy
+      rules, and of `config` only the Python engine's default effect was used.
+    - `evaluate_policy`'s `action` is a tool name, and `context` the call's
+      parameters. An unregistered agent raises `AgentNotFoundError`; the agent
+      `"system"` used to be accepted. It records nothing; it used to write an audit
+      entry.
+    - `register_agent` no longer asks policy about `"agent.register"`.
+    - Audit entries come from the kernel's log, and `verify_audit_chain` checks it.
+      Native entries carry `policy_decision`, `details["hash"]` and
+      `details["previous_hash"]` instead of `decision`, `hash` and (from
+      `get_audit_entry`) `prev_hash`.
+    - `get_audit_root_hash` is the Merkle tree's root, not the last entry's hash.
+    - `export_audit_receipt` is the signed tree head (`head`, `timestamp_ms`,
+      `signature`, `public_key`). It used to be an empty dict with the native module,
+      and the stub's `receipt_id`, `timestamp`, `root_hash` and `entry_count`
+      without it.
+    - `list_tools`, `list_skills` and `get_skill` answer from the kernel: the tools
+      it can run, and the skills it has loaded, by name.
+  - **Without the native module,** these methods raise. The stub is deleted.
+  - **Defaults.** `ToolRequest.memory_limit_bytes` defaults to 128 MiB.
+  - **Bug fix.** `get_audit_logs` compares naive time bounds as local time.
+- **Breaking:** the Python SDK runs tools through `Kernel::execute` (finding I4, ADR
+  0011). The native `Kernel.execute_tool` returned `success: "true"` without running
+  anything, and so did the stub the SDK falls back to without the native module.
+  - **How a call runs.** The kernel's policy decides, its audit log records the call,
+    and the response carries its receipt.
+  - **The tool's input.** A tool gets `{"action": ..., "params": ...}`.
+  - **Refusals and failures.** A policy refusal raises `PolicyViolationError`, any
+    other refusal raises `ToolExecutionError`, and a tool that ran and failed has
+    `success=False`.
+  - **Memory.** A `memory_limit` below the 128 MiB the kernel gives every skill is
+    refused.
+  - **Without the native module,** `execute_tool` raises.
+  - **Tests.** `cargo test --features python` links and runs the bindings' tests
+    (PyO3's `extension-module` feature moved to `pyproject.toml`).
+- `ToolRequest::timeout_ms` is applied. It was ignored, so a caller that asked for a
+  tighter limit got the kernel's `max_execution_time`. WASM skills and registered tool
+  handlers now stop at whichever limit comes first; a request can't extend the
+  kernel's. `ToolRequest::time_limit` computes it.
+- **Breaking:** MCP `execute_skill` runs skills through `Kernel::execute` (finding I3).
+  It reported "executed successfully" for any skill name without running anything,
+  after loading unsigned skills from `./skills` outside the kernel. A refused, unknown
+  or failed skill is now an error result, and a successful one returns the kernel's
+  receipt. `create_vak_mcp_server` takes an `Arc<Kernel>`, and
+  `ExecuteSkillToolHandler::new` takes one too (it was a unit struct). Agent names map
+  to stable agent IDs (`mcp_agent_id`).
+- **Breaking:** `SecretScrubber::scrub_json` and `scrub_map` redact whole any value
+  under a sensitive key, keeping the key; they used to scrub such values by pattern
+  only, so `{"password": "hunter2"}` passed through. `is_sensitive_key` matches the
+  whole key against `memory::SENSITIVE_KEYS`, ignoring case. It used to match
+  substrings, flagging "author" and "max_tokens", and no longer flags keys outside
+  the list such as "secret_token" or "api-key".
+- `memory::receipts`: a public key or signature of the wrong length fails
+  verification. It used to be replaced with zero bytes, and an all-zero key is a
+  small-order point that non-strict Ed25519 verification can be forged against.
+- `test_signer_key_export_import` checks the imported key (same public key, same
+  signatures); it used to assert nothing.
+- A durable audit log (`FileAuditLog`) whose caller stopped waiting mid-append could
+  store the entry without adding it to the tree. The next entry then linked to the
+  wrong predecessor, and the log refused to open. Appends now run to completion
+  (ADR 0007).
+- `AuditLogger` rotation no longer breaks `verify_chain`, and no longer evicts entries
+  it failed to archive.
+- Skills were "signed" with an unkeyed hash anyone could recompute, over the module's path
+  when the module was missing, and `trusted_keys` was never read (K4).
+- WASM skills no longer block a Tokio worker for their whole runtime, and are no longer
+  recompiled (with a new engine and a new watchdog thread) on every call (K3).
+- A skill's output pointer and length are bounds-checked against guest memory as
+  unsigned values. A negative length used to make the host panic while allocating the
+  output buffer, unwinding through `Kernel::execute`.
+- A WASM skill that hits its wall-clock limit fails with `KernelError::Timeout`, like a
+  host handler, instead of a generic execution failure.
+- `sandbox::async_host` fell back to an allow-everything enforcer when its policy
+  enforcer couldn't be built. It now denies everything instead.
+- WASM skills trapped on entry: epoch interruption was enabled with no deadline, and
+  Wasmtime's default deadline is 0. A per-execution watchdog now enforces the wall-clock
+  timeout, and traps are classified by trap code.
+- SMT-LIB injection in the Z3 verifier: field names and string values were spliced into
+  the solver script unescaped. Negative numbers were emitted as invalid `-n` literals.
+- A panicking host tool handler no longer unwinds through `Kernel::execute`.
+
+### Removed
+- **Breaking:** Python SDK methods that answered from engines the kernel never consulted
+  (finding I4, ADR 0011). Each now has a kernel equivalent or none; the migration note
+  in `docs/python-sdk.md` gives it.
+  - **`VakKernel.create_audit_entry`, and `create_audit_entry` on the context from
+    `agent_context()`.** They wrote entries the kernel never decided, to the binding's
+    own audit logger, or without the native module to the stub's in-memory chain. The
+    SDK's audit methods then reported those as the audit log. The kernel's log records
+    only calls it mediates (ADR 0007). No equivalent.
+  - **`VakKernel.add_policy_hook` and `remove_policy_hook`.** A Python callable decided
+    beside the kernel, so the SDK's answer and the kernel's could differ. No equivalent.
+  - **`VakKernel.load_policies`.** It loaded rules into the Python `PolicyEngine`,
+    which the kernel doesn't consult. With the native module it then raised
+    `TypeError`: its arguments didn't match the native `add_policy_rule`. Equivalent:
+    a YAML policy file in `PolicyConfig.policy_paths`, read at startup. With policy
+    files, `SecurityConfig.allowed_tools` no longer applies, and `blocked_tools`
+    blocks only through rules that check `resource.restricted`.
+  - **`VakKernel.policy_engine`.** It returned that Python engine as if it were the
+    kernel's. No equivalent. `vak.policy.PolicyEngine` remains as a standalone
+    evaluator.
+  - **`VakKernel.add_safety_rule`.** A rule with action `"block"` stopped
+    `execute_tool` in Python, before the kernel saw the call. Equivalent: block the
+    call in the kernel, with a forbid rule in a policy file or a narrower
+    `AgentConfig.allowed_tools`, or, without policy files, `blocked_tools`.
+  - **`VakKernel.add_constraint` and `check_constraints`.** They delegated to
+    `ReasonerConfig`; nothing checked constraints before a call. No equivalent.
+    `ReasonerConfig.add_constraint` and `check_constraints` remain standalone.
+  - **`VakKernel.configure_reasoner` and `reasoner`.** They configured a Python
+    `ReasonerConfig` the Rust kernel never read, though the SDK's `execute_tool`
+    enforced its block rules. No equivalent; block those calls as for
+    `add_safety_rule`. `ReasonerConfig` remains as a standalone evaluator.
+  - **`VakKernel.register_skill(SkillManifest)`.** It recorded the manifest in Python.
+    With the native module it then raised `TypeError`: its arguments didn't match the
+    native `register_skill`. Without it, the stub stored the manifest. Nothing was
+    loaded or verified. Equivalent: `load_skill(manifest_path)`.
+  - **Native `Kernel.add_policy_rule`.** It added a rule to the binding's own policy
+    engine. Equivalent: as `load_policies`.
+  - **Native `Kernel.validate_policy_config`, `has_allow_policies` and
+    `policy_rule_count`.** They described that engine. No equivalent.
+  - **Native `Kernel.register_skill` and `get_skill_info`, and the Rust type
+    `vak::python::SkillInfo` (feature `python`).** They managed a map of names beside
+    the kernel's registry. Equivalents: `load_skill` and `get_skill`.
+  - **Native `Kernel.unregister_skill` and `set_skill_enabled`.** Same map: they
+    changed only what `list_tools` and `get_skill_info` reported. The kernel has no call to unload or
+    disable a skill. No equivalent; block the tool at startup instead.
+  - **Native `Kernel.create_audit_entry`.** As `VakKernel.create_audit_entry`.
+  - **`vak._stub`.** Without the native module it answered in the kernel's place and
+    allowed every policy question. Kernel-backed methods now raise `VakError`.
+- The unused `rs_merkle` dependency.
+- `src/prelude.rs`, which was never compiled (`lib.rs` defines `prelude` inline) and
+  referenced types that don't exist.
+
 ## [1.0.0] - 2026-02-13
 
 ### Added

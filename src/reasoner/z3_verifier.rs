@@ -142,7 +142,11 @@ impl Z3Config {
 // SMT-LIB2 Builder
 // ============================================================================
 
-/// Builder for SMT-LIB2 formulas
+/// Builder for SMT-LIB2 formulas.
+///
+/// The builder assembles raw SMT-LIB text and does no escaping. Pass names
+/// through [`smt_symbol`] and string values through [`smt_string`] first;
+/// [`Z3FormalVerifier`] does.
 #[derive(Debug, Default)]
 pub struct SmtLibBuilder {
     declarations: Vec<String>,
@@ -284,6 +288,68 @@ impl SmtLibBuilder {
 }
 
 // ============================================================================
+// SMT-LIB2 quoting
+// ============================================================================
+
+/// SMT-LIB and theory names a field must not shadow. Fields are restricted to
+/// `[A-Za-z_][A-Za-z0-9_]*`, so dotted theory functions (`str.len`, …) can't
+/// collide; these are the undotted ones.
+const RESERVED_SYMBOLS: &[&str] = &[
+    "true", "false", "and", "or", "not", "xor", "ite", "distinct", "let", "forall", "exists",
+    "match", "par", "as", "abs", "div", "mod", "to_real", "to_int", "is_int",
+];
+
+/// Validates a field name for use as an SMT-LIB symbol.
+///
+/// Only plain identifiers are accepted. Anything else, including names that
+/// would need quoting, is rejected rather than escaped: a field name that
+/// could change the structure of the script must never reach the solver.
+pub fn smt_symbol(name: &str) -> Result<String, Z3Error> {
+    let mut chars = name.chars();
+    let valid_start = chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_');
+    let valid_rest = chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if !valid_start || !valid_rest || RESERVED_SYMBOLS.contains(&name) {
+        return Err(Z3Error::TranslationError(format!(
+            "field name {name:?} is not a plain identifier ([A-Za-z_][A-Za-z0-9_]*) or is reserved"
+        )));
+    }
+    Ok(name.to_string())
+}
+
+/// Encodes a string as an SMT-LIB 2.6 string literal.
+///
+/// Printable ASCII passes through, except `"`, which is doubled as the
+/// standard requires. Every other character, including `\`, is written as a
+/// `\u{…}` escape, so the literal cannot end early and no escape sequence in
+/// the input is reinterpreted.
+pub fn smt_string(value: &str) -> Result<String, Z3Error> {
+    // The SMT-LIB string theory's alphabet ends at U+2FFFF.
+    const MAX_CODE_POINT: u32 = 0x2FFFF;
+
+    let mut literal = String::with_capacity(value.len() + 2);
+    literal.push('"');
+    for c in value.chars() {
+        match c {
+            '"' => literal.push_str("\"\""),
+            ' '..='~' if c != '\\' => literal.push(c),
+            _ if (c as u32) <= MAX_CODE_POINT => {
+                literal.push_str(&format!("\\u{{{:x}}}", c as u32));
+            }
+            _ => {
+                return Err(Z3Error::TranslationError(format!(
+                    "character U+{:X} is outside the SMT-LIB string alphabet",
+                    c as u32
+                )))
+            }
+        }
+    }
+    literal.push('"');
+    Ok(literal)
+}
+
+// ============================================================================
 // Z3 Formal Verifier
 // ============================================================================
 
@@ -342,20 +408,26 @@ impl Z3FormalVerifier {
             .unwrap_or(false)
     }
 
-    /// Translate a constraint value to SMT-LIB2 format
-    fn translate_value(value: &ConstraintValue) -> String {
+    /// Translate a constraint value to an SMT-LIB2 term.
+    ///
+    /// Values used to be spliced in with `format!`, so a string containing
+    /// `"` could close the literal and inject arbitrary assertions, negative
+    /// numbers came out as `-5` (not an SMT-LIB numeral), and a list was
+    /// silently replaced by its first element.
+    fn translate_value(value: &ConstraintValue) -> Result<String, Z3Error> {
         match value {
-            ConstraintValue::Integer(i) => i.to_string(),
-            ConstraintValue::Float(f) => f.to_string(),
-            ConstraintValue::String(s) => format!("\"{}\"", s),
-            ConstraintValue::Boolean(b) => b.to_string(),
-            ConstraintValue::List(items) => {
-                // For simplicity, represent lists as their first element
-                items
-                    .first()
-                    .map(Self::translate_value)
-                    .unwrap_or_else(|| "0".to_string())
-            }
+            ConstraintValue::Integer(i) if *i < 0 => Ok(format!("(- {})", i.unsigned_abs())),
+            ConstraintValue::Integer(i) => Ok(i.to_string()),
+            ConstraintValue::Float(f) if !f.is_finite() => Err(Z3Error::TranslationError(format!(
+                "non-finite number {f} has no SMT-LIB representation"
+            ))),
+            ConstraintValue::Float(f) if *f < 0.0 => Ok(format!("(- {})", -f)),
+            ConstraintValue::Float(f) => Ok(f.to_string()),
+            ConstraintValue::String(s) => smt_string(s),
+            ConstraintValue::Boolean(b) => Ok(b.to_string()),
+            ConstraintValue::List(_) => Err(Z3Error::UnsupportedConstraint(
+                "list values have no sound encoding here; use In/NotIn".to_string(),
+            )),
         }
     }
 
@@ -368,73 +440,92 @@ impl Z3FormalVerifier {
     ) -> Result<String, Z3Error> {
         // Declare context variables
         for (name, value) in context {
+            let symbol = smt_symbol(name)?;
+            let smt_value = Self::translate_value(value)?;
             match value {
-                ConstraintValue::Integer(_) => builder.declare_int(name),
-                ConstraintValue::Float(_) => builder.declare_real(name),
-                ConstraintValue::Boolean(_) => builder.declare_bool(name),
-                ConstraintValue::String(_) => builder.declare_string(name),
-                ConstraintValue::List(_) => builder.declare_int(name), // Simplification
+                ConstraintValue::Integer(_) => builder.declare_int(&symbol),
+                ConstraintValue::Float(_) => builder.declare_real(&symbol),
+                ConstraintValue::Boolean(_) => builder.declare_bool(&symbol),
+                ConstraintValue::String(_) => builder.declare_string(&symbol),
+                ConstraintValue::List(_) => {
+                    return Err(Z3Error::UnsupportedConstraint(
+                        "list values have no sound encoding here".to_string(),
+                    ))
+                }
             };
 
             // Assert the context value
-            let smt_value = Self::translate_value(value);
-            builder.assert_eq(name, &smt_value);
+            builder.assert_eq(&symbol, &smt_value);
         }
+
+        let value = Self::translate_value;
 
         // Translate constraint kind
         let assertion = match &constraint.kind {
-            ConstraintKind::Equals { field, value } => {
-                format!("(= {} {})", field, Self::translate_value(value))
+            ConstraintKind::Equals { field, value: v } => {
+                format!("(= {} {})", smt_symbol(field)?, value(v)?)
             }
-            ConstraintKind::NotEquals { field, value } => {
-                format!("(not (= {} {}))", field, Self::translate_value(value))
+            ConstraintKind::NotEquals { field, value: v } => {
+                format!("(not (= {} {}))", smt_symbol(field)?, value(v)?)
             }
-            ConstraintKind::LessThan { field, value } => {
-                format!("(< {} {})", field, Self::translate_value(value))
+            ConstraintKind::LessThan { field, value: v } => {
+                format!("(< {} {})", smt_symbol(field)?, value(v)?)
             }
-            ConstraintKind::LessThanOrEqual { field, value } => {
-                format!("(<= {} {})", field, Self::translate_value(value))
+            ConstraintKind::LessThanOrEqual { field, value: v } => {
+                format!("(<= {} {})", smt_symbol(field)?, value(v)?)
             }
-            ConstraintKind::GreaterThan { field, value } => {
-                format!("(> {} {})", field, Self::translate_value(value))
+            ConstraintKind::GreaterThan { field, value: v } => {
+                format!("(> {} {})", smt_symbol(field)?, value(v)?)
             }
-            ConstraintKind::GreaterThanOrEqual { field, value } => {
-                format!("(>= {} {})", field, Self::translate_value(value))
+            ConstraintKind::GreaterThanOrEqual { field, value: v } => {
+                format!("(>= {} {})", smt_symbol(field)?, value(v)?)
             }
             ConstraintKind::In { field, values } => {
-                let or_clauses: Vec<String> = values
+                let field = smt_symbol(field)?;
+                let or_clauses = values
                     .iter()
-                    .map(|v| format!("(= {} {})", field, Self::translate_value(v)))
-                    .collect();
+                    .map(|v| Ok(format!("(= {} {})", field, value(v)?)))
+                    .collect::<Result<Vec<_>, Z3Error>>()?;
+                // `(or)` with no arguments is false: membership in nothing.
                 format!("(or {})", or_clauses.join(" "))
             }
             ConstraintKind::NotIn { field, values } => {
-                let and_clauses: Vec<String> = values
+                let field = smt_symbol(field)?;
+                let and_clauses = values
                     .iter()
-                    .map(|v| format!("(not (= {} {}))", field, Self::translate_value(v)))
-                    .collect();
+                    .map(|v| Ok(format!("(not (= {} {}))", field, value(v)?)))
+                    .collect::<Result<Vec<_>, Z3Error>>()?;
                 format!("(and {})", and_clauses.join(" "))
             }
-            ConstraintKind::Contains { field, value } => {
-                format!("(str.contains {} \"{}\")", field, value)
+            ConstraintKind::Contains { field, value: v } => {
+                format!("(str.contains {} {})", smt_symbol(field)?, smt_string(v)?)
             }
-            ConstraintKind::Matches { field, pattern } => {
-                // Regular expression matching
-                format!("(str.in.re {} (str.to.re \"{}\"))", field, pattern)
+            ConstraintKind::Matches { .. } => {
+                // `str.to.re` matches its argument *literally*, so the old
+                // translation turned every regex into a string equality.
+                // SMT-LIB regexes are built from combinators, not PCRE syntax;
+                // until there is a translator, refuse rather than answer wrong.
+                return Err(Z3Error::UnsupportedConstraint(
+                    "Matches: regex patterns are not translated to SMT-LIB".to_string(),
+                ));
             }
             ConstraintKind::Between { field, min, max } => {
+                let field = smt_symbol(field)?;
                 format!(
                     "(and (>= {} {}) (<= {} {}))",
                     field,
-                    Self::translate_value(min),
+                    value(min)?,
                     field,
-                    Self::translate_value(max)
+                    value(max)?
                 )
             }
-            ConstraintKind::Forbidden { resources } => {
-                // Forbidden resources - return true assertion (to be checked separately)
-                let _ = resources; // Handled by check_forbidden
-                "true".to_string()
+            ConstraintKind::Forbidden { .. } => {
+                // This used to translate to `true`, so `verify` reported every
+                // Forbidden constraint as satisfied whatever the resource.
+                // Forbidden resources are checked by `check_forbidden`.
+                return Err(Z3Error::UnsupportedConstraint(
+                    "Forbidden: use check_forbidden, not verify".to_string(),
+                ));
             }
             ConstraintKind::And { constraints } => {
                 let mut sub_assertions = Vec::new();
@@ -795,22 +886,137 @@ mod tests {
 
     #[test]
     fn test_value_translation() {
+        let t = |v: ConstraintValue| Z3FormalVerifier::translate_value(&v).unwrap();
+        assert_eq!(t(ConstraintValue::Integer(42)), "42");
+        assert_eq!(t(ConstraintValue::Float(2.5)), "2.5");
+        assert_eq!(t(ConstraintValue::Boolean(true)), "true");
+        assert_eq!(t(ConstraintValue::String("hello".to_string())), "\"hello\"");
+    }
+
+    #[test]
+    fn test_negative_numbers_use_smtlib_negation() {
+        let t = |v: ConstraintValue| Z3FormalVerifier::translate_value(&v).unwrap();
+        assert_eq!(t(ConstraintValue::Integer(-5)), "(- 5)");
         assert_eq!(
-            Z3FormalVerifier::translate_value(&ConstraintValue::Integer(42)),
-            "42"
+            t(ConstraintValue::Integer(i64::MIN)),
+            "(- 9223372036854775808)"
         );
+        assert_eq!(t(ConstraintValue::Float(-2.5)), "(- 2.5)");
+        assert!(Z3FormalVerifier::translate_value(&ConstraintValue::Float(f64::NAN)).is_err());
+        assert!(Z3FormalVerifier::translate_value(&ConstraintValue::Float(f64::INFINITY)).is_err());
+    }
+
+    #[test]
+    fn test_string_values_cannot_escape_their_literal() {
+        let payload = "x\") (assert false) (check-sat";
+        let literal = smt_string(payload).unwrap();
+        assert_eq!(literal, "\"x\"\") (assert false) (check-sat\"");
+
+        // Backslashes and non-ASCII become \u{..} escapes, so an escape
+        // sequence in the input is never reinterpreted by the solver.
+        assert_eq!(smt_string("a\\u{41}").unwrap(), "\"a\\u{5c}u{41}\"");
+        assert_eq!(smt_string("é\n").unwrap(), "\"\\u{e9}\\u{a}\"");
+
+        // A value inside a constraint is quoted the same way.
+        let verifier = create_test_verifier();
+        let mut builder = SmtLibBuilder::new();
+        let constraint = Constraint::new(
+            "c",
+            ConstraintKind::Contains {
+                field: "path".to_string(),
+                value: payload.to_string(),
+            },
+        );
+        let assertion = verifier
+            .translate_constraint(&constraint, &HashMap::new(), &mut builder)
+            .unwrap();
         assert_eq!(
-            Z3FormalVerifier::translate_value(&ConstraintValue::Float(2.5)),
-            "2.5"
+            assertion,
+            "(str.contains path \"x\"\") (assert false) (check-sat\")"
         );
-        assert_eq!(
-            Z3FormalVerifier::translate_value(&ConstraintValue::Boolean(true)),
-            "true"
+    }
+
+    #[test]
+    fn test_field_names_must_be_plain_identifiers() {
+        assert_eq!(smt_symbol("amount").unwrap(), "amount");
+        assert_eq!(smt_symbol("_tmp2").unwrap(), "_tmp2");
+        for bad in [
+            "",
+            "2fast",
+            "a b",
+            "x) (assert false",
+            "|quoted|",
+            "str.len",
+            "true",
+            "and",
+        ] {
+            assert!(smt_symbol(bad).is_err(), "{bad:?} should be rejected");
+        }
+
+        let verifier = create_test_verifier();
+        let mut builder = SmtLibBuilder::new();
+        let constraint = Constraint::new(
+            "c",
+            ConstraintKind::LessThan {
+                field: "x 0) (assert true".to_string(),
+                value: ConstraintValue::Integer(1),
+            },
         );
-        assert_eq!(
-            Z3FormalVerifier::translate_value(&ConstraintValue::String("hello".to_string())),
-            "\"hello\""
+        assert!(verifier
+            .translate_constraint(&constraint, &HashMap::new(), &mut builder)
+            .is_err());
+
+        // Context keys are checked too.
+        let mut context = HashMap::new();
+        context.insert("a) (assert false".to_string(), ConstraintValue::Integer(1));
+        let ok = Constraint::new(
+            "c",
+            ConstraintKind::LessThan {
+                field: "a".to_string(),
+                value: ConstraintValue::Integer(1),
+            },
         );
+        assert!(verifier
+            .translate_constraint(&ok, &context, &mut builder)
+            .is_err());
+    }
+
+    #[test]
+    fn test_untranslatable_constraints_fail_closed() {
+        let verifier = create_test_verifier();
+        let mut builder = SmtLibBuilder::new();
+        let context = HashMap::new();
+        for kind in [
+            ConstraintKind::Matches {
+                field: "path".to_string(),
+                pattern: "^/etc/.*".to_string(),
+            },
+            ConstraintKind::Forbidden {
+                resources: vec!["/etc/shadow".to_string()],
+            },
+        ] {
+            let constraint = Constraint::new("c", kind);
+            assert!(matches!(
+                verifier.translate_constraint(&constraint, &context, &mut builder),
+                Err(Z3Error::UnsupportedConstraint(_))
+            ));
+        }
+
+        let mut lists = HashMap::new();
+        lists.insert(
+            "xs".to_string(),
+            ConstraintValue::List(vec![ConstraintValue::Integer(1)]),
+        );
+        let constraint = Constraint::new(
+            "c",
+            ConstraintKind::GreaterThan {
+                field: "xs".to_string(),
+                value: ConstraintValue::Integer(0),
+            },
+        );
+        assert!(verifier
+            .translate_constraint(&constraint, &lists, &mut builder)
+            .is_err());
     }
 
     #[test]

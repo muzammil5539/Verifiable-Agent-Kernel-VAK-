@@ -76,6 +76,7 @@ pub mod tree_search;
 pub mod verification_gateway;
 pub mod verifier;
 pub mod z3_verifier;
+#[cfg(feature = "experimental-zk")]
 pub mod zk_proof;
 
 // Re-export all public types from PRM
@@ -156,6 +157,7 @@ pub use constrained_decoding::{
 };
 
 // Re-export Zero-Knowledge Proof types (FUT-001)
+#[cfg(feature = "experimental-zk")]
 pub use zk_proof::{
     ProofConfig, ProofData, ProofMetadata, ProofRegistry, StatementType,
     VerificationResult as ZkVerificationResult, ZkError, ZkProof, ZkProver, ZkResult, ZkStatement,

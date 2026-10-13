@@ -41,7 +41,9 @@ class ToolRequest:
     action: str
     parameters: dict[str, Any] = field(default_factory=dict)
     timeout_ms: int = 5000
-    memory_limit_bytes: int = 64 * 1024 * 1024  # 64 MB default
+    # 128 MiB, as AgentConfig and the native kernel's per-skill limit: the
+    # kernel refuses a call that asks for less than it enforces.
+    memory_limit_bytes: int = 128 * 1024 * 1024
     request_id: str | None = None
 
 
@@ -58,6 +60,9 @@ class ToolResponse:
         execution_time_ms: Time taken to execute the tool.
         memory_used_bytes: Memory consumed during execution.
         audit_trail: List of audit entry IDs generated during execution.
+        receipt: The kernel's audit receipt for the call: the leaves that
+            record its decision and outcome, and a signed tree head they
+            can be proven against.
     """
     request_id: str
     success: bool
@@ -66,6 +71,7 @@ class ToolResponse:
     execution_time_ms: float = 0.0
     memory_used_bytes: int = 0
     audit_trail: list[str] = field(default_factory=list)
+    receipt: dict[str, Any] | None = None
 
     def unwrap(self) -> Any:
         """

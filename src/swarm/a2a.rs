@@ -372,10 +372,13 @@ impl Default for DiscoveryService {
 // A2A Protocol
 // ============================================================================
 
+/// A callback for messages of one type.
+type MessageHandler = Box<dyn Fn(&A2AMessage) + Send + Sync>;
+
 /// Core A2A protocol handler for sending and receiving inter-agent messages
 pub struct A2AProtocol {
     discovery: Arc<DiscoveryService>,
-    message_handlers: RwLock<HashMap<String, Vec<Box<dyn Fn(&A2AMessage) + Send + Sync>>>>,
+    message_handlers: RwLock<HashMap<String, Vec<MessageHandler>>>,
     pending_responses: RwLock<HashMap<String, tokio::sync::oneshot::Sender<A2AMessage>>>,
 }
 

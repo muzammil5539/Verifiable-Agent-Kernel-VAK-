@@ -147,13 +147,13 @@ class TestToolRequest:
         assert request.timeout_ms == 5000
 
     def test_request_default_memory_limit(self):
-        """Test default memory limit (64 MB)."""
+        """Test default memory limit (128 MiB, as the kernel enforces)."""
         request = ToolRequest(
             tool_id="test",
             agent_id="agent",
             action="test"
         )
-        assert request.memory_limit_bytes == 64 * 1024 * 1024
+        assert request.memory_limit_bytes == 128 * 1024 * 1024
 
     def test_request_custom_limits(self):
         """Test custom timeout and memory limits."""

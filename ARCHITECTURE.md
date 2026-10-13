@@ -2,6 +2,10 @@
 
 > **Verifiable Agent Kernel (VAK)** -- Deterministic Control Plane for Autonomous AI Agents
 
+> **Read first:** [`docs/architecture-v2.md`](docs/architecture-v2.md) audits this
+> document's claims against the code, and gives the research-grounded target architecture
+> and migration plan. Where they disagree, the v2 document reflects what the code does.
+
 ---
 
 ## Table of Contents
@@ -158,9 +162,9 @@ The kernel orchestrates the full request lifecycle:
 | `SessionId` | UUIDv7 identifier for sessions. |
 | `AuditId` | UUIDv7 identifier for audit entries. |
 | `ToolRequest` | Encapsulates tool name, parameters (JSON), timeout, and a unique request ID. |
-| `ToolResponse` | Contains success/failure, result JSON, error string, and execution time. |
+| `ToolResponse` | Contains success/failure, result JSON, error string, execution time, and an `AuditReceipt` (decision and outcome leaves, signed tree head). |
 | `PolicyDecision` | Enum: `Allow { reason, constraints }`, `Deny { reason, violated_policies }`, `Inadmissible { reason }`. |
-| `KernelError` | Comprehensive error enum with error codes (E001-E010). |
+| `KernelError` | Comprehensive error enum with error codes (E001-E015). |
 | `KernelConfig` | Builder-based configuration with security, audit, policy, and resource sub-configs. |
 
 **Sub-modules:**
@@ -172,8 +176,13 @@ The kernel orchestrates the full request lifecycle:
 | `traits.rs` | Async traits: `PolicyEvaluator`, `AuditWriter`, `StateStore`, `ToolExecutor` |
 | `async_pipeline.rs` | Concurrent request processing pipeline |
 | `neurosymbolic_pipeline.rs` | PRM/reasoning integration pipeline |
-| `rate_limiter.rs` | Token-bucket rate limiter per agent |
+| `rate_limiter.rs` | Token-bucket and sliding-window primitives; `TokenBucket` backs `AgentRateBudget` |
 | `custom_handlers.rs` | Registry for user-defined tool handlers |
+| `ports.rs` | The pipeline's ports, one per stage: `AgentRegistry`, `Budget`, `PolicyDecisionPoint`, `AuditLog`, `ToolHandler` |
+| `identity.rs` | `AgentRecord`, `AgentRegistry`, `InMemoryAgentRegistry` (Admit stage) |
+| `budget.rs` | `Budget`, `AgentRateBudget`, `Unlimited` (Budget stage) |
+| `pdp.rs` | `ConfigPolicy`, `EnforcerPolicy` (Decide stage) |
+| `audit_log.rs` | `AuditLog`, `MemoryAuditLog`, `FileAuditLog`, `SqliteAuditLog` (Record stages; the one audit path, ADR 0007) |
 
 **Built-in tools:**
 
@@ -190,7 +199,10 @@ Any tool name not matching a built-in is dispatched to the WASM skill registry.
 
 **Location:** `src/policy/`
 
-Attribute-Based Access Control with Cedar-style policy definitions.
+Attribute-Based Access Control. Policies are Cedar-style YAML (`CedarEnforcer`, the
+default), or real Cedar evaluated by the `cedar-policy` crate (`policy.format: cedar`,
+feature `cedar`, ADR 0008). The kernel reaches either one through the
+`PolicyDecisionPoint` port (`kernel::pdp`).
 
 ```
 ┌────────────┐     ┌──────────────┐     ┌────────────────┐
@@ -204,6 +216,8 @@ Attribute-Based Access Control with Cedar-style policy definitions.
 
 | Component | File | Description |
 |-----------|------|-------------|
+| `Analyzer`, `PolicyProperties` | `cedar/analysis.rs` | Feature `cedar-analysis`: SymCC proofs of ceilings, floors and never-errors over every request the schema admits; checked reloads |
+| `CedarPolicySet` | `cedar/mod.rs` | Feature `cedar`: loads a Cedar schema and `.cedar` policies, validates them strictly, decides tool calls; any evaluation error denies |
 | `CedarEnforcer` | `enforcer.rs` | Core policy evaluation engine. Loads YAML rules, evaluates conditions. |
 | `DynamicContextCollector` | `context.rs` | Injects runtime context (timestamp, risk score) into policy evaluation. |
 | `HotReloadablePolicyEngine` | `hot_reload.rs` | Live policy updates using `arc-swap` for lock-free reads. |
@@ -232,9 +246,13 @@ rules:
 
 ### Audit Logger
 
-**Location:** `src/audit/`
+**Location:** `src/kernel/audit_log.rs` (the kernel's log) and `src/audit/`
 
-Provides a tamper-evident, hash-chained audit trail for every kernel action.
+Every kernel action is recorded through the `AuditLog` port, as a leaf of an RFC 9162
+Merkle tree (`audit::transparency`) with a per-entry hash chain. That is the only audit
+path for mediated actions (ADR 0007). The log lives in memory, or durably in a JSONL file
+or a SQLite database (`audit.log_path`, `audit.format`). Durable logs are verified when
+they open, refused if they don't verify, and never rotated.
 
 **Architecture:**
 
@@ -254,7 +272,7 @@ AuditEntry[N]
 
 | Component | File | Description |
 |-----------|------|-------------|
-| `AuditLogger` | `mod.rs` | Main logging system with chain integrity |
+| `AuditLogger` | `mod.rs` | Standalone hash-chained event log for application events outside the kernel (not the kernel's trail) |
 | `FlightRecorder` | `flight_recorder.rs` | Shadow-mode recording without execution |
 | `ReplaySession` | `replay.rs` | Cryptographic replay verification |
 | `AuditQueryEngine` | `graphql.rs` | GraphQL-style query API |
@@ -263,13 +281,13 @@ AuditEntry[N]
 | `S3Backend` | `s3_backend.rs` | Cloud archival storage |
 | `MultiRegionReplication` | `multi_region.rs` | Cross-region replication |
 
-**Storage backends:** File, SQLite (`rusqlite`), S3, In-memory
+**Storage:** the kernel's log uses memory, JSONL or SQLite (`rusqlite`). `AuditLogger`'s
+backends are file, SQLite, S3 and memory.
 
 **Features:**
-- Ed25519 signatures for non-repudiation
-- Log rotation with configurable max entries
-- Chain integrity verification
-- Cryptographic receipt generation
+- Ed25519-signed tree heads; inclusion and consistency proofs; receipts on every response
+- Chain integrity verification on open, failing closed
+- `AuditLogger`: per-entry Ed25519 signatures, rotation with a verifiable chain anchor
 
 ---
 
@@ -318,7 +336,7 @@ Three-tier hierarchical memory with cryptographic integrity.
 
 **Location:** `src/sandbox/`
 
-Isolated execution environment using Wasmtime 41.x.
+Isolated execution environment using Wasmtime 49.x, compiled with Cranelift only (docs/adr/0010).
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -338,9 +356,10 @@ Isolated execution environment using Wasmtime 41.x.
 
 | Component | File | Description |
 |-----------|------|-------------|
-| `WasmSandbox` | `mod.rs` | Main executor with `SandboxConfig` |
-| `EpochTicker` | `epoch_ticker.rs` | Background thread for cooperative preemption |
-| `PoolManager` | `pooling.rs` | Fixed-slot memory pooling allocator |
+| `SandboxRuntime` | `runtime.rs` | One engine, a module cache keyed by SHA-256, and one epoch ticker that parks while idle. The kernel runs every skill on it, on `spawn_blocking` (ADR 0004). |
+| `WasmSandbox` | `mod.rs` | One skill plus its `SandboxConfig`, on a `SandboxRuntime` (its own, or shared via `with_runtime`) |
+| `EpochTicker` | `epoch_ticker.rs` | Tokio-task ticker; not used by the kernel, which uses the runtime's own ticker thread |
+| `PoolManager` | `pooling.rs` | Fixed-slot memory pooling allocator; `SandboxRuntimeConfig::pooling` opts in |
 | `SkillRegistry` | `registry.rs` | Manifest-based skill management |
 | `HostFuncLinker` | `host_funcs.rs` | WASM-to-Rust host function bridge |
 | `AsyncHostFunctions` | `async_host.rs` | Async host function support |
@@ -351,12 +370,11 @@ Isolated execution environment using Wasmtime 41.x.
 
 | Resource | Default | Description |
 |----------|---------|-------------|
-| Memory | 16 MB | Per-instance memory cap |
-| Fuel | 1,000,000 | CPU instruction quota |
-| Timeout | 5 seconds | Per-call wall clock |
-| Max execution | 30 seconds | Absolute cap |
+| Memory | `resources.max_memory_mb` | Per-instance memory cap (16 MB for a bare `SandboxConfig`) |
+| Fuel | 10,000,000 in the kernel | CPU instruction quota (1,000,000 for a bare `SandboxConfig`) |
+| Timeout | `max_execution_time` (30 s) | Per-call wall clock, checked every 10 ms epoch tick |
 
-**Skill manifest fields:** `name`, `version`, `description`, `module` (WASM path), `capabilities`, `limits` (memory pages, execution time), `exports` (function signatures with schemas)
+**Skill manifest fields:** `name`, `version`, `description`, `author`, `permissions`, `input_schema`, `output_schema`, `wasm_path`, and `signed_by` / `signature`: a hex Ed25519 public key and a signature over the module's SHA-256 and every other field except `wasm_path` (`sandbox::signing`, ADR 0005). The kernel loads a skill only if `signed_by` is in `security.trusted_skill_keys` and the signature verifies, unless `security.allow_unsigned_skills` is set. Each loaded skill is pinned to the digest of the module it was verified with. Sign with `cargo run --example sign_skill`.
 
 **Included WASM skills:**
 
@@ -619,36 +637,40 @@ Extends the skill marketplace with comprehensive publisher verification, reputat
 
 ### Tool Request Lifecycle
 
+`Kernel::execute` is the single mediation point. Every stage that refuses a request
+records one `Deny` entry before returning the error. See `docs/adr/0003` for the
+reasoning and `docs/architecture-v2.md` §5.1 for the target design.
+
 ```
-1. Agent sends ToolRequest
-       │
+1. Admit        AgentRegistry: registered (if required)? active? session its own?
+       │        tool inside the agent's own allowed/blocked lists?
+       │        ── refuse ──► Deny entry + AgentNotFound / AgentSuspended /
+       │                      SessionConflict / PolicyViolation("agent.scope")
        ▼
-2. Rate Limiter check
-       │ (pass)
+2. Budget       Budget: per-agent token bucket (security.max_requests_per_minute)
+       │        ── over ────► Deny entry + RateLimited
        ▼
-3. Policy Engine evaluates request
-       │
-       ├── Deny ──► Return error + Audit log (denied)
-       │
-       ▼ (Allow)
-4. Audit Logger records decision
-       │
+3. Decide       PolicyDecisionPoint (EnforcerPolicy or ConfigPolicy), with the
+       │        agent's record as principal
+       │        ── deny ────► Deny entry + PolicyViolation
        ▼
-5. Dispatcher selects handler
-       │
-       ├── Built-in tool ──► Execute directly
-       │
-       └── WASM skill ──► Sandbox execution
-              │
-              ├── Load skill from SkillRegistry
-              ├── Verify Ed25519 signature
-              ├── Instantiate WASM with resource limits
-              ├── Execute with fuel metering
-              └── Return result or error
-       │
+4. Guard        (planned: Phase 2)
        ▼
-6. ToolResponse returned to agent
+5. Record       AuditLog::append(decision)  ── fails ──► AuditUnavailable, nothing runs
+       ▼
+6. Execute      built-in ──► host handler (panic boundary, timeout) ──► WASM skill
+       │        (fuel, epoch deadline) ──► otherwise ToolNotFound
+       ▼
+7. Outcome      AuditLog::append(outcome { decision_leaf, success, result_sha256 })
+       ▼
+8. Respond      ToolResponse { ..., receipt: { decision_leaf, outcome_leaf,
+                signed tree head } }
 ```
+
+A WASM skill is in the registry only if its Ed25519 signature verified at load against
+`security.trusted_skill_keys` (or unsigned skills are explicitly allowed). Execution runs
+only the module with the digest it was verified with; a file swapped afterwards is
+refused, and the outcome leaf records the module digest that ran (ADR 0005).
 
 ### Neuro-Symbolic Verification Flow (High-Stakes Actions)
 

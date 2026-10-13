@@ -1,11 +1,14 @@
 """
 VAK Policy Engine
 
-Define access control policies for your AI agents. Supports Cedar-style
-ABAC (Attribute-Based Access Control) with permit/forbid rules, glob pattern
-matching, and conditional evaluation.
+Policy types, and a standalone Python ABAC engine with Cedar-style
+permit/forbid rules, glob pattern matching, and conditional evaluation.
 
-Users define policies in their own project and load them into the kernel::
+The kernel does not consult this engine (ADR 0011). ``VakKernel``'s
+policy decisions come from the Rust kernel, configured by its config file
+or ``KernelConfig`` (allowed and blocked tools, the default decision, YAML
+or Cedar policy files). Use ``PolicyEngine`` to evaluate rules of your own,
+in your own code::
 
     from vak.policy import PolicyRule, PolicyCondition, permit, deny
 
@@ -29,7 +32,9 @@ Users define policies in their own project and load them into the kernel::
         ),
     ]
 
-    kernel.load_policies(rules)
+    engine = PolicyEngine(default_effect="deny")
+    engine.add_rules(rules)
+    decision = engine.evaluate(role="analyst", action="data.read", resource="reports/q4")
 """
 
 from __future__ import annotations
@@ -304,9 +309,9 @@ class PolicyRule:
 class PolicyEngine:
     """Local policy engine for evaluating rules in pure Python.
 
-    Use this when you want to define and evaluate policies entirely in
-    Python without the Rust native module. The kernel also delegates to
-    this engine for Python-side rule evaluation.
+    Use this to define and evaluate policies of your own, in Python. The
+    kernel does not consult it: its decisions come from its own
+    configuration (ADR 0011).
 
     Example::
 
@@ -475,7 +480,7 @@ def permit(
 ) -> PolicyDecision:
     """Create an ALLOW policy decision.
 
-    Convenience factory for use in policy hooks and custom evaluators.
+    Convenience factory for custom evaluators.
 
     Args:
         policy_id: Identifier for this policy rule.
@@ -490,8 +495,8 @@ def permit(
 
         from vak.policy import permit
 
-        def allow_admins(agent_id, action, context):
-            if context.get("role") == "admin":
+        def evaluate(role, action):
+            if role == "admin":
                 return permit(policy_id="admin-override", reason="Admin access")
             return None
     """
@@ -512,7 +517,7 @@ def deny(
 ) -> PolicyDecision:
     """Create a DENY policy decision.
 
-    Convenience factory for use in policy hooks and custom evaluators.
+    Convenience factory for custom evaluators.
 
     Args:
         policy_id: Identifier for this policy rule.
@@ -527,7 +532,7 @@ def deny(
 
         from vak.policy import deny
 
-        def block_dangerous(agent_id, action, context):
+        def evaluate(role, action):
             if action.startswith("system."):
                 return deny(policy_id="safety", reason="System actions blocked")
             return None

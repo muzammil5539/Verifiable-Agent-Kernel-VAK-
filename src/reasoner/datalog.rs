@@ -1025,7 +1025,7 @@ mod tests {
             // - RULE_001_CRITICAL_DELETE (critical file)
             // - RULE_006_SYSTEM_PATH (/etc is a system path)
             assert!(
-                violations.len() >= 1,
+                !violations.is_empty(),
                 "Expected at least 1 violation, got {}",
                 violations.len()
             );

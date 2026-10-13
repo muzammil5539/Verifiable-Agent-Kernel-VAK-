@@ -511,7 +511,7 @@ impl MetricsCollector {
              # TYPE vak_build_info gauge\n\
              vak_build_info{{version=\"{}\",rust_version=\"{}\"}} 1\n\n",
             env!("CARGO_PKG_VERSION"),
-            "1.75"
+            env!("CARGO_PKG_RUST_VERSION")
         ));
 
         let labels = &self.config.global_labels;

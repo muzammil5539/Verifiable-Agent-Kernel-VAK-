@@ -1,0 +1,32 @@
+// An extended schema (docs/adr/0008): the kernel's schema in vak.cedarschema,
+// plus an agent attribute and a tool whose arguments policies can read.
+// Used with payments.cedar by tests/cedar_policy.rs.
+namespace Vak {
+  entity Agent {
+    internal: Bool,
+    name: String,
+    // Set on an agent's record with `AgentRecord::with_attribute("team", ..)`.
+    team?: String,
+  };
+
+  entity Tool {
+    restricted: Bool,
+    builtin: Bool,
+  };
+
+  action "call" appliesTo {
+    principal: Agent,
+    resource: Tool,
+    context: { session: String, arguments: {} },
+  };
+
+  // `transfer_funds` calls carry exactly these arguments, or are denied.
+  action "transfer_funds" in ["call"] appliesTo {
+    principal: Agent,
+    resource: Tool,
+    context: {
+      session: String,
+      arguments: { amount: Long, currency: String, to: String },
+    },
+  };
+}

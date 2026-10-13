@@ -92,7 +92,15 @@ async fn kernel_chains_its_audit_entries() {
     }
 
     let log = kernel.get_audit_log().await;
-    assert_eq!(log.len(), 3, "every execution must be audited");
+    assert_eq!(
+        log.len(),
+        6,
+        "every execution must be audited: a decision, then its outcome"
+    );
+    for pair in log.chunks(2) {
+        assert!(pair[0].outcome.is_none(), "decision first");
+        assert!(pair[1].outcome.is_some(), "then the outcome");
+    }
 
     assert!(
         log[1].previous_hash.is_some(),

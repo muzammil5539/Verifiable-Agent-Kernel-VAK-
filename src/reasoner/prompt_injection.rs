@@ -334,6 +334,9 @@ struct DetectionPatterns {
 }
 
 impl DetectionPatterns {
+    // The patterns are constants, compiled by every test that builds a
+    // detector: `expect` can only fail on an edit that tests catch.
+    #[allow(clippy::expect_used)]
     fn new() -> Self {
         Self {
             instruction_override: vec![

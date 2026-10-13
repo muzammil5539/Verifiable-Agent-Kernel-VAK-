@@ -442,11 +442,12 @@ impl DatalogFact {
             arguments: args,
         }
     }
+}
 
-    /// Convert to string representation
-    pub fn to_string(&self) -> String {
-        let args: Vec<String> = self.arguments.iter().map(|a| a.to_string()).collect();
-        format!("{}({})", self.predicate, args.join(", "))
+impl std::fmt::Display for DatalogFact {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let args: Vec<String> = self.arguments.iter().map(ToString::to_string).collect();
+        write!(f, "{}({})", self.predicate, args.join(", "))
     }
 }
 
@@ -470,17 +471,16 @@ pub enum DatalogTerm {
     },
 }
 
-impl DatalogTerm {
-    /// Convert to string representation
-    pub fn to_string(&self) -> String {
+impl std::fmt::Display for DatalogTerm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DatalogTerm::String(s) => format!("\"{}\"", s),
-            DatalogTerm::Integer(i) => i.to_string(),
-            DatalogTerm::Float(f) => f.to_string(),
-            DatalogTerm::Variable(v) => v.clone(),
+            DatalogTerm::String(s) => write!(f, "\"{s}\""),
+            DatalogTerm::Integer(i) => write!(f, "{i}"),
+            DatalogTerm::Float(x) => write!(f, "{x}"),
+            DatalogTerm::Variable(v) => write!(f, "{v}"),
             DatalogTerm::Compound { functor, args } => {
-                let args_str: Vec<String> = args.iter().map(|a| a.to_string()).collect();
-                format!("{}({})", functor, args_str.join(", "))
+                let args_str: Vec<String> = args.iter().map(ToString::to_string).collect();
+                write!(f, "{}({})", functor, args_str.join(", "))
             }
         }
     }
@@ -525,6 +525,9 @@ impl Default for ConstrainedDecoder {
 
 impl ConstrainedDecoder {
     /// Create a new constrained decoder
+    // The patterns are constants, compiled by every test that builds a
+    // decoder: `unwrap` can only fail on an edit that tests catch.
+    #[allow(clippy::unwrap_used)]
     pub fn new() -> Self {
         Self {
             grammar_cache: HashMap::new(),
@@ -575,9 +578,11 @@ impl ConstrainedDecoder {
             // Remove trailing period if present
             let line = line.trim_end_matches('.');
 
-            if let Some(caps) = self.datalog_fact_regex.captures(line) {
-                let predicate = caps.get(1).unwrap().as_str().to_string();
-                let args_str = caps.get(2).unwrap().as_str();
+            if let Some((predicate, args_str)) = self
+                .datalog_fact_regex
+                .captures(line)
+                .and_then(|caps| Some((caps.get(1)?.as_str().to_string(), caps.get(2)?.as_str())))
+            {
                 let arguments = self.parse_datalog_args(args_str)?;
 
                 facts.push(DatalogFact {
@@ -643,10 +648,14 @@ impl ConstrainedDecoder {
         }
 
         // Try regex fallback
-        if let Some(caps) = self.vak_action_regex.captures(output) {
+        if let Some((action_type, target)) = self
+            .vak_action_regex
+            .captures(output)
+            .and_then(|caps| Some((caps.get(1)?.as_str(), caps.get(2)?.as_str())))
+        {
             return Ok(ParsedVakAction {
-                action_type: caps.get(1).unwrap().as_str().to_string(),
-                target: caps.get(2).unwrap().as_str().to_string(),
+                action_type: action_type.to_string(),
+                target: target.to_string(),
                 parameters: HashMap::new(),
                 confidence: None,
                 reasoning: None,

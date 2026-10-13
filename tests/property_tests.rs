@@ -37,7 +37,7 @@ fn arb_json_value() -> impl Strategy<Value = serde_json::Value> {
         any::<f64>()
             .prop_filter("finite", |f| f.is_finite())
             .prop_map(|n| serde_json::json!(n)),
-        "[a-zA-Z0-9 ]{0,100}".prop_map(|s| serde_json::Value::String(s)),
+        "[a-zA-Z0-9 ]{0,100}".prop_map(serde_json::Value::String),
     ]
 }
 
@@ -253,7 +253,7 @@ mod audit_properties {
             let mut logger = AuditLogger::new();
 
             for (agent, action, resource) in &entries {
-                logger.log(agent, action, resource, AuditDecision::Allowed);
+                logger.log(agent, action, resource, AuditDecision::Allowed).unwrap();
             }
 
             let chain = logger.load_all_entries().unwrap();
@@ -276,7 +276,7 @@ mod audit_properties {
             let mut logger = AuditLogger::new();
 
             for (agent, action, resource) in &entries {
-                logger.log(agent, action, resource, AuditDecision::Allowed);
+                logger.log(agent, action, resource, AuditDecision::Allowed).unwrap();
             }
 
             let chain = logger.load_all_entries().unwrap();
@@ -298,7 +298,7 @@ mod audit_properties {
             let mut logger = AuditLogger::new();
 
             for (agent, action, resource) in &entries {
-                logger.log(agent, action, resource, AuditDecision::Allowed);
+                logger.log(agent, action, resource, AuditDecision::Allowed).unwrap();
             }
 
             let chain = logger.load_all_entries().unwrap();
@@ -315,6 +315,7 @@ mod audit_properties {
 // Memory State Properties
 // ============================================================================
 
+#[cfg(feature = "memory")]
 mod memory_properties {
     use super::*;
     use vak::memory::{
@@ -477,6 +478,7 @@ mod calculator_properties {
 // Serialization Roundtrip Properties
 // ============================================================================
 
+#[cfg(feature = "llm")]
 mod serialization_properties {
     use super::*;
     use vak::llm::{Message, Role, Usage};

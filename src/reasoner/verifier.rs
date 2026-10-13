@@ -656,7 +656,7 @@ impl ConstraintFile {
     /// Get enabled constraints sorted by priority (highest first)
     pub fn enabled_constraints(&self) -> Vec<&Constraint> {
         let mut constraints: Vec<_> = self.constraints.iter().filter(|c| c.enabled).collect();
-        constraints.sort_by(|a, b| b.priority.cmp(&a.priority));
+        constraints.sort_by_key(|r| std::cmp::Reverse(r.priority));
         constraints
     }
 }

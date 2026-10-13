@@ -32,7 +32,10 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::RwLock;
+// A lock is poisoned only if a thread panicked while holding it. These locks
+// guard plain collections, so the data stays usable: recover the guard rather
+// than spread the panic to every later caller.
+use std::sync::{PoisonError, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
@@ -333,12 +336,12 @@ impl MerkleDag {
         let id = node.id.clone();
 
         {
-            let mut nodes = self.nodes.write().unwrap();
+            let mut nodes = self.nodes.write().unwrap_or_else(PoisonError::into_inner);
             nodes.insert(id.clone(), node);
         }
 
         {
-            let mut heads = self.heads.write().unwrap();
+            let mut heads = self.heads.write().unwrap_or_else(PoisonError::into_inner);
             heads.insert(self.default_branch.clone(), id.clone());
         }
 
@@ -351,13 +354,13 @@ impl MerkleDag {
         let id = node.id.clone();
 
         {
-            let mut nodes = self.nodes.write().unwrap();
+            let mut nodes = self.nodes.write().unwrap_or_else(PoisonError::into_inner);
             nodes.insert(id.clone(), node);
         }
 
         // Update head
         {
-            let mut heads = self.heads.write().unwrap();
+            let mut heads = self.heads.write().unwrap_or_else(PoisonError::into_inner);
             heads.insert(self.default_branch.clone(), id.clone());
         }
 
@@ -369,7 +372,7 @@ impl MerkleDag {
         let id = node.id.clone();
 
         {
-            let mut nodes = self.nodes.write().unwrap();
+            let mut nodes = self.nodes.write().unwrap_or_else(PoisonError::into_inner);
             nodes.insert(id.clone(), node);
         }
 
@@ -378,19 +381,19 @@ impl MerkleDag {
 
     /// Get a node by ID
     pub fn get(&self, id: &ContentId) -> Option<DagNode> {
-        let nodes = self.nodes.read().unwrap();
+        let nodes = self.nodes.read().unwrap_or_else(PoisonError::into_inner);
         nodes.get(id).cloned()
     }
 
     /// Check if a node exists
     pub fn contains(&self, id: &ContentId) -> bool {
-        let nodes = self.nodes.read().unwrap();
+        let nodes = self.nodes.read().unwrap_or_else(PoisonError::into_inner);
         nodes.contains_key(id)
     }
 
     /// Get the current head of a branch
     pub fn head(&self, branch: &str) -> Option<ContentId> {
-        let heads = self.heads.read().unwrap();
+        let heads = self.heads.read().unwrap_or_else(PoisonError::into_inner);
         heads.get(branch).cloned()
     }
 
@@ -402,7 +405,7 @@ impl MerkleDag {
     /// Create a new branch at the current head
     pub fn create_branch(&self, name: &str) -> Option<ContentId> {
         let current = self.current_head()?;
-        let mut heads = self.heads.write().unwrap();
+        let mut heads = self.heads.write().unwrap_or_else(PoisonError::into_inner);
         heads.insert(name.to_string(), current.clone());
         Some(current)
     }
@@ -425,13 +428,13 @@ impl MerkleDag {
         let id = node.id.clone();
 
         {
-            let mut nodes = self.nodes.write().unwrap();
+            let mut nodes = self.nodes.write().unwrap_or_else(PoisonError::into_inner);
             nodes.insert(id.clone(), node);
         }
 
         // Update default branch head to merge node
         {
-            let mut heads = self.heads.write().unwrap();
+            let mut heads = self.heads.write().unwrap_or_else(PoisonError::into_inner);
             heads.insert(self.default_branch.clone(), id.clone());
         }
 
@@ -446,7 +449,7 @@ impl MerkleDag {
 
         queue.push_back(id.clone());
 
-        let nodes = self.nodes.read().unwrap();
+        let nodes = self.nodes.read().unwrap_or_else(PoisonError::into_inner);
 
         while let Some(current) = queue.pop_front() {
             if visited.contains(&current) {
@@ -471,7 +474,7 @@ impl MerkleDag {
         target: &ContentId,
         root: &ContentId,
     ) -> Result<InclusionProof, DagError> {
-        let nodes = self.nodes.read().unwrap();
+        let nodes = self.nodes.read().unwrap_or_else(PoisonError::into_inner);
 
         // Find path from target to root
         let mut path = Vec::new();
@@ -531,7 +534,7 @@ impl MerkleDag {
         }
 
         // Verify all nodes in path exist and match
-        let nodes = self.nodes.read().unwrap();
+        let nodes = self.nodes.read().unwrap_or_else(PoisonError::into_inner);
 
         for step in &proof.path {
             if let Some(node) = nodes.get(&step.node_id) {
@@ -549,7 +552,7 @@ impl MerkleDag {
 
     /// Compute diff between two nodes
     pub fn diff(&self, old: &ContentId, new: &ContentId) -> Result<DagDiff, DagError> {
-        let nodes = self.nodes.read().unwrap();
+        let nodes = self.nodes.read().unwrap_or_else(PoisonError::into_inner);
 
         let old_node = nodes
             .get(old)
@@ -577,13 +580,13 @@ impl MerkleDag {
 
     /// Get total node count
     pub fn node_count(&self) -> usize {
-        let nodes = self.nodes.read().unwrap();
+        let nodes = self.nodes.read().unwrap_or_else(PoisonError::into_inner);
         nodes.len()
     }
 
     /// Get all root nodes
     pub fn roots(&self) -> Vec<ContentId> {
-        let nodes = self.nodes.read().unwrap();
+        let nodes = self.nodes.read().unwrap_or_else(PoisonError::into_inner);
         nodes
             .values()
             .filter(|n| n.parents.is_empty())
@@ -593,7 +596,7 @@ impl MerkleDag {
 
     /// Verify integrity of entire DAG
     pub fn verify_integrity(&self) -> Result<bool, DagError> {
-        let nodes = self.nodes.read().unwrap();
+        let nodes = self.nodes.read().unwrap_or_else(PoisonError::into_inner);
 
         for node in nodes.values() {
             // Verify node hash
@@ -614,8 +617,8 @@ impl MerkleDag {
 
     /// Export DAG to serializable format
     pub fn export(&self) -> DagExport {
-        let nodes = self.nodes.read().unwrap();
-        let heads = self.heads.read().unwrap();
+        let nodes = self.nodes.read().unwrap_or_else(PoisonError::into_inner);
+        let heads = self.heads.read().unwrap_or_else(PoisonError::into_inner);
 
         DagExport {
             nodes: nodes.values().cloned().collect(),
@@ -633,7 +636,7 @@ impl MerkleDag {
         };
 
         {
-            let mut nodes = dag.nodes.write().unwrap();
+            let mut nodes = dag.nodes.write().unwrap_or_else(PoisonError::into_inner);
             for node in export.nodes {
                 nodes.insert(node.id.clone(), node);
             }
@@ -651,8 +654,8 @@ impl Default for MerkleDag {
 
 impl std::fmt::Debug for MerkleDag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let nodes = self.nodes.read().unwrap();
-        let heads = self.heads.read().unwrap();
+        let nodes = self.nodes.read().unwrap_or_else(PoisonError::into_inner);
+        let heads = self.heads.read().unwrap_or_else(PoisonError::into_inner);
 
         f.debug_struct("MerkleDag")
             .field("node_count", &nodes.len())
@@ -843,7 +846,7 @@ mod tests {
 
         // Add to feature branch
         {
-            let mut heads = dag.heads.write().unwrap();
+            let mut heads = dag.heads.write().unwrap_or_else(PoisonError::into_inner);
             heads.insert("main".to_string(), main_child.clone());
         }
 
@@ -860,7 +863,7 @@ mod tests {
 
         let main = dag.insert_with_parent(b"main", &root);
         {
-            let mut heads = dag.heads.write().unwrap();
+            let mut heads = dag.heads.write().unwrap_or_else(PoisonError::into_inner);
             heads.insert("main".to_string(), main);
         }
 

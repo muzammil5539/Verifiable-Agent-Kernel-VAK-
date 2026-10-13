@@ -22,14 +22,20 @@ pub mod epoch_ticker;
 pub mod host_funcs;
 pub mod marketplace;
 pub mod pooling;
+#[cfg(feature = "reasoner")]
 pub mod reasoning_host;
 pub mod registry;
+pub mod runtime;
+pub mod signing;
 pub mod verified_publisher;
+
+// Re-export the shared runtime (Phase 1 slice 1b, docs/adr/0004)
+pub use runtime::{PreparedSkill, SandboxRuntime, SandboxRuntimeConfig, SandboxRuntimeStats};
 
 // Re-export registry types for convenient access
 pub use registry::{
-    PermissionError, RegistryError, SignatureConfig, SignatureError, SignatureVerificationResult,
-    SkillId, SkillManifest, SkillPermissions, SkillRegistry, SkillSignatureVerifier,
+    PermissionError, RegistryError, SignatureConfig, SignatureError, SkillId, SkillManifest,
+    SkillPermissions, SkillRegistry, SkillSignatureVerifier, VerifiedSkill,
 };
 
 // Re-export marketplace types
@@ -63,6 +69,7 @@ pub use host_funcs::{
 };
 
 // Re-export reasoning host types (NSR-003)
+#[cfg(feature = "reasoner")]
 pub use reasoning_host::{
     register_reasoning_functions, PlanVerification, ReasoningConfig, ReasoningHost,
     ReasoningHostError, ReasoningHostState, VerificationResult, ViolationInfo,
@@ -82,8 +89,9 @@ pub use verified_publisher::{
     VerificationRequest, VerificationStatus,
 };
 
-use std::time::{Duration, Instant};
-use wasmtime::{Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
+use std::sync::Arc;
+use std::time::Duration;
+use wasmtime::{Store, StoreLimits, StoreLimitsBuilder};
 
 /// Configuration for sandbox resource limits
 #[derive(Debug, Clone)]
@@ -152,75 +160,83 @@ pub enum SandboxError {
     /// Memory allocation failed in guest
     #[error("Memory allocation failed in guest")]
     GuestAllocation,
+
+    /// The module on disk is not the one the skill was verified with.
+    #[error("Module changed since it was verified: expected sha256 {expected}, found {actual}")]
+    ModuleChanged {
+        /// Hex SHA-256 the skill is pinned to.
+        expected: String,
+        /// Hex SHA-256 of the bytes found.
+        actual: String,
+    },
 }
 
-/// Store data holding resource limits and state
+/// The most elements a skill's table may hold, at instantiation or after
+/// `table.grow`.
+///
+/// Tables live in host memory, outside the linear memory that
+/// [`SandboxConfig::memory_limit`] bounds. Without this cap a skill could
+/// declare or grow a table of 2^32 elements and have the host allocate tens
+/// of gigabytes (docs/adr/0010). It matches the pooling allocator's default,
+/// so the limit is the same whichever allocator runs the skill. The shipped
+/// skills use under 40.
+pub const MAX_TABLE_ELEMENTS: usize = 10_000;
+
+/// Store data holding resource limits. Time limits are enforced by the
+/// store's epoch deadline (see [`runtime`]), not tracked here.
 #[derive(Debug)]
 pub struct SandboxState {
     limits: StoreLimits,
-    start_time: Option<Instant>,
-    timeout: Duration,
 }
 
 impl SandboxState {
     fn new(config: &SandboxConfig) -> Self {
         let limits = StoreLimitsBuilder::new()
             .memory_size(config.memory_limit)
+            .table_elements(MAX_TABLE_ELEMENTS)
             .build();
 
-        Self {
-            limits,
-            start_time: None,
-            timeout: config.timeout,
-        }
-    }
-
-    fn start_execution(&mut self) {
-        self.start_time = Some(Instant::now());
-    }
-
-    fn check_timeout(&self) -> bool {
-        self.start_time
-            .map(|start| start.elapsed() > self.timeout)
-            .unwrap_or(false)
+        Self { limits }
     }
 }
 
-/// WASM Sandbox for isolated skill execution
+/// A sandbox for one skill: a [`SandboxRuntime`] plus the limits to run it
+/// with.
+///
+/// [`WasmSandbox::new`] builds a runtime of its own, which is what the kernel
+/// used to do on every call. To share one engine, module cache and epoch
+/// ticker across sandboxes, build them with [`WasmSandbox::with_runtime`].
 pub struct WasmSandbox {
-    engine: Engine,
+    runtime: Arc<SandboxRuntime>,
     config: SandboxConfig,
-    module: Option<Module>,
+    skill: Option<PreparedSkill>,
 }
 
 impl std::fmt::Debug for WasmSandbox {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WasmSandbox")
             .field("config", &self.config)
-            .field("module_loaded", &self.module.is_some())
+            .field("module_loaded", &self.skill.is_some())
             .finish_non_exhaustive()
     }
 }
 
 impl WasmSandbox {
-    /// Create a new WASM sandbox with the given configuration
+    /// Create a new WASM sandbox with the given configuration, on a runtime
+    /// of its own.
     pub fn new(config: SandboxConfig) -> Result<Self, SandboxError> {
-        let mut wasm_config = Config::new();
+        let runtime = Arc::new(SandboxRuntime::new(SandboxRuntimeConfig::default())?);
+        Ok(Self::with_runtime(runtime, config))
+    }
 
-        // Enable fuel consumption for CPU limiting
-        wasm_config.consume_fuel(true);
-
-        // Enable epoch interruption for timeout handling
-        wasm_config.epoch_interruption(true);
-
-        let engine =
-            Engine::new(&wasm_config).map_err(|e| SandboxError::EngineCreation(e.to_string()))?;
-
-        Ok(Self {
-            engine,
+    /// Create a sandbox on a shared runtime.
+    #[must_use]
+    pub fn with_runtime(runtime: Arc<SandboxRuntime>, config: SandboxConfig) -> Self {
+        Self {
+            runtime,
             config,
-            module: None,
-        })
+            skill: None,
+        }
     }
 
     /// Create a sandbox with default configuration
@@ -228,25 +244,29 @@ impl WasmSandbox {
         Self::new(SandboxConfig::default())
     }
 
-    /// Load a WASM skill module from bytes
+    /// Load a WASM skill module from bytes (binary or text format). Compiled
+    /// once per distinct content on the runtime.
     pub fn load_skill(&mut self, wasm_bytes: &[u8]) -> Result<(), SandboxError> {
-        let module = Module::new(&self.engine, wasm_bytes)
-            .map_err(|e| SandboxError::ModuleLoad(e.to_string()))?;
-
-        self.module = Some(module);
+        self.skill = Some(self.runtime.prepare(wasm_bytes)?);
         Ok(())
     }
 
     /// Load a WASM skill module from a file path
     pub fn load_skill_from_file(&mut self, path: &std::path::Path) -> Result<(), SandboxError> {
-        let module = Module::from_file(&self.engine, path)
-            .map_err(|e| SandboxError::ModuleLoad(e.to_string()))?;
-
-        self.module = Some(module);
+        self.skill = Some(self.runtime.prepare_file(path)?);
         Ok(())
     }
 
+    fn loaded(&self) -> Result<&PreparedSkill, SandboxError> {
+        self.skill.as_ref().ok_or_else(|| {
+            SandboxError::ModuleLoad("No module loaded. Call load_skill() first.".into())
+        })
+    }
+
     /// Execute a function in the loaded WASM module with JSON input/output
+    ///
+    /// Blocks until the call returns or a limit stops it; from async code,
+    /// call it on `tokio::task::spawn_blocking`.
     ///
     /// # Arguments
     /// * `func_name` - Name of the exported function to call
@@ -259,137 +279,15 @@ impl WasmSandbox {
         func_name: &str,
         input: &serde_json::Value,
     ) -> Result<serde_json::Value, SandboxError> {
-        let module = self.module.as_ref().ok_or_else(|| {
-            SandboxError::ModuleLoad("No module loaded. Call load_skill() first.".into())
-        })?;
-
-        // Create store with resource limits
-        let state = SandboxState::new(&self.config);
-        let mut store = Store::new(&self.engine, state);
-
-        // Configure resource limits
-        store.limiter(|state| &mut state.limits);
-        store
-            .set_fuel(self.config.fuel_limit)
-            .map_err(|e| SandboxError::EngineCreation(format!("Failed to set fuel: {}", e)))?;
-
-        // Set up epoch deadline for timeout
-        store.epoch_deadline_trap();
-
-        // Create linker and instantiate module
-        let linker = Linker::new(&self.engine);
-        let instance = linker
-            .instantiate(&mut store, module)
-            .map_err(|e| SandboxError::Instantiation(e.to_string()))?;
-
-        // Serialize input to JSON string
-        let input_json =
-            serde_json::to_string(input).map_err(|e| SandboxError::InvalidInput(e.to_string()))?;
-
-        // Get memory and required functions
-        let memory = instance
-            .get_memory(&mut store, "memory")
-            .ok_or_else(|| SandboxError::Instantiation("Module has no exported memory".into()))?;
-
-        // Try to get allocation function (standard WASM interface)
-        let alloc_fn = instance
-            .get_typed_func::<i32, i32>(&mut store, "alloc")
-            .map_err(|_| SandboxError::FunctionNotFound("alloc".into()))?;
-
-        // Allocate memory for input in guest
-        let input_bytes = input_json.as_bytes();
-        let input_len = input_bytes.len() as i32;
-
-        store.data_mut().start_execution();
-
-        let input_ptr = alloc_fn.call(&mut store, input_len).map_err(|_e| {
-            if store.get_fuel().unwrap_or(0) == 0 {
-                SandboxError::FuelExhausted
-            } else if store.data().check_timeout() {
-                SandboxError::Timeout(self.config.timeout)
-            } else {
-                SandboxError::GuestAllocation
-            }
-        })?;
-
-        // Write input to guest memory
-        memory
-            .write(&mut store, input_ptr as usize, input_bytes)
-            .map_err(|_| SandboxError::MemoryLimitExceeded)?;
-
-        // Get and call the target function
-        // Expected signature: func(input_ptr: i32, input_len: i32) -> i32 (output_ptr)
-        let target_fn = instance
-            .get_typed_func::<(i32, i32), i32>(&mut store, func_name)
-            .map_err(|_| SandboxError::FunctionNotFound(func_name.into()))?;
-
-        let output_ptr = target_fn
-            .call(&mut store, (input_ptr, input_len))
-            .map_err(|e| {
-                if store.get_fuel().unwrap_or(0) == 0 {
-                    SandboxError::FuelExhausted
-                } else if store.data().check_timeout() {
-                    SandboxError::Timeout(self.config.timeout)
-                } else {
-                    SandboxError::Execution(e.to_string())
-                }
-            })?;
-
-        // Read output length (first 4 bytes at output_ptr)
-        let mut len_bytes = [0u8; 4];
-        memory
-            .read(&store, output_ptr as usize, &mut len_bytes)
-            .map_err(|_| SandboxError::InvalidOutput("Failed to read output length".into()))?;
-        let output_len = i32::from_le_bytes(len_bytes) as usize;
-
-        // Read output JSON string
-        let mut output_bytes = vec![0u8; output_len];
-        memory
-            .read(&store, (output_ptr + 4) as usize, &mut output_bytes)
-            .map_err(|_| SandboxError::InvalidOutput("Failed to read output data".into()))?;
-
-        // Parse output JSON
-        let output_json = String::from_utf8(output_bytes)
-            .map_err(|e| SandboxError::InvalidOutput(e.to_string()))?;
-
-        serde_json::from_str(&output_json).map_err(|e| SandboxError::InvalidOutput(e.to_string()))
+        self.runtime
+            .execute_json(self.loaded()?, &self.config, func_name, input)
     }
 
     /// Execute a simple function that takes no input and returns an i32
     /// Useful for testing or simple operations
     pub fn execute_simple(&self, func_name: &str) -> Result<i32, SandboxError> {
-        let module = self.module.as_ref().ok_or_else(|| {
-            SandboxError::ModuleLoad("No module loaded. Call load_skill() first.".into())
-        })?;
-
-        let state = SandboxState::new(&self.config);
-        let mut store = Store::new(&self.engine, state);
-
-        store.limiter(|state| &mut state.limits);
-        store
-            .set_fuel(self.config.fuel_limit)
-            .map_err(|e| SandboxError::EngineCreation(format!("Failed to set fuel: {}", e)))?;
-
-        let linker = Linker::new(&self.engine);
-        let instance = linker
-            .instantiate(&mut store, module)
-            .map_err(|e| SandboxError::Instantiation(e.to_string()))?;
-
-        let func = instance
-            .get_typed_func::<(), i32>(&mut store, func_name)
-            .map_err(|_| SandboxError::FunctionNotFound(func_name.into()))?;
-
-        store.data_mut().start_execution();
-
-        func.call(&mut store, ()).map_err(|e| {
-            if store.get_fuel().unwrap_or(0) == 0 {
-                SandboxError::FuelExhausted
-            } else if store.data().check_timeout() {
-                SandboxError::Timeout(self.config.timeout)
-            } else {
-                SandboxError::Execution(e.to_string())
-            }
-        })
+        self.runtime
+            .execute_i32(self.loaded()?, &self.config, func_name)
     }
 
     /// Get remaining fuel after execution
@@ -404,13 +302,20 @@ impl WasmSandbox {
 
     /// Check if a module is loaded
     pub fn has_module(&self) -> bool {
-        self.module.is_some()
+        self.skill.is_some()
+    }
+
+    /// The runtime this sandbox runs on.
+    #[must_use]
+    pub fn runtime(&self) -> &Arc<SandboxRuntime> {
+        &self.runtime
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     #[test]
     fn test_sandbox_config_default() {
@@ -463,5 +368,109 @@ mod tests {
         let sandbox = WasmSandbox::with_defaults().unwrap();
         let result = sandbox.execute("test", &serde_json::json!({}));
         assert!(result.is_err());
+    }
+
+    /// A module implementing the skill ABI (`alloc`, then
+    /// `execute(ptr, len) -> out_ptr` with a little-endian length prefix at
+    /// `out_ptr`). `execute` echoes its input; `spin` never returns.
+    const ECHO_SKILL_WAT: &str = r#"
+        (module
+          (memory (export "memory") 1)
+          (global $next (mut i32) (i32.const 1024))
+          (func (export "alloc") (param $len i32) (result i32)
+            (local $p i32)
+            (local.set $p (global.get $next))
+            (global.set $next (i32.add (global.get $next) (local.get $len)))
+            (local.get $p))
+          (func (export "execute") (param $ptr i32) (param $len i32) (result i32)
+            (i32.store (i32.const 0) (local.get $len))
+            (memory.copy (i32.const 4) (local.get $ptr) (local.get $len))
+            (i32.const 0))
+          (func (export "answer") (result i32)
+            (i32.const 42))
+          (func (export "spin") (result i32)
+            (loop $l (br $l))
+            (i32.const 0)))
+    "#;
+
+    fn echo_sandbox(config: SandboxConfig) -> WasmSandbox {
+        let mut sandbox = WasmSandbox::new(config).unwrap();
+        sandbox.load_skill(ECHO_SKILL_WAT.as_bytes()).unwrap();
+        sandbox
+    }
+
+    #[test]
+    fn test_execute_runs_a_real_module() {
+        // Regression: epoch interruption was enabled with no deadline set, and
+        // Wasmtime's default deadline is 0, so every skill trapped on entry.
+        let sandbox = echo_sandbox(SandboxConfig::default());
+        let input = serde_json::json!({"operation": "add", "operands": [1, 2]});
+        assert_eq!(sandbox.execute("execute", &input).unwrap(), input);
+    }
+
+    #[test]
+    fn test_execute_simple_runs_a_real_module() {
+        let sandbox = echo_sandbox(SandboxConfig::default());
+        assert_eq!(sandbox.execute_simple("answer").unwrap(), 42);
+    }
+
+    #[test]
+    fn test_wall_clock_timeout_interrupts_infinite_loop() {
+        // Enough fuel that only the wall-clock deadline can stop the loop.
+        let sandbox = echo_sandbox(SandboxConfig {
+            fuel_limit: u64::MAX / 2,
+            timeout: Duration::from_millis(100),
+            ..SandboxConfig::default()
+        });
+        let started = Instant::now();
+        let result = sandbox.execute_simple("spin");
+        assert!(
+            matches!(result, Err(SandboxError::Timeout(_))),
+            "expected timeout, got {result:?}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn test_fuel_limit_interrupts_infinite_loop() {
+        let sandbox = echo_sandbox(SandboxConfig {
+            fuel_limit: 10_000,
+            timeout: Duration::from_secs(30),
+            ..SandboxConfig::default()
+        });
+        assert!(matches!(
+            sandbox.execute_simple("spin"),
+            Err(SandboxError::FuelExhausted)
+        ));
+    }
+
+    #[test]
+    fn test_concurrent_executions_do_not_cut_each_other_short() {
+        // All executions share one engine epoch. A deadline expressed in
+        // ticks would let one execution's ticks expire another; the deadline
+        // must be wall-clock per store.
+        let sandbox = std::sync::Arc::new(echo_sandbox(SandboxConfig {
+            fuel_limit: u64::MAX / 2,
+            timeout: Duration::from_millis(400),
+            ..SandboxConfig::default()
+        }));
+        let spinners: Vec<_> = (0..4)
+            .map(|_| {
+                let sandbox = std::sync::Arc::clone(&sandbox);
+                std::thread::spawn(move || {
+                    let started = Instant::now();
+                    let result = sandbox.execute_simple("spin");
+                    (result, started.elapsed())
+                })
+            })
+            .collect();
+        for spinner in spinners {
+            let (result, elapsed) = spinner.join().unwrap();
+            assert!(matches!(result, Err(SandboxError::Timeout(_))));
+            assert!(
+                elapsed >= Duration::from_millis(400),
+                "interrupted early after {elapsed:?}"
+            );
+        }
     }
 }

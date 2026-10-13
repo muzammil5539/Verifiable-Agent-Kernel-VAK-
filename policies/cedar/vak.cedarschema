@@ -1,0 +1,54 @@
+// The VAK kernel's Cedar schema (docs/adr/0008). The kernel uses this one
+// unless `policy.cedar_schema` names another.
+//
+// The kernel asks Cedar about every tool call as:
+//
+//   principal  Vak::Agent::"<agent id>"
+//   action     Vak::Action::"<tool name>" if the schema declares that action,
+//              otherwise Vak::Action::"call"
+//   resource   Vak::Tool::"<tool name>"
+//   context    { session: "<session id>", arguments: <the call's arguments> }
+//
+// To give policies more to read, copy this file, add to it, and point
+// `policy.cedar_schema` at the copy. The kernel refuses a schema that doesn't
+// accept what it supplies, and denies a request that doesn't match the
+// schema.
+namespace Vak {
+  // The agent making the call, from its record in the agent registry.
+  entity Agent {
+    // The record's `internal` flag.
+    internal: Bool,
+    // The record's name.
+    name: String,
+    // The kernel passes every attribute an agent's record carries, and
+    // denies the agent's requests if one isn't declared here. Declare yours,
+    // optional (`?`) unless every record has it, e.g.
+    //   team?: String,
+  };
+
+  // The tool being called.
+  entity Tool {
+    // The tool is in `security.blocked_tools`.
+    restricted: Bool,
+    // The tool is one of the kernel's built-ins.
+    builtin: Bool,
+  };
+
+  // Any tool call. A tool with no action of its own is decided as "call",
+  // and its arguments are not passed: policies see who calls which tool.
+  //
+  // To let policies read a tool's arguments, declare an action named after
+  // the tool, in "call", with the arguments' types. A call whose arguments
+  // don't match exactly (an extra, missing or mistyped field) is denied:
+  //
+  //   action "transfer_funds" in ["call"] appliesTo {
+  //     principal: Agent,
+  //     resource: Tool,
+  //     context: { session: String, arguments: { amount: Long, to: String } },
+  //   };
+  action "call" appliesTo {
+    principal: Agent,
+    resource: Tool,
+    context: { session: String, arguments: {} },
+  };
+}

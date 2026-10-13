@@ -405,25 +405,8 @@ impl PipelineMetrics {
             .fetch_add(latency_us, Ordering::Relaxed);
 
         // Update min/max latency
-        let _ = self
-            .min_latency_us
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                if latency_us < current {
-                    Some(latency_us)
-                } else {
-                    None
-                }
-            });
-
-        let _ = self
-            .max_latency_us
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                if latency_us > current {
-                    Some(latency_us)
-                } else {
-                    None
-                }
-            });
+        self.min_latency_us.fetch_min(latency_us, Ordering::Relaxed);
+        self.max_latency_us.fetch_max(latency_us, Ordering::Relaxed);
     }
 
     /// Record a request failed
@@ -600,10 +583,16 @@ pub struct AsyncPipeline {
     /// Concurrency semaphore
     semaphore: Arc<Semaphore>,
     /// Request handler function
-    handler: Arc<dyn Fn(ToolRequest) -> PipelineResult<serde_json::Value> + Send + Sync>,
+    handler: RequestHandler,
     /// Policy evaluator function
-    policy_evaluator: Arc<dyn Fn(&AgentId, &ToolRequest) -> PolicyDecision + Send + Sync>,
+    policy_evaluator: PolicyEvaluatorFn,
 }
+
+/// Runs one request for the pipeline.
+type RequestHandler = Arc<dyn Fn(ToolRequest) -> PipelineResult<serde_json::Value> + Send + Sync>;
+
+/// Decides one request for the pipeline.
+type PolicyEvaluatorFn = Arc<dyn Fn(&AgentId, &ToolRequest) -> PolicyDecision + Send + Sync>;
 
 impl std::fmt::Debug for AsyncPipeline {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -730,13 +719,11 @@ impl AsyncPipeline {
                             let latency_us = start_time.elapsed().as_micros() as u64;
                             metrics.record_completed(latency_us);
 
-                            Ok(ToolResponse {
-                                request_id: envelope.request.request_id,
-                                success: true,
-                                result: Some(value),
-                                error: None,
-                                execution_time_ms: start_time.elapsed().as_millis() as u64,
-                            })
+                            Ok(ToolResponse::success(
+                                envelope.request.request_id,
+                                value,
+                                start_time.elapsed().as_millis() as u64,
+                            ))
                         }
                         Ok(Ok(Err(e))) => {
                             metrics.record_failed();

@@ -11,7 +11,8 @@ resolver = "2"
 [workspace.package]
 version = "1.0.0"
 edition = "2021"
-rust-version = "1.75"
+# The highest minimum among dependencies: Wasmtime 49 needs 1.96.
+rust-version = "1.96"
 authors = ["VAK Team"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/vak-project/verifiable-agent-kernel"
@@ -26,7 +27,9 @@ async-trait = "0.1"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+# float_roundtrip: audit hashes cover JSON metadata, so floats must survive
+# a write and a read exactly (docs/adr/0007).
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
 serde_yaml = "0.9"
 
 # Error handling
@@ -46,8 +49,24 @@ rand = "0.8"
 # Database (Issue #4)
 rusqlite = { version = "0.32", features = ["bundled"] }
 
-# WASM runtime
-wasmtime = "41.0.3"
+# WASM runtime. Default features are off, so only what VAK uses is compiled
+# in: Cranelift, never Winch, and no component model, GC, threads or stack
+# switching (docs/adr/0010). 49.0.2 is patched against every advisory in
+# finding K11; it needs Rust 1.96.
+wasmtime = { version = "49.0.2", default-features = false, features = [
+    "cranelift",
+    "runtime",
+    "std",
+    "pooling-allocator",
+    "wat",
+    "async",
+    "parallel-compilation",
+] }
+
+# Cedar policy evaluation (feature `cedar`)
+cedar-policy = "4.13"
+# Symbolic analysis of Cedar policy sets (feature `cedar-analysis`; runs cvc5)
+cedar-policy-symcc = "0.7"
 
 # Identifiers
 uuid = { version = "1.6", features = ["v4", "v7", "serde"] }
@@ -64,8 +83,6 @@ chrono = { version = "0.4", features = ["serde"] }
 # Lock-free atomic pointer for policy hot-reload (POL-006)
 arc-swap = "1.7"
 
-# Merkle tree implementation (MEM-001)
-rs_merkle = "1.5"
 
 # HTTP client (using rustls for TLS to avoid system OpenSSL dependency)
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
@@ -84,7 +101,10 @@ regex = "1.10"
 petgraph = "0.6"
 
 # Python bindings
-pyo3 = { version = "0.24.1", features = ["extension-module"] }
+# No `extension-module` feature here: maturin sets it when it builds the
+# Python module (pyproject.toml), and without it `cargo test --features
+# python` links libpython, so the bindings' own tests run.
+pyo3 = "0.29"
 
 # Compression
 flate2 = "1.0"
@@ -100,6 +120,7 @@ criterion = "0.5"
 name = "vak"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 description.workspace = true
@@ -124,26 +145,70 @@ rusqlite.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 config.workspace = true
-wasmtime.workspace = true
 serde_yaml.workspace = true
 reqwest.workspace = true
 futures.workspace = true
-tokio-stream.workspace = true
 glob.workspace = true
 regex.workspace = true
-petgraph.workspace = true
 flate2.workspace = true
 tempfile.workspace = true
-base64.workspace = true
 arc-swap.workspace = true
-rs_merkle.workspace = true
 
-# Optional Python bindings
+# Optional: each pulled in only by the feature that needs it.
+wasmtime = { workspace = true, optional = true }
+cedar-policy = { workspace = true, optional = true }
+cedar-policy-symcc = { workspace = true, optional = true }
+tokio-stream = { workspace = true, optional = true }
+petgraph = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
 pyo3 = { workspace = true, optional = true }
 
+# The trusted core (kernel, policy, audit, secrets, lib_integration) is always
+# built; `default-features = false` builds it alone. Everything outside it is
+# a feature. See docs/adr/0006 and docs/architecture-v2.md §5.3.
 [features]
-default = []
-python = ["pyo3"]
+default = ["wasm", "memory"]
+# WASM skills: the sandbox, skill registry and skill signatures (Wasmtime).
+wasm = ["dep:wasmtime"]
+# LLM provider adapters.
+llm = ["dep:tokio-stream"]
+# Memory tiers: working, episodic, semantic.
+memory = ["llm", "dep:petgraph"]
+# Heuristic reasoning outside the trusted core: PRM scoring, Datalog safety
+# rules, the Z3 verifier, tree search, prompt-injection detection, and the
+# kernel's neuro-symbolic pipeline.
+reasoner = ["llm"]
+# Zero-knowledge proof prototypes. Not a sound proof system (finding V1).
+experimental-zk = ["reasoner"]
+# Multi-agent voting, consensus and the in-process A2A bus.
+swarm = []
+# LangChain and AutoGPT adapters and the MCP server. They embed the reasoner.
+integrations = ["reasoner", "wasm"]
+# HTTP dashboard, metrics and the A2A discovery API.
+dashboard = ["swarm"]
+# tools::skill_sign, superseded by sandbox::signing; its output doesn't load.
+legacy-tools = ["dep:base64"]
+# Policies in Cedar, evaluated by the cedar-policy crate (docs/adr/0008).
+cedar = ["dep:cedar-policy"]
+# Proves properties of whole Cedar policy sets with SymCC (docs/adr/0009).
+# Checks need the cvc5 1.3.1 solver at run time (`CVC5` or `cvc5` on PATH).
+cedar-analysis = ["cedar", "dep:cedar-policy-symcc"]
+# Python bindings (PyO3); built by maturin.
+python = ["dep:pyo3"]
+# Everything except the Python bindings. CI builds and tests with this.
+full = [
+    "wasm",
+    "llm",
+    "memory",
+    "reasoner",
+    "experimental-zk",
+    "swarm",
+    "integrations",
+    "dashboard",
+    "legacy-tools",
+    "cedar",
+    "cedar-analysis",
+]
 
 [dev-dependencies]
 proptest.workspace = true
@@ -151,6 +216,18 @@ criterion.workspace = true
 tokio-test = "0.4"
 # Integration tests link dev-dependencies, not [dependencies].
 tempfile.workspace = true
+
+[[example]]
+name = "sign_skill"
+required-features = ["wasm"]
+
+[[example]]
+name = "cedar_check"
+required-features = ["cedar-analysis"]
+
+[[example]]
+name = "code_auditor_demo"
+required-features = ["reasoner", "memory", "wasm"]
 
 [[bench]]
 name = "kernel_benchmarks"

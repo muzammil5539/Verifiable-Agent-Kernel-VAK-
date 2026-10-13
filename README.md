@@ -3,7 +3,7 @@
 **An open-source Agent Kernel that intercepts agent actions, enforces policy rules (ABAC), and audit-logs behavior for trustworthy AI agent deployments.**
 
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-1.96%2B-orange.svg)](https://www.rust-lang.org/)
 [![Status](https://img.shields.io/badge/status-production--ready-brightgreen.svg)](https://github.com/muzammil5539/Verifiable-Agent-Kernel-VAK-)
 
 ---
@@ -336,8 +336,7 @@ VAK/
 ├── scripts/                      # Tooling scripts
 │   └── perf-profile.sh          # Performance profiling suite
 │
-├── Makefile                      # Development task automation
-├── tarpaulin.toml                # Code coverage configuration
+├── Makefile                      # Development task automation (incl. coverage)
 │
 └── benches/                      # Performance benchmarks
 ```
@@ -348,7 +347,7 @@ VAK/
 
 ### Prerequisites
 
-- **Rust**: 1.75 or later
+- **Rust**: 1.96 or later (Wasmtime 49's minimum)
 - **Python**: 3.8+ (for Python SDK)
 - **WASM Target**: For building skills
 
@@ -371,7 +370,7 @@ cd Verifiable-Agent-Kernel-VAK-
 cargo build --release
 
 # Run tests
-cargo test
+cargo test --features full
 
 # Run benchmarks
 cargo bench
@@ -743,22 +742,22 @@ VAK uses specialized agents for development tasks. See [AGENTS_README.md](AGENTS
 
 ```bash
 # Run all tests
-cargo test
+cargo test --features full
 
 # Run specific test suite
 cargo test --package vak --lib policy
 
-# Run with coverage
-cargo tarpaulin --config tarpaulin.toml --out Html
+# Run with coverage (cargo-llvm-cov; report in coverage/)
+make coverage
 
 # Run integration tests
-cargo test --test '*' --verbose
+cargo test --test '*' --features full --verbose
 
 # Run property-based tests (extended)
-PROPTEST_CASES=512 cargo test --test property_tests
+PROPTEST_CASES=512 cargo test --test property_tests --features full
 
 # Run stress tests
-cargo test --test integration_root test_stress
+cargo test --test integration_root test_stress --features full
 
 # Run Python SDK tests
 python -m pytest python/tests/ -v

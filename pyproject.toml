@@ -4,10 +4,10 @@ build-backend = "maturin"
 
 [project]
 name = "vak"
-version = "0.1.0"
+version = "1.0.0"
 description = "Verifiable Agent Kernel - Secure, policy-enforced AI agent execution with audit logging"
 readme = "README.md"
-license = {file = "LICENSE"}
+license = {text = "MIT OR Apache-2.0"}
 requires-python = ">=3.9"
 authors = [
     {name = "VAK Team", email = "team@vak-project.dev"}
@@ -46,8 +46,9 @@ Repository = "https://github.com/vak-project/verifiable-agent-kernel"
 Issues = "https://github.com/vak-project/verifiable-agent-kernel/issues"
 
 [tool.maturin]
-# Build settings
-features = ["python"]
+# Build settings. `pyo3/extension-module` is set here rather than in
+# Cargo.toml so `cargo test --features python` can link libpython.
+features = ["python", "pyo3/extension-module"]
 python-source = "python"
 module-name = "vak._vak_native"
 

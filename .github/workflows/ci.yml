@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    # claude/** too, so work on those branches is checked before it is
+    # proposed for main.
+    branches: [main, develop, "claude/**"]
   pull_request:
     branches: [main]
 
@@ -18,7 +20,9 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        rust: [stable, "1.75"]
+        # Stable, and the minimum supported version: Cargo.toml's
+        # rust-version, which Wasmtime 49 sets at 1.96 (docs/adr/0010).
+        rust: [stable, "1.96"]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -36,27 +40,76 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: |
             ${{ runner.os }}-cargo-${{ matrix.rust }}-
 
+      # Formatting and lints change between toolchains, so they are checked
+      # on stable only. The minimum version has to build and pass the tests.
       - name: Check formatting
+        if: matrix.rust == 'stable'
         run: cargo fmt --all -- --check
 
       - name: Run clippy lints
+        if: matrix.rust == 'stable'
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      # Features outside the trusted core are off by default (docs/adr/0006).
+      # `full` is everything except the Python bindings, so no test is skipped.
       - name: Build
-        run: cargo build --all-targets
+        run: cargo build --all-targets --features full
 
       - name: Run unit tests
-        run: cargo test --lib --verbose
+        run: cargo test --lib --features full --verbose
 
       - name: Run doc tests
-        run: cargo test --doc --verbose
+        run: cargo test --doc --features full --verbose
 
       - name: Run integration tests
-        run: cargo test --test '*' --verbose
+        run: cargo test --test '*' --features full --verbose
+
+      # Cedar policy proofs (docs/adr/0009) need the cvc5 1.3.1 solver,
+      # pinned by checksum.
+      - name: Install cvc5 1.3.1
+        run: |
+          curl -sSL -o /tmp/cvc5.zip \
+            https://github.com/cvc5/cvc5/releases/download/cvc5-1.3.1/cvc5-Linux-x86_64-static.zip
+          echo "1a1cda20d2df4938fa4944a69f33ddc9172e319ece0eed0aa09c4d7abede3ed1  /tmp/cvc5.zip" \
+            | sha256sum -c -
+          unzip -q /tmp/cvc5.zip -d /tmp/cvc5
+          echo "CVC5=/tmp/cvc5/cvc5-Linux-x86_64-static/bin/cvc5" >> "$GITHUB_ENV"
+
+      # Tests that need the solver are #[ignore]d without it; run them here.
+      # Then prove the shipped policies' properties, as a user's CI would.
+      - name: Prove Cedar policy properties
+        run: |
+          cargo test --features full --test cedar_properties -- --include-ignored
+          cargo run --example cedar_check --features cedar-analysis -- \
+            --policies policies/cedar --properties policies/cedar/properties
+          cargo run --example cedar_check --features cedar-analysis -- \
+            --schema policies/cedar/examples/payments.cedarschema \
+            --policies policies/cedar/examples/payments.cedar \
+            --properties policies/cedar/examples/payments.properties.cedar
+
+      # Does this change let the default policies allow anything they didn't?
+      # Widening can be intended, so this reports rather than blocks: a
+      # reviewer reads the counterexample.
+      - name: Check Cedar policies don't widen access
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        run: |
+          git fetch --depth=1 origin "${{ github.base_ref }}"
+          git worktree add /tmp/base FETCH_HEAD
+          if [ -d /tmp/base/policies/cedar ]; then
+            cargo run --example cedar_check --features cedar-analysis -- \
+              --policies policies/cedar --baseline /tmp/base/policies/cedar
+          fi
+
+      # The trusted core must build and pass its tests with nothing else.
+      - name: Build and test the core alone
+        run: |
+          cargo build --no-default-features
+          cargo test --no-default-features --verbose
 
   # WASM skill builds
   wasm-skills:
@@ -78,7 +131,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-wasm-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-wasm-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Build calculator skill
         run: cargo build -p calculator --target wasm32-unknown-unknown --release
@@ -95,7 +148,8 @@ jobs:
       - name: Build regex-matcher skill
         run: cargo build -p regex-matcher --target wasm32-unknown-unknown --release
 
-  # Code coverage with cargo-tarpaulin
+  # Code coverage with cargo-llvm-cov (docs/adr/0012). Tarpaulin's ptrace
+  # engine reports Wasmtime's signal-based traps as a segfault.
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
@@ -106,6 +160,8 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -114,23 +170,21 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-coverage-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-coverage-llvm-${{ hashFiles('**/Cargo.toml') }}
 
-      - name: Install cargo-tarpaulin
-        run: cargo install cargo-tarpaulin --locked
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
 
-      - name: Run coverage
-        run: cargo tarpaulin --config tarpaulin.toml --out Xml --out Html --output-dir coverage/
+      - name: Run coverage and enforce the threshold (80% of lines)
+        run: make coverage-check
 
       - name: Upload coverage report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
           path: coverage/
           retention-days: 30
-
-      - name: Enforce coverage threshold (80%)
-        run: cargo tarpaulin --config tarpaulin.toml --fail-under 80
 
   # Python SDK tests
   python-tests:
@@ -157,6 +211,27 @@ jobs:
       - name: Run Python tests
         run: python -m pytest python/tests/ -v --tb=short
 
+      # The native module, once: the bindings' Rust tests, then the whole
+      # SDK suite against the built module (docs/adr/0011).
+      - name: Install Rust toolchain
+        if: matrix.python-version == '3.12'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Test the native bindings (Rust)
+        if: matrix.python-version == '3.12'
+        run: cargo test --features python --lib "python::"
+
+      - name: Test the native module (Python)
+        if: matrix.python-version == '3.12'
+        env:
+          VAK_REQUIRE_NATIVE: "1"
+        run: |
+          python -m venv .venv-native
+          . .venv-native/bin/activate
+          pip install maturin pytest
+          maturin develop
+          python -m pytest python/tests/ -v --tb=short
+
   # Benchmarks (non-blocking, for tracking performance)
   benchmarks:
     name: Performance Benchmarks
@@ -176,7 +251,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-bench-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-bench-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Run benchmarks
         run: cargo bench --bench kernel_benchmarks -- --output-format bencher | tee benchmark-results.txt
@@ -206,9 +281,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-proptest-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-proptest-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Run property tests with extended cases
         env:
           PROPTEST_CASES: 512
-        run: cargo test --test property_tests --verbose
+        run: cargo test --test property_tests --features full --verbose

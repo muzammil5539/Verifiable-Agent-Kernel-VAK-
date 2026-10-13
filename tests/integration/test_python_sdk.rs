@@ -57,8 +57,12 @@ mod python_sdk_type_tests {
         let mut logger = AuditLogger::new();
 
         // 2. Log events
-        logger.log("py-agent", "execute", "/tools/calc", AuditDecision::Allowed);
-        logger.log("py-agent", "read", "/data/secret", AuditDecision::Denied);
+        logger
+            .log("py-agent", "execute", "/tools/calc", AuditDecision::Allowed)
+            .unwrap();
+        logger
+            .log("py-agent", "read", "/data/secret", AuditDecision::Denied)
+            .unwrap();
 
         // 3. Query entries
         let entries = logger.load_all_entries().expect("Failed to load entries");
@@ -175,6 +179,7 @@ mod python_sdk_type_tests {
 
     /// TST-006: Test reasoning verification for Python SDK.
     #[test]
+    #[cfg(feature = "reasoner")]
     fn test_reasoning_python_workflow() {
         use vak::sandbox::reasoning_host::{PlanVerification, ReasoningConfig, ReasoningHost};
 
@@ -197,7 +202,7 @@ mod python_sdk_type_tests {
     /// TST-006: Test LLM tool definitions for Python SDK.
     #[test]
     fn test_tool_definitions_python_workflow() {
-        use vak::lib_integration::{builtin_tool_definitions, ToolDefinition};
+        use vak::lib_integration::builtin_tool_definitions;
 
         let tools = builtin_tool_definitions();
         assert!(!tools.is_empty(), "Should have built-in tools");
@@ -222,6 +227,7 @@ mod python_sdk_type_tests {
 
     /// TST-006: Test JSON serialization workflows (critical for Python interop).
     #[test]
+    #[cfg(feature = "reasoner")]
     fn test_json_serialization_python_interop() {
         use vak::sandbox::reasoning_host::{VerificationResult, ViolationInfo};
 

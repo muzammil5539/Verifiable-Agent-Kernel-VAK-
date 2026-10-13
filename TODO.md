@@ -45,16 +45,60 @@ that language is exactly how the gap went unnoticed for thirteen sprints.
       module) removed
 - [x] `CONTEXT.md` and `docs/adr/` established as the place decisions get
       recorded, so the next drift is visible in a diff instead of silent
+- [x] `sandbox::async_host` denies when its enforcer can't be built, instead of
+      falling back to `CedarEnforcer::new_permissive()`
+      (`test_enforcer_construction_failure_denies`)
+- [x] SymCC proofs (`docs/adr/0009`, feature `cedar-analysis`): properties written in
+      Cedar (ceilings, floors) proven over every request the schema admits, plus
+      never-errors for each policy, with confirmed counterexamples; `cedar_check` for CI;
+      CI installs cvc5 and proves the shipped policies. `CedarPolicy` hot-reloads, and
+      `reload_checked` refuses a set that breaks a property or widens access. It found the
+      payments example letting a finance agent use a blocked tool
+- [x] Real Cedar (`docs/adr/0008`, feature `cedar`): `policy.format: cedar` decides
+      with the `cedar-policy` crate against a schema for VAK's agents, tools and
+      per-tool actions (typed arguments). Policies are validated at load, and a call
+      that doesn't match the schema, or on which any policy errors, is denied.
+      `policies/cedar/default.cedar` ports the default tool rules;
+      `tests/cedar_policy.rs` shows it decides like the YAML original
+- [x] One audit path (`docs/adr/0007`): the `AuditLog` port records everything the
+      kernel mediates; `SqliteAuditLog` (`audit.format: sqlite`) is its durable,
+      queryable adapter and refuses a database that doesn't verify; durable appends
+      finish even if the caller stops waiting. `AuditLogger` hashes every field
+      length-prefixed, `metadata` included (K7), returns write failures as errors, and
+      stays verifiable across rotation. `tests/audit_path.rs` drives it through
+      `Kernel::execute`
+- [x] Feature gates (`docs/adr/0006`): the trusted core builds and tests alone with
+      `--no-default-features` (no Wasmtime); `reasoner`, `experimental-zk`, `swarm`,
+      `integrations`, `dashboard`, `legacy-tools` and `python` are off by default;
+      `--features full` is what CI tests, plus a core-only job
+- [x] Signed skills (`docs/adr/0005`): Ed25519 over the module digest and manifest,
+      verified against `security.trusted_skill_keys`, unsigned skills refused by default,
+      each skill pinned to the module it was verified with, the module digest recorded in
+      the outcome leaf. `tests/signed_skills.rs` also meets the Phase 1 exit criterion
+      (sign, load, execute, prove both leaves after a restart)
+- [x] Shared WASM runtime (`docs/adr/0004`): one engine and a SHA-256-keyed module
+      cache per kernel (injectable, so kernels can share), one epoch ticker thread that
+      parks while idle, skills run on `spawn_blocking`, skill output bounds-checked.
+      `tests/wasm_skills.rs` runs a real module through `Kernel::execute`, including a
+      spinning skill on a single-threaded runtime that must not stall other requests
+- [x] Mediation pipeline stages from `docs/adr/0003`, all driven through
+      `Kernel::execute` in `tests/mediation_pipeline.rs`: Admit (agent registry,
+      suspension, session binding, per-agent tool scope moved out of `VakAgent`),
+      Budget (`security.enable_rate_limiting` is now enforced), principal attributes
+      from the agent record instead of a constant `internal = true`, the `AuditLog`
+      port with a durable JSONL adapter (`audit.log_path`), outcome leaves, and
+      receipts on `ToolResponse`
 
 ---
 
 ## P0 — Security: still fails open
 
-- [ ] **`src/sandbox/async_host.rs:309`** — `CedarEnforcer::new(...).unwrap_or_else(|_|
-      CedarEnforcer::new_permissive())`. A misconfigured enforcer degrades to
-      *allow everything* on the sandbox host-function path. `CedarEnforcer::new_denying()`
-      already exists for exactly this (added while wiring the kernel path); swap it in
-      and add a regression test that construction failure denies rather than permits.
+- [x] **Upgrade Wasmtime past its advisories** (finding K11 in
+      `docs/architecture-v2.md`, ADR 0010). Wasmtime 49.0.2 with default features
+      off: Cranelift only, no Winch, component model, GC or WASI. PyO3 0.29.
+      `tests/sandbox_escapes.rs` drives each advisory's escape path through
+      `Kernel::execute`, tables are capped at 10,000 elements, and `cargo deny check`
+      passes. MSRV 1.96.
 
 - [ ] **ZK proofs are not zero-knowledge.** `src/reasoner/zk_proof.rs::verify_response`
       accepts any 64-character hex string as a valid proof of any statement — there is
@@ -72,15 +116,11 @@ that language is exactly how the gap went unnoticed for thirteen sprints.
 Each of these exists as a well-tested standalone module. None of them sit on the
 request path. In order of leverage:
 
-- [ ] **Delegate kernel auditing to `AuditLogger`, backed by `MerkleDag`.**
-      `Kernel` currently keeps its own `Vec<AuditEntry>` in parallel with
-      `src/audit/mod.rs`'s `AuditLogger` (9,211 lines, Ed25519 signing, rotation,
-      multiple backends — genuinely more capable, and unused). Collapsing to one
-      implementation, backed by `src/memory/merkle_dag.rs`, is what turns a hash
-      chain into the "cryptographic receipt" the vision describes: a session
-      should be able to produce a root hash and a Merkle inclusion proof for any
-      decision. This is the natural anchor point for Module 1 (Cryptographic
-      Memory Fabric), which is otherwise fully disconnected from any request.
+- [x] **Delegate kernel auditing to `AuditLogger`, backed by `MerkleDag`.**
+      *Superseded (ADR 0002, 0003, 0007):* the kernel records through the `AuditLog`
+      port over an RFC 9162 tree, with receipts, inclusion proofs for any decision,
+      and memory, JSONL and SQLite adapters. `AuditLogger` stays a standalone event
+      log; it was not made the kernel's.
 
 - [ ] **Gate high-risk actions on the neuro-symbolic reasoner.** PRM scoring,
       the Datalog safety engine (`src/reasoner/datalog.rs`), and the Z3
@@ -98,8 +138,10 @@ request path. In order of leverage:
       anywhere in the repo, and there's no build step compiling the five skill
       crates under `.github/skills/` to `wasm32-unknown-unknown` and signing
       them. The registry now points at the right directory (fixed) but has
-      nothing to load. Without this, "sandboxed execution" is untested outside
-      unit tests that construct a `WasmSandbox` directly.
+      nothing to load. *Narrowed:* real modules now run through `Kernel::execute`
+      in tests (`tests/wasm_skills.rs`, `tests/signed_skills.rs`), and
+      `examples/sign_skill.rs` signs manifests. What remains is a `make skills`
+      step that builds the five crates, writes their manifests, and signs them.
 
 - [ ] **Swarm consensus is unreachable from the kernel.** Voting, consensus,
       and sycophancy detection (`src/swarm/`) have no caller outside their own
@@ -112,13 +154,49 @@ request path. In order of leverage:
 
 ## P2 — Fix the parts that mislead adopters
 
-- [ ] **Python SDK silently substitutes a fake kernel.** `VakKernel` falls back
+- [x] **`SecretScrubber` doesn't redact values under sensitive keys.**
+      `scrub_json` and `scrub_map` now redact whole any value under a key in
+      `SENSITIVE_KEYS`, matched as a whole key, ignoring case. "author" and
+      "max_tokens" keep their values. Nothing on the kernel's path calls the
+      scrubber yet.
+
+- [ ] **`SecretScrubber` is fixed but nothing calls it.** It redacts correctly
+      now, but nothing in the kernel, the audit path or the memory tiers uses
+      it, so it protects nothing. Not to be decided as a side effect of other
+      work; two options:
+      - **Wire it into the audit path.** Scrub tool parameters and results
+        before they are hashed into audit entries (and receipts). This changes
+        what the transparency log commits to: a redacted value can't be
+        re-verified against the original, so it needs an ADR on what the log
+        attests, and probably a choice per field (redact vs. commit to a
+        salted hash).
+      - **Gate it behind a feature flag** (e.g. `secret-scrubbing`, off by
+        default), so it isn't exported as if it were active, until there is a
+        caller. Cheaper, and honest about its status.
+
+- [x] **MCP `execute_skill` reports success without running anything** (finding I3
+      in `docs/architecture-v2.md`). It now runs every call through
+      `Kernel::execute` on the kernel `create_vak_mcp_server` is given; a refused,
+      unknown or failed skill is an error result.
+
+- [x] **The Python SDK's native `Kernel` is not the kernel** (finding I4, ADR
+      0011). Every SDK answer about policy, tools, skills or the audit log comes
+      from the Rust kernel; methods with no kernel equivalent are removed;
+      without the native module those methods raise. The whole Python suite runs
+      against the native module in CI.
+
+- [ ] **Per-call memory limits.** `ToolRequest` has no memory field, so the
+      Python binding refuses a `memory_limit` below the kernel's per-skill
+      limit rather than enforce it. Add the field (a public-struct change) with
+      the Guard port's per-call constraints, and let the binding pass it.
+
+- [x] **Python SDK silently substitutes a fake kernel.** `VakKernel` falls back
       to `_StubKernel` — a pure-Python in-memory imitation with no policy
       enforcement and no real audit chain — whenever the PyO3 extension isn't
-      built, which is the default result of `pip install -e ./python`. Make the
-      fallback opt-in (`allow_stub=True` or an env var) and loud (a warning on
-      every call while active). A trust kernel must never quietly replace
-      itself with a mock.
+      built, which is the default result of `pip install -e ./python`.
+      *Fixed (ADR 0011, SDK 1.0):* the stub is deleted, not made opt-in. Without
+      the native module, methods that need the kernel raise `VakError` and
+      `execute_tool` raises `ToolExecutionError`.
 
 - [ ] **The flagship MVP demo doesn't use VAK.** `examples/code_auditor_python.py`
       — the Autonomous Code Auditor named in the vision as *the* MVP — uses
@@ -145,6 +223,31 @@ request path. In order of leverage:
       status updates because nothing ran it. If CI already exists
       (`.github/workflows/ci.yml` is referenced in prior notes), verify it
       is *required* for merge, not merely present.
+- [ ] **Coverage slice: reach the 80% line floor.** Line coverage is 75.09%
+      (34,402 of 45,813 lines). The Code Coverage job runs under cargo-llvm-cov
+      (ADR 0012) and fails on the floor, which stays at 80%. The red job is a
+      signal, not a blocker: other slices go ahead. This slice starts after
+      item 5 (the Guard port, information-flow labels, the sparse Merkle tree
+      fix), one module per commit, in this order:
+      1. **`audit`**, TCB-critical. 71.1%, 1,704 lines missed; 527 more
+         covered lines reach 80%. Most missed: `multi_region.rs` 329,
+         `mod.rs` 296, `flight_recorder.rs` 272, `streaming.rs` 222,
+         `otel.rs` 221, `s3_backend.rs` 149.
+      2. **`sandbox`**, security-critical. 71.2%, 1,535 missed; 470 more.
+         `marketplace.rs` 485, `host_funcs.rs` 284, `reasoning_host.rs` 209,
+         `async_host.rs` 205, `pooling.rs` 104.
+      3. **`memory`**. 78.8%, 1,818 missed; 106 more. `time_travel.rs` 504,
+         `mod.rs` 200, `content_addressable.rs` 187.
+      4. **`reasoner`**, last: outside the TCB. 78.8%, 1,475 missed; 81 more.
+         `z3_verifier.rs` 322, `datalog.rs` 221, `prm.rs` 141.
+
+      These four at 80% each add about 1,184 covered lines. The floor needs
+      about 2,249. The rest has to come from taking them past 80%, or from
+      modules this order doesn't rank: `integrations` 52.5% (664 more to
+      80%), `llm` 64.2% (269), `tools` 28.5% (206), and `policy` 78.8% (51),
+      which is in the TCB. `kernel` (82.5%) and `swarm` (81.1%) are above
+      80%. Tests follow the Definition of done below. `make coverage` writes
+      the per-file report to `coverage/`.
 - [ ] **Do not restore aggregate "N% complete" framing** in this file, the
       README, or CHANGELOG until every P0/P1 item above is closed and verified
       by a test that exercises `Kernel::execute`. Track items as done/open;

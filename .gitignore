@@ -87,3 +87,6 @@ geiger-report.txt
 sbom.json
 dependency-freshness.txt
 benchmark-results.txt
+
+# Native extension built in place by `maturin develop`
+python/vak/*.so

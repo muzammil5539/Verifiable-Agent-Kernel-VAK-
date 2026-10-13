@@ -111,7 +111,7 @@
 | `ToolExecutionError` | `__init__.py` | ✅ Done | With tool_id, execution_time_ms attrs |
 | `AuditError` | `__init__.py` | ✅ Done | For audit chain failures |
 | `RiskLevel` constants | `__init__.py` | ✅ Done | LOW, MEDIUM, HIGH, CRITICAL |
-| `_StubKernel` fallback | `__init__.py` | ✅ Done | Dev mode without native module |
+| `_StubKernel` fallback | — | Removed | Answered for the kernel without one (ADR 0011); without the native module, kernel methods raise |
 | `_AgentContext` helper | `__init__.py` | ✅ Done | Scoped agent operations |
 | `session()` ctx manager | `__init__.py` | ✅ Done | Auto register/unregister |
 
