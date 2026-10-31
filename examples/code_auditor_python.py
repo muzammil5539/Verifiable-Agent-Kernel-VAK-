@@ -39,10 +39,10 @@ class FindingSeverity(Enum):
 
     def __str__(self) -> str:
         icons = {
-            FindingSeverity.CRITICAL: "🔴 CRITICAL",
-            FindingSeverity.HIGH: "🟠 HIGH",
-            FindingSeverity.MEDIUM: "🟡 MEDIUM",
-            FindingSeverity.LOW: "🟢 LOW",
+            FindingSeverity.CRITICAL: "[CRITICAL]",
+            FindingSeverity.HIGH: "[HIGH]",
+            FindingSeverity.MEDIUM: "[MEDIUM]",
+            FindingSeverity.LOW: "[LOW]",
             FindingSeverity.INFO: "ℹ️  INFO",
         }
         return icons.get(self, str(self.name))
@@ -731,7 +731,7 @@ def main():
     print()
 
     # Create the Code Auditor
-    print("🔧 Initializing Code Auditor...\n")
+    print("Initializing Code Auditor...\n")
     config = CodeAuditorConfig()
     auditor = CodeAuditor(config)
 
@@ -747,9 +747,9 @@ def main():
 
     ok, error = auditor.analyze_file(".env", "SECRET=value")
     if not ok:
-        print(f"   ✅ Access correctly denied: {error}")
+        print(f"   OK: Access correctly denied: {error}")
     else:
-        print("   ❌ Unexpected: Access should have been denied!")
+        print("   FAIL: Access should have been denied!")
     print()
 
     # Demo 2: Analyze vulnerable code
@@ -757,12 +757,12 @@ def main():
 
     ok, error = auditor.analyze_file("src/vulnerable.py", SAMPLE_VULNERABLE_CODE)
     if ok:
-        print("   ✅ Analysis complete\n")
+        print("   OK: Analysis complete\n")
     else:
-        print(f"   ❌ Analysis failed: {error}\n")
+        print(f"   FAIL: Analysis failed: {error}\n")
 
     # Display findings
-    print("   📋 FINDINGS:\n")
+    print("   FINDINGS:\n")
     for finding in auditor.get_findings():
         print_finding(finding)
 
@@ -774,7 +774,7 @@ def main():
     new_findings = len(auditor.get_findings()) - initial_findings
 
     if ok:
-        print("   ✅ Safe code analysis complete")
+        print("   Safe code analysis complete")
         print(f"   New findings: {new_findings} (expected: minimal)\n")
 
     # Demo 4: View episodic memory
@@ -786,12 +786,12 @@ def main():
     # Show last 10 episodes
     for i, episode in enumerate(episodes[-10:], len(episodes) - 9):
         type_icons = {
-            EpisodeType.OBSERVATION: "👁️ ",
-            EpisodeType.THOUGHT: "💭",
-            EpisodeType.ACTION: "⚡",
-            EpisodeType.SYSTEM: "📝",
+            EpisodeType.OBSERVATION: "obs",
+            EpisodeType.THOUGHT: "thought",
+            EpisodeType.ACTION: "action",
+            EpisodeType.SYSTEM: "system",
         }
-        icon = type_icons.get(episode.episode_type, "📝")
+        icon = type_icons.get(episode.episode_type, "system")
         print(f"   [{i}] {icon} {episode.content[:60]}...")
     print()
 
@@ -806,30 +806,30 @@ def main():
     print_header("DEMO 6: Audit Chain Verification")
 
     if auditor.audit_logger.verify_chain():
-        print("   ✅ Audit chain integrity verified - no tampering detected\n")
+        print("   OK: Audit chain integrity verified - no tampering detected\n")
     else:
-        print("   ❌ Audit chain verification failed!\n")
+        print("   FAIL: Audit chain verification failed!\n")
 
     if auditor.episodic_memory.verify_chain():
-        print("   ✅ Episodic memory chain integrity verified\n")
+        print("   OK: Episodic memory chain integrity verified\n")
     else:
-        print("   ❌ Episodic memory chain verification failed!\n")
+        print("   FAIL: Episodic memory chain verification failed!\n")
 
     # Summary
     print_header("                        DEMO SUMMARY")
     print()
     print("   The VAK Autonomous Code Auditor MVP demonstrates:")
     print()
-    print("   ✅ Immutable Memory Log (Hash-Chained)")
+    print("   Immutable Memory Log (Hash-Chained)")
     print("      └── All observations and thoughts cryptographically linked")
     print()
-    print("   ✅ PRM Integration")
+    print("   PRM Integration")
     print("      └── Reasoning steps scored for confidence")
     print()
-    print("   ✅ Formal Constraints")
+    print("   Formal Constraints")
     print("      └── Safety rules enforced (max steps, forbidden files)")
     print()
-    print("   ✅ Cryptographic Audit Trail")
+    print("   Cryptographic Audit Trail")
     print("      └── Every action logged with hash-chained integrity")
     print()
     print("=" * 65)

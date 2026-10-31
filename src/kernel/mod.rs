@@ -14,6 +14,7 @@
 //! - [`identity`]: Agent records and the agent registry (Admit stage)
 //! - [`budget`]: Per-agent budgets (Budget stage)
 //! - [`pdp`]: Built-in policy decision points (config allowlist, CedarEnforcer)
+//! - [`guard`]: Guards and assurance levels (Guard stage)
 //! - [`audit_log`]: The audit log port, with memory and file adapters
 //!
 //! ## Mediation
@@ -21,8 +22,9 @@
 //! [`Kernel::execute`] is the single mediation point. Every request passes,
 //! in order: **admit** (the agent's record, status, session and own tool
 //! scope, via [`ports::AgentRegistry`]), **budget** ([`ports::Budget`]),
-//! **decide** ([`ports::PolicyDecisionPoint`]), **record** the decision
-//! ([`ports::AuditLog`]), **execute**, **record the outcome**, and
+//! **decide** ([`ports::PolicyDecisionPoint`]), **guard** ([`ports::Guard`]),
+//! **record** the decision ([`ports::AuditLog`]), **execute**, **record the
+//! outcome**, and
 //! **respond** with an [`types::AuditReceipt`]. A request stopped at any
 //! stage is still recorded. If the decision can't be recorded, the tool
 //! doesn't run.
@@ -61,6 +63,7 @@ pub mod config;
 pub mod constitution;
 pub mod custom_handlers;
 pub mod error;
+pub mod guard;
 pub mod identity;
 #[cfg(feature = "reasoner")]
 pub mod neurosymbolic_pipeline;
@@ -98,11 +101,14 @@ pub const BUILTIN_TOOLS: &[&str] = &["echo", "calculator", "data_processor", "sy
 
 pub use self::audit_log::{AuditLogError, FileAuditLog, MemoryAuditLog, SqliteAuditLog};
 pub use self::budget::{AgentRateBudget, BudgetDecision, Unlimited};
+pub use self::guard::{
+    Assurance, FunctionGuard, GuardCheck, GuardChecks, GuardFn, GuardRequest, GuardVerdict,
+};
 pub use self::identity::{AgentRecord, AgentStatus, InMemoryAgentRegistry, RegistryError};
 #[cfg(feature = "cedar")]
 pub use self::pdp::CedarPolicy;
 pub use self::pdp::{ConfigPolicy, DenyAll, EnforcerPolicy};
-pub use self::ports::{AgentRegistry, AuditLog, Budget, PolicyDecisionPoint, PolicyRequest};
+pub use self::ports::{AgentRegistry, AuditLog, Budget, Guard, PolicyDecisionPoint, PolicyRequest};
 
 use std::collections::hash_map::Entry;
 use std::sync::Arc;
@@ -180,6 +186,9 @@ pub struct Kernel {
     /// Decides every request. See [`pdp::policy_from_config`] for the default.
     policy: Arc<dyn PolicyDecisionPoint>,
 
+    /// Check each call the policy allowed, in order (Guard stage).
+    guards: Vec<RegisteredGuard>,
+
     /// Host-side tool handlers registered by the embedder.
     tools: Arc<CustomHandlerRegistry>,
 }
@@ -189,6 +198,10 @@ impl std::fmt::Debug for Kernel {
         f.debug_struct("Kernel")
             .field("name", &self.config.name)
             .field("policy", &self.policy.name())
+            .field(
+                "guards",
+                &self.guards.iter().map(|g| &g.name).collect::<Vec<_>>(),
+            )
             .field("agents", &self.agents.name())
             .field("budget", &self.budget.name())
             .field("audit", &self.audit.name())
@@ -249,6 +262,7 @@ impl std::fmt::Debug for Kernel {
 pub struct KernelBuilder {
     config: KernelConfig,
     policy: Option<Arc<dyn PolicyDecisionPoint>>,
+    guards: Vec<Arc<dyn Guard>>,
     tools: Vec<Arc<dyn ToolHandler>>,
     audit_key: Option<SigningKey>,
     audit_log: Option<Arc<dyn AuditLog>>,
@@ -269,6 +283,10 @@ impl std::fmt::Debug for KernelBuilder {
                 &self.policy.as_ref().map(|p| p.name().to_string()),
             )
             .field(
+                "guards",
+                &self.guards.iter().map(|g| g.name()).collect::<Vec<_>>(),
+            )
+            .field(
                 "tools",
                 &self.tools.iter().map(|t| t.name()).collect::<Vec<_>>(),
             )
@@ -283,6 +301,7 @@ impl KernelBuilder {
         Self {
             config,
             policy: None,
+            guards: Vec::new(),
             tools: Vec::new(),
             audit_key: None,
             audit_log: None,
@@ -363,12 +382,21 @@ impl KernelBuilder {
         self
     }
 
+    /// Adds `guard` to the Guard stage. Guards run in the order they are
+    /// added, on every call the policy allowed. There are none by default.
+    #[must_use]
+    pub fn with_guard(mut self, guard: Arc<dyn Guard>) -> Self {
+        self.guards.push(guard);
+        self
+    }
+
     /// Builds the kernel.
     ///
     /// # Errors
     ///
     /// Returns an error if the configuration is invalid, a tool handler's
-    /// name collides with a built-in tool or another handler, or
+    /// name collides with a built-in tool or another handler, two guards
+    /// share a name or one has none, or
     /// `audit.log_path` is set and the log there can't be opened or doesn't
     /// verify. A configured log that can't be used never falls back to an
     /// in-memory one.
@@ -390,6 +418,26 @@ impl KernelBuilder {
             None => pdp::policy_from_config(&config).await,
         };
         info!(policy = policy.name(), "Policy decision point ready");
+
+        // Each guard's name and level are read once, here, so every verdict
+        // is recorded under what the guard declared when it was added.
+        let mut guards: Vec<RegisteredGuard> = Vec::with_capacity(self.guards.len());
+        for guard in self.guards {
+            let name = guard.name().to_string();
+            if name.is_empty() || guards.iter().any(|g| g.name == name) {
+                return Err(KernelError::InvalidConfiguration {
+                    message: format!(
+                        "guard name '{name}' is empty or used twice; each guard needs its own"
+                    ),
+                });
+            }
+            let assurance = guard.assurance();
+            guards.push(RegisteredGuard {
+                guard,
+                name,
+                assurance,
+            });
+        }
 
         let tools = Arc::new(CustomHandlerRegistry::with_timeout(
             (config.max_execution_time.as_millis() as u64).max(1),
@@ -438,6 +486,7 @@ impl KernelBuilder {
             audit = audit.name(),
             budget = budget.name(),
             agents = agents.name(),
+            guards = guards.len(),
             "Mediation ports ready"
         );
 
@@ -453,6 +502,7 @@ impl KernelBuilder {
             #[cfg(feature = "wasm")]
             skills,
             policy,
+            guards,
             tools,
         })
     }
@@ -500,6 +550,11 @@ impl Kernel {
     #[must_use]
     pub fn policy_decision_point(&self) -> &Arc<dyn PolicyDecisionPoint> {
         &self.policy
+    }
+
+    /// The guards this kernel runs on each allowed call, in order.
+    pub fn guards(&self) -> impl Iterator<Item = &Arc<dyn Guard>> + '_ {
+        self.guards.iter().map(|g| &g.guard)
     }
 
     /// Registers a host-side tool handler.
@@ -601,8 +656,8 @@ impl Kernel {
     /// [`ConfigPolicy`] that denies unmatched tools by default.
     ///
     /// This is the Decide stage alone. It doesn't check the agent's status,
-    /// session or own scope, doesn't charge a budget, and records nothing;
-    /// [`Kernel::execute`] does all of that.
+    /// session or own scope, doesn't charge a budget, runs no guards, and
+    /// records nothing; [`Kernel::execute`] does all of that.
     #[instrument(skip(self, request), fields(agent_id = %agent_id, tool = %request.tool_name))]
     pub async fn evaluate_policy(
         &self,
@@ -633,14 +688,17 @@ impl Kernel {
     ///    be its own, and the tool must be inside the agent's own scope.
     /// 2. **Budget**: the request is charged to the agent's budget.
     /// 3. **Decide**: the policy decision point must allow it.
-    /// 4. **Guard**: planned (Phase 2); nothing runs here yet.
-    /// 5. **Record**: the decision is appended to the audit log. If that
-    ///    fails, the tool does not run.
+    /// 4. **Guard**: each guard checks the call, in order. Any denial or
+    ///    escalation refuses it, and if `policy.min_assurance` covers the
+    ///    tool, a guard of that level must have passed it. See
+    ///    `docs/adr/0013`.
+    /// 5. **Record**: the decision is appended to the audit log, with each
+    ///    guard's verdict. If that fails, the tool does not run.
     /// 6. **Execute** the tool.
     /// 7. **Record the outcome**, linked to the decision.
     /// 8. **Respond**, with an [`AuditReceipt`] naming both leaves.
     ///
-    /// A request stopped at stages 1 to 3 is recorded as a denial before
+    /// A request stopped at stages 1 to 4 is recorded as a denial before
     /// the error is returned. See `docs/adr/0003`.
     ///
     /// # Arguments
@@ -654,7 +712,9 @@ impl Kernel {
     /// - [`KernelError::AgentNotFound`], [`KernelError::AgentSuspended`],
     ///   [`KernelError::SessionConflict`]: refused at admission
     /// - [`KernelError::PolicyViolation`]: outside the agent's scope
-    ///   (`policy_id` `"agent.scope"`), or denied by policy
+    ///   (`policy_id` `"agent.scope"`), denied by policy, refused by a guard
+    ///   (`"guard.<name>"`), or without the guard assurance the tool needs
+    ///   (`"policy.min_assurance"`)
     /// - [`KernelError::RateLimited`]: over budget
     /// - [`KernelError::AuditUnavailable`]: the decision couldn't be
     ///   recorded, so nothing ran
@@ -701,24 +761,17 @@ impl Kernel {
         }
 
         // Stage 3: Decide.
-        let decision = self
-            .policy
-            .decide(
-                &PolicyRequest::new(agent_id, &request)
-                    .with_principal(&principal)
-                    .with_session(session_id),
-            )
-            .await;
+        let policy_request = PolicyRequest::new(agent_id, &request)
+            .with_principal(&principal)
+            .with_session(session_id);
+        let decision = self.policy.decide(&policy_request).await;
 
-        // Stage 4 (Guard) arrives with the Guard port in Phase 2.
-
-        // Stage 5: Record the decision *before* acting on it. Denials are
+        // Anything but an allow is recorded and refused here. Denials are
         // audited too: a rejected action is exactly the event an auditor
-        // most needs to see.
-        if let PolicyDecision::Deny { reason, .. } | PolicyDecision::Inadmissible { reason } =
-            &decision
-        {
-            let reason = reason.clone();
+        // most needs to see. Only an explicit allow goes on, so a decision
+        // kind added later can't fall through to execution.
+        if !decision.is_allowed() {
+            let reason = decision.reason().to_string();
             // Name the policy that denied, when the PDP says which did.
             let policy_id = match &decision {
                 PolicyDecision::Deny {
@@ -731,12 +784,33 @@ impl Kernel {
                 .await;
             return Err(KernelError::PolicyViolation { policy_id, reason });
         }
-        let decision_entry = AuditEntry::new(
+
+        // Stage 4: Guard. Guards can only narrow what the policy allowed.
+        let Screened { checks, refusal } = self
+            .screen(&GuardRequest::new(&policy_request, &decision))
+            .await;
+        if let Some((decision, policy_id)) = refusal {
+            let reason = decision.reason().to_string();
+            let mut entry =
+                AuditEntry::new(*agent_id, *session_id, request.tool_name.clone(), decision);
+            if let Some(checks) = checks {
+                entry = entry.with_guards(checks);
+            }
+            self.record_refusal(entry).await;
+            return Err(KernelError::PolicyViolation { policy_id, reason });
+        }
+
+        // Stage 5: Record the decision, with what the guards said, *before*
+        // acting on it.
+        let mut decision_entry = AuditEntry::new(
             *agent_id,
             *session_id,
             request.tool_name.clone(),
             decision.clone(),
         );
+        if let Some(checks) = checks {
+            decision_entry = decision_entry.with_guards(checks);
+        }
         let decision_leaf = self.audit.append(decision_entry).await.map_err(|e| {
             tracing::error!(error = %e, "Could not record decision - not executing");
             KernelError::AuditUnavailable {
@@ -885,8 +959,131 @@ impl Kernel {
         decision: PolicyDecision,
     ) {
         let entry = AuditEntry::new(*agent_id, *session_id, request.tool_name.clone(), decision);
+        self.record_refusal(entry).await;
+    }
+
+    /// Appends a refusal's entry, logging rather than returning a failure,
+    /// as [`Self::record_rejection`] does.
+    async fn record_refusal(&self, entry: AuditEntry) {
+        let tool = entry.action.clone();
         if let Err(e) = self.audit.append(entry).await {
-            tracing::error!(error = %e, tool = %request.tool_name, "Could not record a refused request");
+            tracing::error!(error = %e, %tool, "Could not record a refused request");
+        }
+    }
+
+    /// The Guard stage: runs each guard on a call the policy allowed, then
+    /// checks `policy.min_assurance`.
+    ///
+    /// Stops at the first denial or escalation. A guard that panics, or
+    /// hasn't answered within `max_execution_time`, denies (see
+    /// [`Self::run_guard`] for what the deadline can interrupt). There is no
+    /// approval channel yet, so an escalation refuses the call.
+    async fn screen(&self, request: &GuardRequest<'_>) -> Screened {
+        let tool = &request.request.tool_name;
+        let required = guard::required_assurance(&self.config.policy.min_assurance, tool);
+        if self.guards.is_empty() && required.is_none() {
+            return Screened {
+                checks: None,
+                refusal: None,
+            };
+        }
+
+        let mut checks = GuardChecks {
+            required,
+            checks: Vec::with_capacity(self.guards.len()),
+        };
+        for registered in &self.guards {
+            let name = &registered.name;
+            let verdict = self.run_guard(registered, request).await;
+            let rule = format!("guard.{name}");
+            let refusal = match &verdict {
+                GuardVerdict::Pass | GuardVerdict::Abstain => None,
+                GuardVerdict::Deny { reason } => Some(deny(
+                    format!("Guard '{name}' denied the call: {reason}"),
+                    &rule,
+                )),
+                GuardVerdict::Escalate { reason } => Some(deny(
+                    format!(
+                        "Guard '{name}' asked for approval ({reason}), and no approval channel is configured"
+                    ),
+                    &rule,
+                )),
+            };
+            if refusal.is_some() {
+                warn!(guard = %name, %tool, ?verdict, "Guard refused the call");
+            }
+            checks.checks.push(GuardCheck {
+                guard: name.clone(),
+                assurance: registered.assurance,
+                verdict,
+            });
+            if let Some(decision) = refusal {
+                return Screened {
+                    checks: Some(checks),
+                    refusal: Some((decision, rule)),
+                };
+            }
+        }
+
+        if let Some(level) = required {
+            if !checks.passed_at(level) {
+                warn!(%tool, %level, "No guard of the required assurance passed the call");
+                let decision = deny(
+                    format!(
+                        "Tool '{tool}' needs a guard of assurance '{level}' or higher to pass it, and none did"
+                    ),
+                    "policy.min_assurance",
+                );
+                return Screened {
+                    checks: Some(checks),
+                    refusal: Some((decision, "policy.min_assurance".to_string())),
+                };
+            }
+        }
+
+        Screened {
+            checks: Some(checks),
+            refusal: None,
+        }
+    }
+
+    /// One guard's verdict. A panic or an overrun is a denial: a guard that
+    /// can't answer in time must not let the call through.
+    ///
+    /// The guard's future is created inside the panic boundary, so a panic
+    /// in `check` itself, not only while it runs, is caught. The deadline
+    /// can interrupt a guard only where it awaits: a guard that blocks the
+    /// thread can't be stopped. If it answers after the deadline, its answer
+    /// is replaced by a denial; if it never answers, the call waits with it.
+    async fn run_guard(
+        &self,
+        registered: &RegisteredGuard,
+        request: &GuardRequest<'_>,
+    ) -> GuardVerdict {
+        let limit = self.config.max_execution_time;
+        let overrun = || {
+            GuardVerdict::deny(format!(
+                "the guard didn't answer within {} ms",
+                limit.as_millis()
+            ))
+        };
+        let started = std::time::Instant::now();
+        let checked = std::panic::AssertUnwindSafe(async { registered.guard.check(request).await })
+            .catch_unwind();
+        match tokio::time::timeout(limit, checked).await {
+            Ok(Ok(_)) if started.elapsed() > limit => {
+                tracing::error!(guard = %registered.name, "Guard answered after its deadline");
+                overrun()
+            }
+            Ok(Ok(verdict)) => verdict,
+            Ok(Err(_)) => {
+                tracing::error!(guard = %registered.name, "Guard panicked");
+                GuardVerdict::deny("the guard panicked")
+            }
+            Err(_) => {
+                tracing::error!(guard = %registered.name, "Guard timed out");
+                overrun()
+            }
         }
     }
 
@@ -1314,6 +1511,20 @@ fn deny(reason: String, rule: &str) -> PolicyDecision {
     }
 }
 
+/// A guard, with the name and level it declared when it was added.
+struct RegisteredGuard {
+    guard: Arc<dyn Guard>,
+    name: String,
+    assurance: Assurance,
+}
+
+/// What the Guard stage found: the record of each guard's verdict, if there
+/// is anything to record, and the refusal with its rule, if any.
+struct Screened {
+    checks: Option<GuardChecks>,
+    refusal: Option<(PolicyDecision, String)>,
+}
+
 /// What running a tool produced, and, for a WASM skill, which module ran.
 struct Dispatched {
     result: Result<serde_json::Value, KernelError>,
@@ -1423,10 +1634,8 @@ mod tests {
         );
     }
 
-    // ------------------------------------------------------------------
     // Mediation pipeline: ports, registered tools, fail-closed dispatch,
     // and audit proofs (docs/architecture-v2.md §5)
-    // ------------------------------------------------------------------
 
     use crate::audit::transparency::{verify_consistency, verify_inclusion};
     use crate::kernel::custom_handlers::HandlerFuture;

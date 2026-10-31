@@ -33,9 +33,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use thiserror::Error;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during storage operations
 #[derive(Debug, Error)]
@@ -80,9 +78,7 @@ pub enum StorageError {
 /// Result type for storage operations
 pub type StorageResult<T> = Result<T, StorageError>;
 
-// ============================================================================
 // Backend Types
-// ============================================================================
 
 /// Types of storage backends
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -98,9 +94,7 @@ pub enum BackendType {
     KeyValue,
 }
 
-// ============================================================================
 // Storage Configuration
-// ============================================================================
 
 /// Configuration for storage backends
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,9 +163,7 @@ impl StorageConfig {
     }
 }
 
-// ============================================================================
 // Storage Backend Trait
-// ============================================================================
 
 /// Trait for storage backends
 pub trait StorageBackend: Send + Sync {
@@ -203,9 +195,7 @@ pub trait StorageBackend: Send + Sync {
     fn close(&self) -> StorageResult<()>;
 }
 
-// ============================================================================
 // Storage Statistics
-// ============================================================================
 
 /// Statistics about storage usage
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -224,9 +214,7 @@ pub struct StorageStats {
     pub cache_hit_rate: f64,
 }
 
-// ============================================================================
 // In-Memory Backend
-// ============================================================================
 
 /// In-memory storage backend (for testing)
 pub struct MemoryBackend {
@@ -360,9 +348,7 @@ impl fmt::Debug for MemoryBackend {
     }
 }
 
-// ============================================================================
 // File Backend
-// ============================================================================
 
 /// File-based storage backend
 pub struct FileBackend {
@@ -546,9 +532,7 @@ impl fmt::Debug for FileBackend {
     }
 }
 
-// ============================================================================
 // Storage Manager
-// ============================================================================
 
 /// Unified storage manager that wraps different backends
 pub struct StorageManager {
@@ -660,9 +644,7 @@ impl fmt::Debug for StorageManager {
     }
 }
 
-// ============================================================================
 // Namespaced Storage
-// ============================================================================
 
 /// Storage with namespace support
 pub struct NamespacedStorage {
@@ -731,9 +713,7 @@ impl NamespacedStorage {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

@@ -11,6 +11,7 @@ These skills are designed to help AI agents (like Claude) work with the VAK code
 -   [**Security Checks**](security/SKILL.md) (`check-security`): Instructions for security audits, license compliance, and unsafe code scans.
 -   [**Code Review**](review/SKILL.md) (`review-code`): Guidelines and checklist for reviewing code changes.
 -   [**Documentation**](docs/SKILL.md) (`manage-docs`): Instructions for generating and maintaining documentation.
+-   [**Declutter**](declutter/SKILL.md) (`declutter`): Remove banners, emoji, dead code and unsupported claims, then verify the build.
 -   [**Release Project**](release/SKILL.md) (`release-project`): Instructions for publishing releases.
 
 ## Runtime Skills (for VAK Kernel)

@@ -47,9 +47,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during skill signing operations
 #[derive(Debug, Error)]
@@ -91,9 +89,7 @@ pub enum SigningError {
     WasmError(String),
 }
 
-// ============================================================================
 // Signature Types
-// ============================================================================
 
 /// Signature information stored in skill manifest
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -142,9 +138,7 @@ fn default_entry_point() -> String {
     "execute".to_string()
 }
 
-// ============================================================================
 // Key Management
-// ============================================================================
 
 /// Ed25519 keypair for signing
 pub struct SigningKeypair {
@@ -273,9 +267,7 @@ pub fn load_public_key_from_file(path: impl AsRef<Path>) -> Result<VerifyingKey,
     load_public_key(&content)
 }
 
-// ============================================================================
 // Skill Signing
-// ============================================================================
 
 /// Sign a WASM skill
 pub struct SkillSigner {
@@ -372,9 +364,7 @@ impl SkillSigner {
     }
 }
 
-// ============================================================================
 // Skill Verification
-// ============================================================================
 
 /// Verify a signed skill
 pub struct SkillVerifier;
@@ -485,9 +475,7 @@ pub struct VerificationResult {
     pub signed_at: Option<String>,
 }
 
-// ============================================================================
 // CLI Commands
-// ============================================================================
 
 /// Generate a new signing keypair
 pub fn cmd_keygen(output_dir: impl AsRef<Path>) -> Result<(), SigningError> {
@@ -508,7 +496,7 @@ pub fn cmd_keygen(output_dir: impl AsRef<Path>) -> Result<(), SigningError> {
     println!("Public key (Base64):");
     println!("  {}", keypair.public_key_base64());
     println!();
-    println!("⚠️  Keep the private key secure and never share it!");
+    println!("Keep the private key secure and never share it.");
 
     Ok(())
 }
@@ -544,7 +532,7 @@ pub fn cmd_sign(
     // Sign and save
     let output_path = signer.sign_and_save(&wasm_path, &manifest_path)?;
 
-    println!("✅ Skill signed successfully!");
+    println!("Skill signed successfully.");
     println!("   Signed manifest: {}", output_path.display());
 
     Ok(output_path)
@@ -575,9 +563,9 @@ pub fn cmd_verify(
     let result = SkillVerifier::verify(&manifest_path, &wasm_path, public_key.as_ref())?;
 
     if result.valid {
-        println!("✅ Signature is valid");
+        println!("OK: signature is valid");
     } else {
-        println!("❌ Signature verification failed: {}", result.reason);
+        println!("FAIL: signature verification failed: {}", result.reason);
     }
 
     if let Some(ref signer) = result.signer_id {
@@ -641,7 +629,7 @@ pub fn cmd_info(skill_dir: impl AsRef<Path>) -> Result<(), SigningError> {
         println!("Public Key:  {}...", &sig.public_key[..20]);
     } else {
         println!();
-        println!("⚠️  This skill is NOT signed");
+        println!("This skill is NOT signed");
     }
 
     Ok(())
@@ -686,9 +674,7 @@ fn find_wasm_file(skill_dir: &Path) -> Result<PathBuf, SigningError> {
     )))
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

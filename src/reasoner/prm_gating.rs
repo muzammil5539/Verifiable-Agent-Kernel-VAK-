@@ -46,9 +46,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::RwLock;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during PRM gating
 #[derive(Debug, Error)]
@@ -74,9 +72,7 @@ pub enum GateError {
     Timeout(u64),
 }
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for PRM gating
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -198,9 +194,7 @@ impl GateConfig {
     }
 }
 
-// ============================================================================
 // Gate Decision
-// ============================================================================
 
 /// Decision from PRM gate evaluation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -268,9 +262,7 @@ pub struct AlternativeAction {
     pub generation_method: String,
 }
 
-// ============================================================================
 // Gate Context
-// ============================================================================
 
 /// Context for gate evaluation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -321,9 +313,7 @@ impl GateContext {
     }
 }
 
-// ============================================================================
 // PRM Gate
-// ============================================================================
 
 /// PRM-based gate for action safety evaluation
 pub struct PrmGate<S: PrmScorer + Send + Sync> {
@@ -630,9 +620,7 @@ impl<S: PrmScorer + Send + Sync> PrmGate<S> {
     }
 }
 
-// ============================================================================
 // Batch Gate
-// ============================================================================
 
 /// Batch evaluation result
 #[derive(Debug)]
@@ -677,9 +665,7 @@ impl<S: PrmScorer + Send + Sync> PrmGate<S> {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

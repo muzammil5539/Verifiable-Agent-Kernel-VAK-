@@ -1,7 +1,7 @@
 //! Ports: the traits the kernel's mediation pipeline calls.
 //!
 //! The kernel owns *mediation*: every request is admitted, budgeted,
-//! decided, recorded, then executed, in that order. It does not own *how*
+//! decided, guarded, recorded, then executed, in that order. It does not own *how*
 //! agents are looked up, budgets kept, decisions made, records stored or
 //! tools run. Those sit behind the traits re-exported here, so an embedder
 //! can supply a real Cedar engine, a database-backed registry, or a test
@@ -13,6 +13,7 @@
 //! | Admit | [`AgentRegistry`] |
 //! | Budget | [`Budget`] |
 //! | Decide | [`PolicyDecisionPoint`] |
+//! | Guard | [`Guard`] (zero or more; `docs/adr/0013`) |
 //! | Record | [`AuditLog`] |
 //! | Execute | [`ToolHandler`] |
 
@@ -21,12 +22,14 @@ use async_trait::async_trait;
 pub use super::audit_log::AuditLog;
 pub use super::budget::Budget;
 pub use super::custom_handlers::ToolHandler;
+pub use super::guard::Guard;
 pub use super::identity::AgentRegistry;
 
 use super::identity::AgentRecord;
 use super::types::{AgentId, PolicyDecision, SessionId, ToolRequest};
 
-/// What a [`PolicyDecisionPoint`] is asked to decide.
+/// What a [`PolicyDecisionPoint`] is asked to decide, and what each
+/// [`Guard`] then checks.
 ///
 /// Marked `#[non_exhaustive]` because the pipeline will hand the PDP more
 /// context over time (session history, information-flow labels); adding a

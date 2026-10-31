@@ -43,9 +43,7 @@ use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during publisher operations
 #[derive(Debug, Error)]
@@ -90,9 +88,7 @@ pub enum PublisherError {
 /// Result type for publisher operations
 pub type PublisherResult<T> = Result<T, PublisherError>;
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for the publisher registry
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,9 +134,7 @@ impl PublisherConfig {
     }
 }
 
-// ============================================================================
 // Verification Types
-// ============================================================================
 
 /// Methods for verifying publisher identity
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -279,9 +273,7 @@ pub struct VerificationRecord {
     pub details: String,
 }
 
-// ============================================================================
 // Publisher Profile
-// ============================================================================
 
 /// Trust level for a publisher
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -418,9 +410,7 @@ impl PublisherProfile {
     }
 }
 
-// ============================================================================
 // Published Skill
-// ============================================================================
 
 /// A published skill in the marketplace
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -548,9 +538,7 @@ pub enum IssueSeverity {
     Critical,
 }
 
-// ============================================================================
 // Publisher Registry
-// ============================================================================
 
 /// Registry for managing verified publishers
 #[derive(Debug)]
@@ -986,9 +974,7 @@ pub struct PublisherReputation {
     pub is_suspended: bool,
 }
 
-// ============================================================================
 // Helper Functions
-// ============================================================================
 
 /// Get current Unix timestamp
 fn now() -> u64 {
@@ -1007,9 +993,7 @@ fn generate_challenge(publisher_id: &str, method: &str) -> String {
     hex::encode(hasher.finalize())[..32].to_string()
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

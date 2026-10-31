@@ -68,9 +68,7 @@ use crate::kernel::config::KernelConfig;
 use crate::kernel::types::{AgentId, KernelError, SessionId, ToolRequest};
 use crate::kernel::{AgentRecord, Kernel};
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors from the LLM integration layer
 #[derive(Debug, thiserror::Error)]
@@ -111,9 +109,7 @@ pub enum IntegrationError {
 /// Result type for integration operations
 pub type IntegrationResult<T> = Result<T, IntegrationError>;
 
-// ============================================================================
 // Tool Definitions (LLM-compatible)
-// ============================================================================
 
 /// A tool definition compatible with LLM function calling protocols.
 ///
@@ -242,9 +238,7 @@ impl ToolDefinition {
     }
 }
 
-// ============================================================================
 // Built-in Tool Definitions
-// ============================================================================
 
 /// Get the built-in tool definitions provided by VAK
 pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
@@ -320,9 +314,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
     ]
 }
 
-// ============================================================================
 // Tool Call / Result Types
-// ============================================================================
 
 /// A tool call from an LLM, ready to be executed by VAK
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -350,9 +342,7 @@ pub struct ToolResult {
     pub audit_hash: Option<String>,
 }
 
-// ============================================================================
 // VakAgent
-// ============================================================================
 
 /// A managed agent within the VAK runtime.
 ///
@@ -534,9 +524,7 @@ impl std::fmt::Debug for VakAgent {
     }
 }
 
-// ============================================================================
 // VakAgent Builder
-// ============================================================================
 
 /// Builder for creating a `VakAgent` with configuration
 pub struct AgentBuilder {
@@ -610,9 +598,7 @@ impl AgentBuilder {
     }
 }
 
-// ============================================================================
 // VakRuntime
-// ============================================================================
 
 /// The main runtime for VAK LLM integration.
 ///
@@ -775,9 +761,7 @@ impl std::fmt::Debug for VakRuntime {
     }
 }
 
-// ============================================================================
 // RuntimeBuilder
-// ============================================================================
 
 /// Builder for creating a `VakRuntime`
 pub struct RuntimeBuilder {
@@ -900,9 +884,7 @@ impl RuntimeBuilder {
     }
 }
 
-// ============================================================================
 // Convenience Functions
-// ============================================================================
 
 /// Quick helper to create a tool call from name and arguments
 pub fn tool_call(name: impl Into<String>, args: serde_json::Value) -> ToolCall {
@@ -978,9 +960,7 @@ pub fn format_anthropic_tool_results(results: &[ToolResult]) -> Vec<serde_json::
         .collect()
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

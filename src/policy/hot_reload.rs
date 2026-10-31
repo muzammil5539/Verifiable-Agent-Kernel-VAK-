@@ -34,9 +34,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::policy::{ConditionOperator, PolicyCondition, PolicyEffect, PolicyRule};
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during hot-reload operations
 #[derive(Debug, Error)]
@@ -65,9 +63,7 @@ pub enum HotReloadError {
 /// Result type for hot-reload operations
 pub type HotReloadResult<T> = Result<T, HotReloadError>;
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for hot-reloadable policy engine
 #[derive(Debug, Clone)]
@@ -125,9 +121,7 @@ impl HotReloadConfig {
     }
 }
 
-// ============================================================================
 // Policy Version
-// ============================================================================
 
 /// A versioned snapshot of the policy set
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -197,9 +191,7 @@ impl PolicyVersion {
     }
 }
 
-// ============================================================================
 // Policy Snapshot
-// ============================================================================
 
 /// An immutable snapshot of the current policy state
 #[derive(Debug, Clone)]
@@ -232,9 +224,7 @@ impl PolicySnapshot {
     }
 }
 
-// ============================================================================
 // Hot Reload Metrics
-// ============================================================================
 
 /// Metrics for hot-reload operations
 /// Metrics for hot-reload operations
@@ -256,9 +246,7 @@ pub struct HotReloadMetrics {
     pub current_version: u64,
 }
 
-// ============================================================================
 // Policy Decision Type for Hot Reload
-// ============================================================================
 
 /// Decision result from hot-reloadable policy evaluation
 #[derive(Debug, Clone)]
@@ -284,9 +272,7 @@ impl HotReloadDecision {
     }
 }
 
-// ============================================================================
 // Hot-Reloadable Policy Engine
-// ============================================================================
 
 /// Policy engine with hot-reload capability
 ///
@@ -756,9 +742,7 @@ impl std::fmt::Debug for HotReloadablePolicyEngine {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

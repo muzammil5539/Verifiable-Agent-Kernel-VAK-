@@ -2,7 +2,7 @@
 
 > **The first autonomous code auditor with cryptographic verifiability and formal safety guarantees.**
 >
-> **Status:** v1.0 Production Ready - Full documentation, security hardening, performance tuning
+> **Status:** v1.0. An example, not a production tool. Open findings are in `docs/architecture-v2.md`.
 
 ## Overview
 
@@ -95,7 +95,7 @@ forbidden_files: vec![
 Attempting to access forbidden files is automatically blocked and logged:
 
 ```
-✅ Access correctly denied: Access denied: '.env' is a forbidden file
+Access correctly denied: Access denied: '.env' is a forbidden file
 ```
 
 ### 3. Formal Constraints

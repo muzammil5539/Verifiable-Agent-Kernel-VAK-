@@ -28,9 +28,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during routing
 #[derive(Debug, Error, Clone)]
@@ -48,9 +46,7 @@ pub enum RoutingError {
     NoSuitableTopology,
 }
 
-// ============================================================================
 // Task Complexity
-// ============================================================================
 
 /// Complexity level of a task
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -87,9 +83,7 @@ impl TaskComplexity {
     }
 }
 
-// ============================================================================
 // Topology
-// ============================================================================
 
 /// Available multi-agent topologies
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -138,9 +132,7 @@ impl Topology {
     }
 }
 
-// ============================================================================
 // Task Characteristics
-// ============================================================================
 
 /// Characteristics of a task that influence routing
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -157,9 +149,7 @@ pub struct TaskCharacteristics {
     pub time_sensitive: bool,
 }
 
-// ============================================================================
 // Topology Selection
-// ============================================================================
 
 /// A topology selection with reasoning
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -198,9 +188,7 @@ impl TopologySelection {
     }
 }
 
-// ============================================================================
 // Routing Decision
-// ============================================================================
 
 /// Complete routing decision
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -220,9 +208,7 @@ pub struct RoutingDecision {
 /// Enhanced routing decision with more details
 pub type EnhancedRoutingDecision = RoutingDecision;
 
-// ============================================================================
 // Router Configuration
-// ============================================================================
 
 /// Configuration for the protocol router
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -288,9 +274,7 @@ impl Default for RouterConfig {
     }
 }
 
-// ============================================================================
 // Protocol Router
-// ============================================================================
 
 /// Router for selecting multi-agent topologies
 #[derive(Debug, Clone)]
@@ -476,9 +460,7 @@ impl ProtocolRouter {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

@@ -39,9 +39,7 @@ use std::sync::{PoisonError, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur in Merkle DAG operations
 #[derive(Debug, Error)]
@@ -71,9 +69,7 @@ pub enum DagError {
     StorageError(String),
 }
 
-// ============================================================================
 // Content ID
-// ============================================================================
 
 /// Content-addressed identifier (SHA-256 hash)
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -124,9 +120,7 @@ impl From<&str> for ContentId {
     }
 }
 
-// ============================================================================
 // DAG Node
-// ============================================================================
 
 /// A node in the Merkle DAG
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -243,9 +237,7 @@ impl DagNode {
     }
 }
 
-// ============================================================================
 // Inclusion Proof
-// ============================================================================
 
 /// Proof of inclusion in the DAG
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -306,9 +298,7 @@ impl InclusionProof {
     }
 }
 
-// ============================================================================
 // Merkle DAG
-// ============================================================================
 
 /// Merkle DAG storage
 pub struct MerkleDag {
@@ -665,9 +655,7 @@ impl std::fmt::Debug for MerkleDag {
     }
 }
 
-// ============================================================================
 // Supporting Types
-// ============================================================================
 
 /// Diff between two DAG nodes
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -703,9 +691,7 @@ fn current_timestamp() -> u64 {
         .as_secs()
 }
 
-// ============================================================================
 // Memory Snapshot Integration
-// ============================================================================
 
 /// Memory snapshot stored in the Merkle DAG
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -760,9 +746,7 @@ impl MemorySnapshot {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

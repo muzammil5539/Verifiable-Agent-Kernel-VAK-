@@ -150,7 +150,6 @@ impl EpochDeadlineManager {
     ///
     /// When the deadline is reached, execution yields back to the async
     /// runtime, allowing other tasks to run. The deadline is then extended.
-    #[allow(dead_code)]
     pub fn set_deadline_async_yield<T>(store: &mut Store<T>, config: &EpochConfig) {
         let increment = config.yield_increment;
         // Set initial deadline

@@ -19,11 +19,10 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
+use super::guard::GuardChecks;
 use crate::audit::transparency::SignedTreeHead;
 
-// ============================================================================
 // Identifier Types
-// ============================================================================
 
 /// A unique identifier for an agent in the system.
 ///
@@ -174,9 +173,7 @@ impl fmt::Display for AuditId {
     }
 }
 
-// ============================================================================
 // Policy Types
-// ============================================================================
 
 /// The result of a policy evaluation.
 ///
@@ -261,9 +258,7 @@ impl PolicyDecision {
     }
 }
 
-// ============================================================================
 // Request/Response Types
-// ============================================================================
 
 /// A request from an agent to execute a tool.
 ///
@@ -427,9 +422,7 @@ pub struct AuditReceipt {
     pub tree_head: SignedTreeHead,
 }
 
-// ============================================================================
 // Audit Types
-// ============================================================================
 
 /// What happened when an allowed tool call ran.
 ///
@@ -468,9 +461,10 @@ pub struct AuditOutcome {
 /// - A cryptographic hash for integrity verification
 /// - A reference to the previous entry (for chain integrity)
 ///
-/// A *decision* entry records what the kernel decided, before acting. An
-/// *outcome* entry (`outcome` is set) records what happened after an allowed
-/// call ran, and names its decision entry's leaf.
+/// A *decision* entry records what the kernel decided, before acting, and
+/// what each guard said (`guards`). An *outcome* entry (`outcome` is set)
+/// records what happened after an allowed call ran, and names its decision
+/// entry's leaf.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEntry {
     /// Unique identifier for this audit entry.
@@ -501,6 +495,15 @@ pub struct AuditEntry {
     /// For an outcome entry, what happened when the tool ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outcome: Option<AuditOutcome>,
+
+    /// What the Guard stage did, on an allowed call's decision entry or on a
+    /// guard or `policy.min_assurance` refusal: the level required, and each
+    /// guard that ran, in order. Absent on admit, budget and policy-denial
+    /// entries, where the Guard stage never ran, even if a level covers the
+    /// tool; and absent when no guard is registered and no level applies
+    /// (docs/adr/0013).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guards: Option<GuardChecks>,
 }
 
 impl AuditEntry {
@@ -522,6 +525,7 @@ impl AuditEntry {
             hash: String::new(),
             previous_hash: None,
             outcome: None,
+            guards: None,
         };
         entry.hash = entry.compute_hash();
         entry
@@ -545,6 +549,14 @@ impl AuditEntry {
         self
     }
 
+    /// Records what the Guard stage did with the call.
+    #[must_use]
+    pub fn with_guards(mut self, guards: GuardChecks) -> Self {
+        self.guards = Some(guards);
+        self.hash = self.compute_hash();
+        self
+    }
+
     /// Computes the SHA-256 hash for an audit entry.
     ///
     /// The digest commits to *every* field that carries meaning, including the
@@ -554,8 +566,9 @@ impl AuditEntry {
     ///
     /// Fields are length-prefixed so that no two distinct entries can produce
     /// the same pre-image by shifting bytes across field boundaries. The
-    /// outcome is absorbed only when present, so a decision entry hashes
-    /// exactly as entries did before outcomes existed.
+    /// guard checks and the outcome are absorbed only when present, each
+    /// behind its own tag, so an entry without them hashes exactly as
+    /// entries did before they existed.
     fn compute_hash(&self) -> String {
         fn absorb(hasher: &mut Sha256, field: &[u8]) {
             hasher.update((field.len() as u64).to_be_bytes());
@@ -578,6 +591,11 @@ impl AuditEntry {
             &mut hasher,
             self.previous_hash.as_deref().unwrap_or("").as_bytes(),
         );
+
+        if let Some(guards) = &self.guards {
+            absorb(&mut hasher, b"guards");
+            absorb(&mut hasher, &serde_json::to_vec(guards).unwrap_or_default());
+        }
 
         if let Some(outcome) = &self.outcome {
             absorb(&mut hasher, b"outcome");
@@ -619,9 +637,7 @@ impl AuditEntry {
     }
 }
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur in the VAK kernel.
 ///

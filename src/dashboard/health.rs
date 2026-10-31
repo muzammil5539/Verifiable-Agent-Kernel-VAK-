@@ -7,9 +7,7 @@ use std::collections::HashMap;
 use std::sync::RwLock;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-// ============================================================================
 // Health Status
-// ============================================================================
 
 /// Overall health status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,9 +62,7 @@ impl ReadinessStatus {
     }
 }
 
-// ============================================================================
 // Component Health
-// ============================================================================
 
 /// Health status of an individual component
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,9 +129,7 @@ impl ComponentHealth {
     }
 }
 
-// ============================================================================
 // Health Response
-// ============================================================================
 
 /// Full health check response
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -179,9 +173,7 @@ impl ReadinessResponse {
     }
 }
 
-// ============================================================================
 // Health Checker
-// ============================================================================
 
 /// Health check function type
 pub type HealthCheckFn = Box<dyn Fn() -> ComponentHealth + Send + Sync>;
@@ -366,9 +358,7 @@ impl Default for HealthChecker {
     }
 }
 
-// ============================================================================
 // Default Health Checks
-// ============================================================================
 
 /// Create default health checks for VAK components
 pub fn create_default_checks(checker: &HealthChecker) {
@@ -393,9 +383,7 @@ pub fn create_default_checks(checker: &HealthChecker) {
     checker.require_for_ready("audit_logger");
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

@@ -44,9 +44,7 @@ use std::sync::{Mutex, RwLock};
 use std::time::Instant;
 use uuid::Uuid;
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for the flight recorder
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,9 +141,7 @@ impl RecorderConfig {
     }
 }
 
-// ============================================================================
 // Event Types
-// ============================================================================
 
 /// Types of flight recorder events
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -375,9 +371,7 @@ impl FlightEvent {
     }
 }
 
-// ============================================================================
 // Trace Receipt
-// ============================================================================
 
 /// A cryptographic receipt for a recorded trace
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -402,9 +396,7 @@ pub struct TraceReceipt {
     pub event_type_summary: HashMap<String, u32>,
 }
 
-// ============================================================================
 // Flight Recorder
-// ============================================================================
 
 /// Flight recorder for shadow mode and trace recording
 pub struct FlightRecorder {
@@ -876,9 +868,7 @@ impl std::fmt::Debug for FlightRecorder {
     }
 }
 
-// ============================================================================
 // Replay Engine
-// ============================================================================
 
 /// Replays recorded traces for validation
 pub struct ReplayEngine {
@@ -1112,9 +1102,7 @@ pub struct MismatchDetail {
     pub actual: serde_json::Value,
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

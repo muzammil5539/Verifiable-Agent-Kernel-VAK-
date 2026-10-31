@@ -1,235 +1,91 @@
-# Verifiable Agent Kernel (VAK) 🛡️
+# Verifiable Agent Kernel (VAK)
 
-**An open-source Agent Kernel that intercepts agent actions, enforces policy rules (ABAC), and audit-logs behavior for trustworthy AI agent deployments.**
+A Rust library that sits between an LLM-driven agent and the outside world. For every tool call an agent proposes, VAK checks it against policy, writes the decision to a tamper-evident log before the call runs, and returns a receipt that anyone can verify without trusting the kernel.
 
-[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](Cargo.toml)
 [![Rust](https://img.shields.io/badge/rust-1.96%2B-orange.svg)](https://www.rust-lang.org/)
-[![Status](https://img.shields.io/badge/status-production--ready-brightgreen.svg)](https://github.com/muzammil5539/Verifiable-Agent-Kernel-VAK-)
 
----
+Think of it as the checkpoint at a building's door. The agent can ask for anything, but every request is checked against the guest list, written in a ledger that can't be edited, and only then let through.
 
-## 📑 Table of Contents
+## What it does
 
-- [Overview](#overview)
-- [Why VAK?](#why-vak)
-- [Core Features](#core-features)
-- [Architecture](#architecture)
-  - [Module 1: Cryptographic Memory Fabric](#module-1-cryptographic-memory-fabric-cmf)
-  - [Module 2: Neuro-Symbolic Reasoner](#module-2-neuro-symbolic-reasoner-nsr)
-  - [Module 3: Policy Engine (ABAC)](#module-3-policy-engine-abac)
-  - [Module 4: WASM Sandbox](#module-4-wasm-sandbox)
-- [Project Structure](#project-structure)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Usage Examples](#usage-examples)
-- [Development Roadmap](#development-roadmap)
-- [Skills Development](#skills-development)
-- [Contributing](#contributing)
-- [License](#license)
+Every request passes through one function, `Kernel::execute`, in this order:
 
-### Documentation
+1. **Admit**: is the agent known and active, and is the tool inside its own scope?
+2. **Budget**: has the agent used up its rate limit?
+3. **Decide**: does policy (Cedar or YAML ABAC, default deny) permit the call?
+4. **Guard**: do any registered extra checks object?
+5. **Record**: append the decision to the audit log. If this fails, the tool does not run.
+6. **Execute**: run a built-in tool, a host handler, or a signed WASM skill in the sandbox.
+7. **Record outcome**: append the result's hash, linked to the decision.
+8. **Respond**: return the result with a receipt (both log positions and a signed tree head).
 
-- [Architecture Documentation](ARCHITECTURE.md) — System design, module reference, data flow, security architecture
-- [API Reference](API.md) — Complete API reference for all modules (Rust & Python)
-- [Python SDK Guide](docs/python-sdk.md) — Getting started with the Python SDK
-- [Production Deployment Guide](docs/production-deployment.md) — Docker, Kubernetes, and Helm deployment
-- [Security Hardening Guide](docs/security-hardening.md) — Production security best practices
-- [Performance Tuning Guide](docs/performance-tuning.md) — Optimization and profiling
-- [Troubleshooting Guide](docs/troubleshooting.md) — Common issues and solutions
-- [Migration Guide](docs/migration-guide.md) — Upgrading from v0.x to v1.0
-- [Contributing Guide](CONTRIBUTING.md) — Development workflow and coding standards
-- [Changelog](CHANGELOG.md) — Version history
+The audit log is an RFC 9162 Merkle tree with Ed25519-signed heads, so a third party can check that a decision was made and that nothing was removed or rewritten afterwards. Details are in [ARCHITECTURE.md](ARCHITECTURE.md).
 
----
+The rules the kernel never relaxes: deny by default, fail closed, record before acting, no fake success (a tool that didn't run is an error), untrusted code only in the sandbox, no `unsafe`.
 
-## Overview
+## Status
 
-The **Verifiable Agent Kernel (VAK)**, also known as **Exo-Cortex**, is a deterministic control plane for autonomous AI agents. It bridges the gap between probabilistic LLMs and trustworthy Proto-AGI systems by introducing:
+The core request path is built and tested. The research modules around it are not all sound, and the design doc says which. [docs/architecture-v2.md](docs/architecture-v2.md) is the source of truth, with each claim checked against code.
 
-- **Neuro-symbolic architecture** for reliable reasoning
-- **Cryptographic memory integrity** via Merkle DAGs
-- **Sandboxed execution** via WebAssembly (WASM)
-- **Attribute-Based Access Control (ABAC)** for policy enforcement
-- **Immutable audit logging** for complete transparency
+| Area | State |
+|---|---|
+| Mediation pipeline, agent registry, rate limits, guards | Built |
+| Policy: Cedar (with SymCC property proofs) and YAML ABAC | Built |
+| Audit log: memory, JSONL and SQLite adapters, receipts, proofs | Built |
+| WASM sandbox: Wasmtime 49, fuel and epoch limits, Ed25519-signed skills | Built |
+| Python SDK, MCP `execute_skill` | Built, both through `Kernel::execute` |
+| Datalog safety rules, PRM scoring, Z3, tree search | Heuristic: useful signals, not guarantees |
+| Zero-knowledge proofs | Not a proof system. Behind `experimental-zk`, off by default |
+| Sparse Merkle tree, swarm voting | Known unsound (findings V4 and S1) |
+| Constitution, reasoner as guards | Not on the request path yet |
 
-VAK treats the LLM as the "CPU" and acts as the "Operating System," enabling enterprises to deploy autonomous agents with provable safety, auditability, and compliance guarantees.
+## Install
 
-### The Problem We Solve
+Requires Rust 1.96 or later.
 
-Current AI agent frameworks suffer from:
-
-1. **Context Engineering Paradox**: "Goldfish" agents with no episodic memory
-2. **Determinism Gap**: Probabilistic outputs make testing and deployment unpredictable
-3. **Multi-Agent Coordination Failure**: Sycophancy and consensus collapse
-4. **Safety Void**: No formal verification or sandboxing
-5. **Infrastructure Economics**: Unsustainable token costs for long-running tasks
-
-VAK addresses these fundamental issues with a kernel-based approach inspired by operating system design.
-
----
-
-## Why VAK?
-
-### The Blue Ocean Opportunity
-
-VAK occupies a unique market position:
-
-- **High Novelty** ⭐⭐⭐⭐ (4/5): An OS-like "kernel" for AI agents is not yet mainstream
-- **Technical Feasibility** ⭐⭐⭐ (3/5): Proven by research prototypes and existing POCs
-- **Alignment Impact** ⭐⭐⭐⭐⭐ (5/5): Directly supports AI safety through enforced constraints
-- **Business Value** ⭐⭐⭐⭐⭐ (5/5): Strong enterprise demand for provable agent safety
-
-### Core Value Proposition
-
-**"Deploy autonomous AI agents you can trust."**
-
-VAK provides a transparent, enforceable layer between AI agents and the external world. It guarantees that agents only perform actions allowed by policy, logs every decision for audit, and prevents bypass attempts via structural checks.
-
----
-
-## Core Features
-
-### 🔐 Policy Enforcement
-- **ABAC Engine**: Attribute-Based Access Control with rule evaluation
-- **Deny by Default**: No policy = inadmissible (explicit allow required)
-- **Priority-Based Rules**: Fine-grained control with pattern matching
-- **Runtime Interception**: Every agent action goes through policy checks
-
-### 📝 Audit Logging
-- **Hash-Chained Entries**: Cryptographically linked audit trail (SHA-256)
-- **Immutable Records**: Append-only logging prevents tampering
-- **Chain Integrity Verification**: Detect any modifications to audit history
-- **Flight Recorder Mode**: Shadow mode for safe testing without execution
-
-### 🧠 Memory Architecture
-- **Hierarchical Memory**: Working (hot), Episodic (warm), Semantic (cold)
-- **Merkle DAG Storage**: Content-addressable with cryptographic integrity
-- **Time Travel & Rollbacks**: Revert to any previous state by hash
-- **Vector + Graph Storage**: Semantic retrieval with relationship preservation
-
-### 🔒 WASM Sandbox
-- **Isolated Execution**: Skills run in WebAssembly sandboxes
-- **Resource Limits**: Memory, CPU (fuel), and timeout constraints
-- **Deterministic**: Same input always produces same output
-- **Signed Skills**: Ed25519 verification for skill authenticity
-
-### 🤖 Neuro-Symbolic Reasoning
-- **Process Reward Model (PRM)**: Step-by-step reasoning validation
-- **Tree of Thoughts**: MCTS-based exploration with backtracking
-- **Z3 Formal Verification**: Mathematical proof of constraint satisfaction
-- **LLM Integration**: Pluggable LLM interface (LiteLLM compatible)
-- **Zero-Knowledge Proofs**: Prove properties without revealing sensitive data
-- **PRM Fine-Tuning Toolkit**: Dataset management, calibration analysis, and A/B testing
-
-### 🌐 Multi-Agent Support
-- **Async Kernel**: Non-blocking, concurrent agent execution
-- **Quadratic Voting**: Prevent sycophancy in multi-agent systems
-- **Swarm Consensus**: Debate protocols and ensemble aggregation
-- **Protocol Router**: Standardized inter-agent communication
-
-### 📜 Constitution Protocol
-- **Safety Principles**: Immutable rules that cannot be overridden by policies
-- **Multi-Point Enforcement**: Pre-policy, pre-execution, and post-execution checks
-- **Compound Constraints**: Logical AND/OR/NOT combinations for complex rules
-- **Tamper Detection**: Cryptographic hashing of the constitution itself
-
-### 🏪 Skill Marketplace
-- **Verified Publishers**: Multi-method identity verification (GitHub, GPG, domain, email)
-- **Trust Levels**: Progressive trust from unverified to official
-- **Reputation System**: Community-driven publisher reputation scores
-- **Vulnerability Scanning**: Automated security checks on skill publish
-- **Malicious Skill Reporting**: Community reporting with auto-suspension
-
----
-
-## Architecture
-
-VAK follows a modular, layered architecture inspired by operating system design:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      Agent Layer                            │
-│  (LLM-based agents: GPT-4, Claude, Llama, etc.)           │
-└─────────────────┬───────────────────────────────────────────┘
-                  │ Tool Requests
-                  ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   VAK Kernel (Core)                         │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │
-│  │   Policy     │  │    Audit     │  │    Memory    │    │
-│  │   Engine     │  │   Logger     │  │   Manager    │    │
-│  │   (ABAC)     │  │  (Merkle)    │  │  (3-Tier)    │    │
-│  └──────────────┘  └──────────────┘  └──────────────┘    │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │
-│  │    WASM      │  │     LLM      │  │   Reasoner   │    │
-│  │   Sandbox    │  │  Interface   │  │    (PRM)     │    │
-│  └──────────────┘  └──────────────┘  └──────────────┘    │
-└─────────────────┬───────────────────────────────────────────┘
-                  │ Approved Actions
-                  ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   External World                            │
-│  (APIs, Files, Databases, Services)                        │
-└─────────────────────────────────────────────────────────────┘
+```bash
+git clone https://github.com/muzammil5539/Verifiable-Agent-Kernel-VAK-.git
+cd Verifiable-Agent-Kernel-VAK-
+cargo build --release                 # core, WASM sandbox and memory
+cargo build --no-default-features     # the trusted core alone, no Wasmtime
+cargo build --features full           # everything except the Python bindings
 ```
 
-### Communication Flow
+Features outside the core are opt-in: `reasoner`, `swarm`, `integrations`, `dashboard`, `cedar`, `cedar-analysis`, `experimental-zk`, `python`. See [ARCHITECTURE.md](ARCHITECTURE.md) for what each enables.
 
+The Python SDK is built with maturin: `pip install -e ./python`. See [docs/python-sdk.md](docs/python-sdk.md).
+
+## Quick start
+
+```rust
+use vak::kernel::config::KernelConfig;
+use vak::prelude::*;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let kernel = Kernel::new(KernelConfig::default()).await?;
+
+    let agent_id = AgentId::new();
+    let session_id = SessionId::new();
+
+    let request = ToolRequest::new(
+        "calculator",
+        serde_json::json!({ "operation": "add", "operands": [42, 58] }),
+    );
+    let response = kernel.execute(&agent_id, &session_id, request).await?;
+    println!("success: {}, result: {:?}", response.success, response.result);
+
+    for entry in kernel.get_audit_log().await {
+        println!("{} {} {:?}", entry.agent_id, entry.action, entry.decision);
+    }
+    Ok(())
+}
 ```
-┌──────────────┐   tool_request    ┌─────────────────────┐
-│   Any Agent  │ ─────────────────►│ Policy Enforcement  │
-└──────────────┘                   └──────────┬──────────┘
-                                              │
-                         ┌────────────────────┼────────────────────┐
-                         │                    │                    │
-                         ▼                    ▼                    ▼
-                 ┌───────────────┐    ┌───────────────┐   ┌───────────────┐
-                 │ Formal Verif  │    │ Tool Executor │   │ Audit Logger  │
-                 │ (high-stakes) │    │    (WASM)     │   │  (all actions)│
-                 └───────────────┘    └───────────────┘   └───────────────┘
-```
 
-### Module 1: Cryptographic Memory Fabric (CMF)
+More in `examples/`: `basic_agent.rs`, `policy_demo.rs`, `sign_skill.rs`, `cedar_check.rs`, and the Python scripts.
 
-**Solving the "Goldfish" and "Hallucination" problems.**
-
-VAK implements a hierarchical Merkle DAG for memory management:
-
-#### Memory Tiers
-
-- **Working Memory (Hot)**: Current context window with dynamic summarization
-- **Episodic Memory (Warm)**: Time-ordered Merkle Chain of past trajectories
-- **Semantic Memory (Cold)**: Knowledge Graph + Vector Store for structured retrieval
-
-#### Content-Addressable Integrity
-
-- **State Hash**: Entire agent state at step T represented by a single root hash
-- **Audit Trails**: Cryptographic proof of decision provenance
-- **Time Travel**: Instant rollback to any previous state by hash
-
-### Module 2: Neuro-Symbolic Reasoner (NSR)
-
-**Solving the "Reliability" and "Safety" problems.**
-
-Combines neural creativity with symbolic verification:
-
-- **Process Reward Model (PRM)**: Score reasoning steps before execution
-- **Tree of Thoughts (ToT)**: MCTS-based exploration with backtracking
-- **Z3 Formal Verification**: Mathematical constraint satisfaction
-- **Loop Detection**: Prevent infinite reasoning loops
-
-### Module 3: Policy Engine (ABAC)
-
-**Solving the "Permission" and "Compliance" problems.**
-
-Attribute-Based Access Control with:
-
-- **Rule Evaluation**: JSON/YAML policy definitions
-- **Condition Operators**: `eq`, `lt`, `gt`, `in`, `contains`, `startsWith`, etc.
-- **Priority System**: Explicit rule ordering for conflict resolution
-- **Pattern Matching**: Glob patterns for resources/actions
-
-Example policy:
+A YAML policy looks like this. A call with no matching rule is denied.
 
 ```yaml
 id: "refund_approval"
@@ -241,603 +97,60 @@ conditions:
   - field: "amount"
     operator: LessThan
     value: 1000
-  - field: "user_status"
-    operator: Equals
-    value: "verified"
 priority: 100
 ```
 
-### Module 4: WASM Sandbox
+Operators: `Equals`, `NotEquals`, `LessThan`, `GreaterThan`, `In`, `Contains`, `StartsWith`, `EndsWith`, `Matches`. Example policies are in `policies/`. Cedar policies and their schema are in `policies/cedar/`.
 
-**Solving the "Security" and "Isolation" problems.**
+## Writing a skill
 
-Skills (tools) run in WebAssembly sandboxes with:
-
-- **Memory Limits**: Bounded memory pages (e.g., 16 pages = 1MB)
-- **Fuel Limits**: CPU execution quotas to prevent infinite loops
-- **Timeout Handling**: Epoch-based interruption
-- **Signed Execution**: Ed25519 signatures for skill verification
-
----
-
-## Project Structure
-
-```
-VAK/
-├── src/                          # Core Rust implementation
-│   ├── kernel/                   # Kernel core (sessions, agents, orchestration)
-│   ├── policy/                   # ABAC policy engine
-│   ├── audit/                    # Hash-chained audit logging
-│   ├── memory/                   # 3-tier memory system
-│   ├── sandbox/                  # WASM execution environment
-│   ├── llm/                      # LLM abstraction layer
-│   └── reasoner/                 # Neuro-symbolic reasoning (PRM, Z3)
-│
-├── agents/                       # Agent definitions
-│   ├── development/              # Dev-time code generation agents
-│   │   ├── kernel_core_agent.yaml
-│   │   ├── crypto_memory_agent.yaml
-│   │   ├── neurosymbolic_agent.yaml
-│   │   ├── wasm_sandbox_agent.yaml
-│   │   ├── policy_engine_agent.yaml
-│   │   ├── python_sdk_agent.yaml
-│   │   └── testing_agent.yaml
-│   │
-│   └── runtime/                  # Runtime enforcement agents
-│       ├── policy_enforcement_agent.yaml
-│       ├── audit_logging_agent.yaml
-│       ├── prm_scoring_agent.yaml
-│       ├── formal_verification_agent.yaml
-│       ├── swarm_consensus_agent.yaml
-│       └── state_manager_agent.yaml
-│
-├── instructions/                 # System instructions for agents
-│   ├── global.instructions.yaml          # Core principles
-│   ├── safety.instructions.yaml          # Safety rules
-│   ├── code_generation.instructions.yaml # Dev standards
-│   └── policy_authoring.instructions.yaml
-│
-├── prompts/                      # Prompt templates
-│   ├── code_generation.prompts.yaml
-│   ├── reasoning_verification.prompts.yaml
-│   ├── policy_audit.prompts.yaml
-│   └── multi_agent.prompts.yaml
-│
-├── protocols/                    # Communication protocols
-│   ├── inter_agent_protocol.yaml
-│   └── kernel_api.yaml
-│
-├── policies/                     # Example ABAC policies
-│   ├── admin/, data/, finance/, tests/
-│
-├── skills/                       # WASM skill modules
-│   ├── calculator/               # Example arithmetic skill
-│   └── README.md                 # Skills development guide
-│
-├── examples/                     # Usage examples
-│   ├── basic_agent.rs
-│   ├── policy_demo.rs
-│   └── python_quickstart.py
-│
-├── python/                       # Python SDK
-│   └── vak/
-│       ├── __init__.py
-│       └── types.py
-│
-├── config/                       # Configuration
-│   └── agent_registry.yaml
-│
-├── k8s/                          # Kubernetes manifests
-│   └── base/                    # Kustomize base (deployment, service, hpa, etc.)
-│
-├── helm/                         # Helm charts
-│   └── vak/                     # VAK chart (Chart.yaml, values.yaml, templates/)
-│
-├── scripts/                      # Tooling scripts
-│   └── perf-profile.sh          # Performance profiling suite
-│
-├── Makefile                      # Development task automation (incl. coverage)
-│
-└── benches/                      # Performance benchmarks
-```
-
----
-
-## Installation
-
-### Prerequisites
-
-- **Rust**: 1.96 or later (Wasmtime 49's minimum)
-- **Python**: 3.8+ (for Python SDK)
-- **WASM Target**: For building skills
+Skills are WASM modules the kernel runs in the sandbox. A skill is signed with Ed25519 over its module hash and manifest, and the kernel only loads skills signed by a key in `security.trusted_skill_keys`. See [.github/skills/README.md](.github/skills/README.md) and `cargo run --example sign_skill`.
 
 ```bash
-# Install Rust (if not already installed)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Add WASM target
-rustup target add wasm32-unknown-unknown
+cargo build -p calculator --target wasm32-unknown-unknown --release
 ```
 
-### Building from Source
+## Repository layout
+
+| Path | Contents |
+|---|---|
+| `src/kernel`, `policy`, `audit`, `secrets` | The trusted core |
+| `src/sandbox` | Wasmtime sandbox and skill registry |
+| `src/memory`, `reasoner`, `swarm`, `integrations`, `llm` | Modules outside the core |
+| `python/` | Python SDK over the native module |
+| `policies/` | Example YAML and Cedar policies |
+| `agents/`, `instructions/`, `prompts/`, `protocols/` | Agent definitions used to develop VAK and to run its runtime agents |
+| `docs/` | Design, ADRs, deployment, security and tuning guides |
+| `k8s/`, `helm/`, `scripts/` | Deployment manifests and tooling |
+| `.github/skills/` | WASM skill crates and contributor skills |
+
+## Documentation
+
+- [ARCHITECTURE.md](ARCHITECTURE.md): module reference, data flow, deployment
+- [API.md](API.md): API reference for Rust and Python
+- [docs/architecture-v2.md](docs/architecture-v2.md): audit of claims against code, and the migration plan
+- [docs/adr/](docs/adr/): decision records
+- [docs/python-sdk.md](docs/python-sdk.md), [docs/production-deployment.md](docs/production-deployment.md), [docs/security-hardening.md](docs/security-hardening.md), [docs/performance-tuning.md](docs/performance-tuning.md), [docs/troubleshooting.md](docs/troubleshooting.md), [docs/migration-guide.md](docs/migration-guide.md)
+- [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md), [TODO.md](TODO.md)
+
+## Development
 
 ```bash
-# Clone the repository
-git clone https://github.com/muzammil5539/Verifiable-Agent-Kernel-VAK-.git
-cd Verifiable-Agent-Kernel-VAK-
-
-# Build the project
-cargo build --release
-
-# Run tests
-cargo test --features full
-
-# Run benchmarks
-cargo bench
+cargo test --features full            # all Rust tests
+cargo test --no-default-features      # the core alone
+python -m pytest python/tests/ -v     # Python SDK tests
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+make coverage-check                   # fails under 80% line coverage
+make security                         # cargo audit and cargo deny
 ```
 
-### Python SDK Installation
-
-```bash
-# Install from source (PyO3 bindings - coming soon)
-pip install -e ./python
-```
-
----
-
-## Quick Start
-
-### Basic Agent Example
-
-```rust
-use vak::{Kernel, KernelConfig, ToolRequest, AgentId};
-use std::sync::Arc;
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize the kernel
-    let config = KernelConfig::default()
-        .with_policy_path("policies/")
-        .with_audit_enabled(true);
-    
-    let kernel = Arc::new(Kernel::new(config).await?);
-    
-    // Create an agent session
-    let agent_id = AgentId::new();
-    let session = kernel.create_session(agent_id).await?;
-    
-    // Execute a tool request
-    let request = ToolRequest::new(
-        agent_id,
-        "file_read",
-        serde_json::json!({"path": "/data/example.txt"})
-    );
-    
-    let response = kernel.execute_tool(request).await?;
-    println!("Response: {:?}", response);
-    
-    // View audit trail
-    let audit_report = kernel.audit_logger().generate_report().await?;
-    println!("Audit Report: {}", audit_report);
-    
-    Ok(())
-}
-```
-
-### Policy Definition Example
-
-```yaml
-# policies/admin/file_access.yaml
----
-id: "allow_read_data"
-effect: Allow
-patterns:
-  actions: ["file_read", "file_list"]
-  resources: ["/data/*"]
-conditions:
-  - field: "agent_role"
-    operator: Equals
-    value: "admin"
-priority: 100
-
----
-id: "deny_system_files"
-effect: Deny
-patterns:
-  actions: ["file_*"]
-  resources: ["/etc/*", "/sys/*", "/proc/*"]
-conditions: []
-priority: 200
-```
-
-### Python Usage Example
-
-```python
-from vak import VakKernel, ToolRequest
-
-# Initialize kernel
-kernel = VakKernel(
-    policy_path="policies/",
-    audit_enabled=True
-)
-
-# Create agent
-agent_id = kernel.create_agent(role="finance-agent")
-
-# Execute tool with policy enforcement
-request = ToolRequest(
-    agent_id=agent_id,
-    tool="refund_user",
-    params={"amount": 500, "user_id": "123"}
-)
-
-response = kernel.execute(request)
-print(f"Status: {response.status}")
-print(f"Result: {response.result}")
-
-# Check audit log
-audit_trail = kernel.get_audit_trail(agent_id)
-for entry in audit_trail:
-    print(f"{entry.timestamp}: {entry.action} - {entry.decision}")
-```
-
----
-
-## Usage Examples
-
-The `examples/` directory contains comprehensive examples:
-
-### 1. Basic Agent (`basic_agent.rs`)
-Demonstrates core kernel functionality, session management, and tool execution.
-
-### 2. Policy Demo (`policy_demo.rs`)
-Shows ABAC policy enforcement with various rule types and conditions.
-
-### 3. Python Quickstart (`python_quickstart.py`)
-Python SDK usage for integrating VAK with LangChain and other frameworks.
-
-Run examples:
-
-```bash
-# Rust examples
-cargo run --example basic_agent
-cargo run --example policy_demo
-
-# Python examples
-python examples/python_quickstart.py
-```
-
----
-
-## Development Roadmap
-
-### Current Status (v1.0 - Production Ready) — 100% Complete
-
-**Completed Phases:**
-- ✅ Phase 1: Core Kernel Stability ("Iron Kernel")
-- ✅ Phase 2: Policy Layer ("Digital Superego")
-- ✅ Phase 3: Memory & Provenance ("Immutable Past")
-- ✅ Phase 4: Neuro-Symbolic Cognitive Layer ("Prefrontal Cortex")
-- ✅ Phase 5: Ecosystem & Interoperability
-- ✅ Security Layer
-- ✅ Testing Layer
-- ✅ P3 Future Features (ZK Proofs, Constitution, PRM Toolkit, Marketplace)
-- ✅ Full Production Documentation
-
-**v1.0 Additions:**
-- ✅ Production Deployment Guide (Docker, Kubernetes, Helm)
-- ✅ Security Hardening Guide (defense-in-depth, compliance)
-- ✅ Performance Tuning Guide (benchmarking, optimization, profiling)
-- ✅ Troubleshooting Guide (diagnostics, common issues)
-- ✅ Migration Guide (v0.x to v1.0 upgrade path)
-- ✅ Version 1.0.0 release across all artifacts
-
-**Documentation:**
-- ✅ Architecture Documentation (DOC-001)
-- ✅ API Reference Documentation (DOC-002)
-
-**Infrastructure:**
-- ✅ Kubernetes Operator (INF-001)
-- ✅ Docker Images (INF-002)
-- ✅ Helm Charts (INF-003)
-- ✅ Cryptographic Replay (OBS-002)
-
-| Module | Status | Completion |
-|--------|--------|------------|
-| Kernel Core | ✅ Complete | 100% |
-| Policy Engine (ABAC) | ✅ Complete | 100% |
-| Audit Logging | ✅ Complete | 100% |
-| Memory Fabric | ✅ Complete | 100% |
-| WASM Sandbox | ✅ Complete | 100% |
-| Neuro-Symbolic Reasoner | ✅ Complete | 100% |
-| Security Layer | ✅ Complete | 100% |
-| Swarm/A2A Protocol | ✅ Complete | 100% |
-| MCP/Integrations | ✅ Complete | 100% |
-| Python SDK | ✅ Complete | 100% |
-| Testing Suite | ✅ Complete | 100% |
-| LLM Interface | ✅ Implemented | 100% |
-| Documentation | ✅ Complete | 100% |
-| Zero-Knowledge Proofs | ✅ Complete | 100% |
-| Constitution Protocol | ✅ Complete | 100% |
-| PRM Fine-Tuning Toolkit | ✅ Complete | 100% |
-| Skill Marketplace | ✅ Complete | 100% |
-| CI/CD Pipeline | ✅ Complete | 100% |
-| Code Coverage | ✅ Complete | 100% |
-| Infrastructure Tooling | ✅ Complete | 100% |
-| Production Documentation | ✅ Complete | 100% |
-
-### Roadmap by Priority
-
-#### 🔴 P0 - Critical for MVP
-
-**Phase 1: Core Kernel Stability** ✅ COMPLETE
-- [x] RT-001: Epoch Ticker Thread
-- [x] RT-002: Epoch Deadline Configuration
-- [x] RT-003: Pooling Allocator Strategy
-- [x] RT-004: Async Host Functions
-- [x] RT-005: Panic Safety at WASM/Host Boundary
-- [x] RT-006: Deterministic Termination Tests
-
-**Phase 2: Policy Layer** ✅ COMPLETE
-- [x] POL-001: Cedar Policy Integration
-- [x] POL-002: Cedar Schema Definition
-- [x] POL-003: Cedar Enforcer Implementation
-- [x] POL-004: Policy Middleware Injection
-- [x] POL-005: Dynamic Context Injection
-- [x] POL-006: Policy Hot-Reloading
-- [x] POL-007: Default Deny Policy
-- [x] POL-008: Policy Analysis Integration
-
-**Phase 3: Memory & Provenance** ✅ COMPLETE
-- [x] MEM-001: rs_merkle Integration
-- [x] MEM-002: Sparse Merkle Tree Proofs
-- [x] MEM-003: Content-Addressable Storage
-- [x] MEM-004: Cryptographic Receipt Generation
-- [x] MEM-005: Time Travel Debugging
-- [x] MEM-006: Secret Scrubbing
-
-**Phase 4: Neuro-Symbolic Cognitive Layer** ✅ COMPLETE
-- [x] NSR-001: Datalog Integration
-- [x] NSR-002: Safety Rules Implementation
-- [x] NSR-003: Reasoning Host Function
-- [x] NSR-004: Risk-Based Network Access Rules
-- [x] NSR-005: Constrained Decoding Bridge
-- [x] NSR-006: Neuro-Symbolic Hybrid Loop
-
-**Security Layer** ✅ COMPLETE
-- [x] SEC-001: Supply Chain Hardening (cargo-audit)
-- [x] SEC-002: License Compliance (cargo-deny)
-- [x] SEC-003: Unsafe Rust Audit
-- [x] SEC-004: Prompt Injection Protection
-- [x] SEC-005: Rate Limiting
-
-**Phase 5: Ecosystem & Interoperability** ✅ COMPLETE
-- [x] INT-001: MCP Server Implementation
-- [x] INT-002: MCP Tool Mapping
-- [x] INT-003: LangChain Adapter Completion
-- [x] INT-004: AutoGPT Adapter Completion
-- [x] SWM-001: A2A Protocol Support
-- [x] SWM-002: AgentCard Discovery
-
-**Testing Layer** ✅ COMPLETE
-- [x] TST-001: Infinite Loop Preemption Tests
-- [x] TST-002: Memory Containment Tests
-- [x] TST-003: Policy Verification Tests
-- [x] TST-004: Integration Test Coverage
-- [x] TST-005: Benchmark Suite Expansion
-- [x] TST-006: Python SDK Tests
-- [x] TST-007: Cross-Module Integration Tests
-- [x] TST-008: Stress & Load Testing Suite
-- [x] TST-009: Code Coverage Infrastructure (tarpaulin, 80%+ threshold)
-
-#### 🟠 P1 - Important for Production
-- [x] DOC-001: Architecture documentation
-- [x] DOC-002: API reference documentation
-
-#### 🟡 P2 - Nice to Have
-- [x] INF-001: Kubernetes operator
-- [x] INF-002: Docker images
-- [x] INF-003: Helm charts
-- [x] OBS-002: Cryptographic replay capability
-- [x] INF-004: CI/CD pipeline (build, test, coverage, WASM, Python)
-- [x] INF-005: Makefile for development automation
-- [x] INF-006: Performance profiling tooling
-- [x] SEC-006: Dependency freshness monitoring
-- [x] SEC-007: WASM skill integrity verification
-
-#### 🟢 P3 - Future (Post-MVP)
-- [x] FUT-001: Zero-Knowledge Proof integration
-- [x] FUT-002: Constitution Protocol
-- [x] FUT-003: Enhanced PRM fine-tuning toolkit
-- [x] FUT-004: Skill marketplace with verified publishers
-
-### Target Milestones
-
-- **v0.1 (Alpha)**: Core kernel, policy engine, audit logging, neuro-symbolic layer ✅
-- **v0.2 (Stable)**: Complete ecosystem integrations, Python SDK stable ✅
-- **v0.3 (Beta)**: Full test coverage, infrastructure tooling, CI/CD pipeline ✅
-- **v1.0 (Current)**: Production-ready with full documentation ✅
-
----
-
-## Skills Development
-
-Skills are sandboxed WebAssembly modules that extend VAK with domain-specific capabilities. Each skill runs in isolation with controlled resource access.
-
-### Creating a Skill
-
-```rust
-// src/lib.rs
-#[no_mangle]
-pub extern "C" fn execute(input_ptr: *const u8, input_len: usize) -> *const u8 {
-    // Parse JSON input
-    // Perform computation
-    // Return JSON output
-}
-```
-
-### Skill Manifest
-
-```yaml
-# skill.yaml
-name: my_skill
-version: "0.1.0"
-description: "Brief description"
-author: "Your Name"
-license: "MIT"
-
-module: target/wasm32-unknown-unknown/release/my_skill.wasm
-
-capabilities:
-  - compute
-
-limits:
-  max_memory_pages: 16
-  max_execution_time_ms: 1000
-
-exports:
-  - name: execute
-    input_schema:
-      type: object
-    output_schema:
-      type: object
-```
-
-### Building Skills
-
-```bash
-cargo build --target wasm32-unknown-unknown --release
-```
-
-For detailed skill development guide, see [skills/README.md](skills/README.md).
-
----
-
-## Contributing
-
-We welcome contributions! Please see our [contribution guidelines](CONTRIBUTING.md) for details.
-
-### Development Agents
-
-VAK uses specialized agents for development tasks. See [AGENTS_README.md](AGENTS_README.md) for the complete agent structure and capabilities.
-
-**Development Agents:**
-- Kernel Core Agent
-- Crypto Memory Agent
-- Neuro-Symbolic Agent
-- WASM Sandbox Agent
-- Policy Engine Agent
-- Python SDK Agent
-- Testing Agent
-
-**Runtime Agents:**
-- Policy Enforcement Agent
-- Audit Logging Agent
-- PRM Scoring Agent
-- Formal Verification Agent
-- Swarm Consensus Agent
-- State Manager Agent
-
-### Testing
-
-```bash
-# Run all tests
-cargo test --features full
-
-# Run specific test suite
-cargo test --package vak --lib policy
-
-# Run with coverage (cargo-llvm-cov; report in coverage/)
-make coverage
-
-# Run integration tests
-cargo test --test '*' --features full --verbose
-
-# Run property-based tests (extended)
-PROPTEST_CASES=512 cargo test --test property_tests --features full
-
-# Run stress tests
-cargo test --test integration_root test_stress --features full
-
-# Run Python SDK tests
-python -m pytest python/tests/ -v
-
-# Run benchmarks
-cargo bench
-
-# Use Makefile shortcuts
-make test          # All Rust tests
-make test-all      # All tests including Python
-make coverage      # Generate coverage report
-make coverage-check # Enforce 80% threshold
-```
-
-### Code Quality
-
-```bash
-# Format code
-cargo fmt
-
-# Lint
-cargo clippy -- -D warnings
-
-# Security-focused lints
-cargo clippy -- -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic
-
-# Check for issues
-cargo check
-
-# Full security audit
-make security
-```
-
-### Performance Profiling
-
-```bash
-# Run full profiling suite
-make perf
-
-# Run benchmarks only
-make bench
-
-# Generate flamegraph
-make perf-flamegraph
-
-# Analyze binary sizes
-./scripts/perf-profile.sh binary-size
-```
-
----
+Commit messages follow Conventional Commits ([CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ## License
 
-This project is dual-licensed under:
+MIT or Apache-2.0, at your option, as declared in `Cargo.toml`.
 
-- MIT License ([LICENSE-MIT](LICENSE-MIT))
-- Apache License 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+## Prior work
 
-You may choose either license for your use.
-
----
-
-## Acknowledgments
-
-VAK is inspired by:
-
-- **CoALA Framework**: Cognitive Architectures for Language Agents
-- **Agent Control Plane**: Imran Siddique's ABAC interceptor research
-- **Sovereign Kernel**: David Mc's verifiable kernel proof-of-concept
-- **Process Reward Models**: OpenAI's PRM research
-- **Tree of Thoughts**: Yao et al.'s ToT framework
-
----
-
-## Contact & Support
-
-- **Issues**: [GitHub Issues](https://github.com/muzammil5539/Verifiable-Agent-Kernel-VAK-/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/muzammil5539/Verifiable-Agent-Kernel-VAK-/discussions)
-- **Email**: [Contact Us](mailto:support@vak-project.org)
-
----
-
-**Built with ❤️ for the Agentic AI Era**
+VAK draws on CoALA (cognitive architectures for language agents), Imran Siddique's Agent Control Plane, David Mc's Sovereign Kernel, process reward models, and Yao et al.'s Tree of Thoughts.

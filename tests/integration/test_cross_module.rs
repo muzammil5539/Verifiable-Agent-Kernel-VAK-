@@ -11,9 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-// ============================================================================
 // Cross-Module: Policy ↔ Audit Integration
-// ============================================================================
 
 /// Verify that every policy decision generates a corresponding audit entry
 #[tokio::test]
@@ -110,9 +108,7 @@ async fn test_cross_subsystem_audit_ordering() {
     }
 }
 
-// ============================================================================
 // Cross-Module: Memory ↔ Audit Integration
-// ============================================================================
 
 /// Verify memory operations generate audit trail entries
 #[tokio::test]
@@ -187,9 +183,7 @@ async fn test_memory_state_hash_integrity() {
     );
 }
 
-// ============================================================================
 // Cross-Module: Reasoner ↔ Policy Integration
-// ============================================================================
 
 /// Verify PRM-scored actions are still subject to policy enforcement
 #[tokio::test]
@@ -263,9 +257,7 @@ async fn test_low_prm_scores_trigger_verification() {
     }
 }
 
-// ============================================================================
 // Cross-Module: Swarm ↔ Audit Integration
-// ============================================================================
 
 /// Verify swarm consensus decisions are fully audited
 #[tokio::test]
@@ -349,9 +341,7 @@ async fn test_sycophancy_detection_in_swarm() {
     );
 }
 
-// ============================================================================
 // End-to-End: Full Session Lifecycle
-// ============================================================================
 
 /// Test complete session lifecycle across all subsystems
 #[tokio::test]
@@ -470,9 +460,7 @@ async fn test_concurrent_session_isolation() {
     );
 }
 
-// ============================================================================
 // Edge Cases: Subsystem Boundary Conditions
-// ============================================================================
 
 /// Test handling of maximum concurrent agents
 #[tokio::test]
@@ -566,9 +554,7 @@ async fn test_interleaved_operation_hash_chain() {
     }
 }
 
-// ============================================================================
 // Mock Types and Helper Functions
-// ============================================================================
 
 fn current_timestamp_ms() -> i64 {
     std::time::SystemTime::now()

@@ -49,9 +49,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for the sycophancy detector
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,9 +81,7 @@ impl Default for DetectorConfig {
     }
 }
 
-// ============================================================================
 // Vote Record
-// ============================================================================
 
 /// A recorded vote for analysis
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,9 +105,7 @@ pub struct SessionData {
     pub started_at: Option<u64>,
 }
 
-// ============================================================================
 // Risk Indicators
-// ============================================================================
 
 /// Types of risk indicators
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -139,9 +133,7 @@ pub struct RiskIndicator {
     pub description: String,
 }
 
-// ============================================================================
 // Recommendations
-// ============================================================================
 
 /// Recommended action based on analysis
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,9 +161,7 @@ pub struct Recommendation {
     pub confidence: f64,
 }
 
-// ============================================================================
 // Analysis Result
-// ============================================================================
 
 /// Result of sycophancy analysis
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -192,9 +182,7 @@ pub struct SycophancyAnalysis {
     pub unique_options: usize,
 }
 
-// ============================================================================
 // Statistics
-// ============================================================================
 
 /// Statistics for the detector
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -207,9 +195,7 @@ pub struct DetectorStats {
     pub avg_risk_score: f64,
 }
 
-// ============================================================================
 // Sycophancy Detector
-// ============================================================================
 
 /// Detector for sycophantic voting patterns
 pub struct SycophancyDetector {
@@ -467,9 +453,7 @@ impl std::fmt::Debug for SycophancyDetector {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

@@ -74,9 +74,7 @@ use uuid::Uuid;
 
 use super::types::{AgentId, KernelError, PolicyDecision, SessionId, ToolRequest, ToolResponse};
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur in the async pipeline
 #[derive(Debug, Error)]
@@ -127,9 +125,7 @@ impl From<KernelError> for PipelineError {
 /// Result type for pipeline operations
 pub type PipelineResult<T> = Result<T, PipelineError>;
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for the async pipeline
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,9 +209,7 @@ impl PipelineConfig {
     }
 }
 
-// ============================================================================
 // Request Types
-// ============================================================================
 
 /// Priority level for requests
 #[derive(
@@ -322,9 +316,7 @@ impl Default for RequestBatch {
     }
 }
 
-// ============================================================================
 // Audit Entry
-// ============================================================================
 
 /// An audit entry for the async audit queue
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -347,9 +339,7 @@ pub struct AsyncAuditEntry {
     pub timestamp: DateTime<Utc>,
 }
 
-// ============================================================================
 // Metrics
-// ============================================================================
 
 /// Pipeline metrics
 #[derive(Debug, Default)]
@@ -478,9 +468,7 @@ pub struct MetricsSnapshot {
     pub max_latency_us: u64,
 }
 
-// ============================================================================
 // Async Pipeline
-// ============================================================================
 
 /// Handle to the async pipeline for submitting requests
 #[derive(Clone)]
@@ -760,9 +748,7 @@ impl AsyncPipeline {
     }
 }
 
-// ============================================================================
 // Batch Processor (optional)
-// ============================================================================
 
 /// Batch processor for improved throughput
 pub struct BatchProcessor {
@@ -771,7 +757,6 @@ pub struct BatchProcessor {
     /// Configuration
     config: Arc<PipelineConfig>,
     /// Metrics for tracking batch statistics
-    #[allow(dead_code)]
     metrics: Arc<PipelineMetrics>,
 }
 
@@ -817,9 +802,7 @@ impl BatchProcessor {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

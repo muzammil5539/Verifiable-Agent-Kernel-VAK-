@@ -7,7 +7,7 @@ description: Instructions for releasing and publishing the VAK project to crates
 
 This skill provides instructions for publishing new releases of the VAK project.
 
-**Current Status**: Production Ready (v1.0.0) - Ready for publishing.
+**Current Status**: v1.0.0. Open findings are tracked in `docs/architecture-v2.md` and `TODO.md`; check them before publishing.
 
 ## Prerequisites
 

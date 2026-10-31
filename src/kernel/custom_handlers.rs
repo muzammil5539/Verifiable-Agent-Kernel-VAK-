@@ -53,9 +53,7 @@ use tracing::{debug, info, warn};
 
 use crate::kernel::types::{AgentId, ToolRequest, ToolResponse};
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during custom handler operations
 #[derive(Debug, Error)]
@@ -88,9 +86,7 @@ pub enum HandlerError {
 /// Result type for handler operations
 pub type HandlerResult<T> = Result<T, HandlerError>;
 
-// ============================================================================
 // Handler Types
-// ============================================================================
 
 /// Boxed future type for async handler execution
 pub type HandlerFuture = Pin<Box<dyn Future<Output = HandlerResult<ToolResponse>> + Send>>;
@@ -136,9 +132,7 @@ pub struct HandlerMetadata {
     pub enabled: bool,
 }
 
-// ============================================================================
 // Handler Registry
-// ============================================================================
 
 /// Registry for custom tool handlers
 pub struct CustomHandlerRegistry {
@@ -334,9 +328,7 @@ impl std::fmt::Debug for CustomHandlerRegistry {
     }
 }
 
-// ============================================================================
 // Simple Function Handler
-// ============================================================================
 
 /// A simple handler that wraps a function
 pub struct FunctionHandler<F>
@@ -385,9 +377,7 @@ where
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

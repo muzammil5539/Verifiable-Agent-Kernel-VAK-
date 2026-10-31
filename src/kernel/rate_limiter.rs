@@ -30,9 +30,7 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::sync::RwLock;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during rate limiting
 #[derive(Debug, Error, Clone)]
@@ -53,9 +51,7 @@ pub enum RateLimitError {
 /// Result type for rate limiting operations
 pub type RateLimitResult<T> = Result<T, RateLimitError>;
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for rate limiting
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,9 +77,7 @@ impl Default for RateLimitConfig {
     }
 }
 
-// ============================================================================
 // Resource Key
-// ============================================================================
 
 /// Key for identifying rate-limited resources
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,9 +105,7 @@ impl ResourceKey {
     }
 }
 
-// ============================================================================
 // Token Bucket
-// ============================================================================
 
 /// Token bucket for rate limiting
 #[derive(Debug, Clone)]
@@ -165,9 +157,7 @@ impl TokenBucket {
     }
 }
 
-// ============================================================================
 // Sliding Window
-// ============================================================================
 
 /// Sliding window counter for rate limiting
 #[derive(Debug, Clone)]
@@ -216,9 +206,7 @@ impl SlidingWindow {
     }
 }
 
-// ============================================================================
 // Limit Result
-// ============================================================================
 
 /// Result of a rate limit check
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -255,9 +243,7 @@ impl LimitResult {
     }
 }
 
-// ============================================================================
 // Rate Limiter
-// ============================================================================
 
 /// Rate limiter for kernel operations
 pub struct RateLimiter {
@@ -467,9 +453,7 @@ impl std::fmt::Debug for RateLimiter {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

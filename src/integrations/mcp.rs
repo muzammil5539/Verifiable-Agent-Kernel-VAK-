@@ -57,9 +57,7 @@ use tracing::{debug, info};
 use crate::kernel::types::{AgentId, SessionId, ToolRequest as KernelToolRequest};
 use crate::kernel::Kernel;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during MCP operations
 #[derive(Debug, Error)]
@@ -104,9 +102,7 @@ pub enum McpError {
 /// Result type for MCP operations
 pub type McpResult<T> = Result<T, McpError>;
 
-// ============================================================================
 // JSON-RPC Types
-// ============================================================================
 
 /// JSON-RPC 2.0 request
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -190,9 +186,7 @@ impl JsonRpcResponse {
     }
 }
 
-// ============================================================================
 // MCP Types
-// ============================================================================
 
 /// MCP server information
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -306,9 +300,7 @@ pub enum ContentItem {
     },
 }
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for MCP server
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -343,9 +335,7 @@ impl Default for McpConfig {
     }
 }
 
-// ============================================================================
 // Tool Handler Trait
-// ============================================================================
 
 /// Trait for implementing tool handlers
 #[async_trait::async_trait]
@@ -357,9 +347,7 @@ pub trait ToolHandler: Send + Sync {
     fn definition(&self) -> McpTool;
 }
 
-// ============================================================================
 // MCP Server
-// ============================================================================
 
 /// MCP Server implementation
 pub struct McpServer {
@@ -630,9 +618,7 @@ impl McpServer {
     }
 }
 
-// ============================================================================
 // Built-in Tool Handlers
-// ============================================================================
 
 /// Simple tool handler for basic tools
 struct SimpleToolHandler {
@@ -949,9 +935,7 @@ impl ToolHandler for ExecuteSkillToolHandler {
     }
 }
 
-// ============================================================================
 // Factory Functions
-// ============================================================================
 
 /// Create a fully configured MCP server with VAK tools. `execute_skill`
 /// runs skills through `kernel`.
@@ -989,9 +973,7 @@ pub async fn create_vak_mcp_server(kernel: Arc<Kernel>) -> McpServer {
     server
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

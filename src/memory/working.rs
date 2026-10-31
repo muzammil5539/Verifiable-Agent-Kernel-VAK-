@@ -43,9 +43,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use uuid::Uuid;
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for working memory behavior
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,9 +113,7 @@ impl WorkingMemoryConfig {
     }
 }
 
-// ============================================================================
 // Memory Item Types
-// ============================================================================
 
 /// Priority level for memory items
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
@@ -378,9 +374,7 @@ fn estimate_tokens(content: &str) -> usize {
     std::cmp::max(1, estimated)
 }
 
-// ============================================================================
 // Working Memory Errors
-// ============================================================================
 
 /// Errors that can occur in working memory operations
 #[derive(Debug, Clone)]
@@ -414,9 +408,7 @@ impl From<LlmError> for WorkingMemoryError {
     }
 }
 
-// ============================================================================
 // Working Memory
-// ============================================================================
 
 /// Working Memory with Dynamic Summarization
 ///
@@ -741,9 +733,7 @@ impl<P: LlmProvider> std::fmt::Debug for WorkingMemory<P> {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

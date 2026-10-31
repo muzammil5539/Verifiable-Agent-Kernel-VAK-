@@ -9,9 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
-// ============================================================================
 // Throughput Tests
-// ============================================================================
 
 /// Test policy evaluation throughput under sustained load
 #[tokio::test]
@@ -149,9 +147,7 @@ async fn test_memory_operation_throughput() {
     );
 }
 
-// ============================================================================
 // Concurrency Stress Tests
-// ============================================================================
 
 /// Test high-concurrency agent registration
 #[tokio::test]
@@ -265,9 +261,7 @@ async fn test_sustained_operation_stability() {
     assert!(!log.is_empty(), "At least some operations should succeed");
 }
 
-// ============================================================================
 // Resource Exhaustion Tests
-// ============================================================================
 
 /// Test behavior with large audit chains
 #[tokio::test]
@@ -384,9 +378,7 @@ async fn test_rapid_session_lifecycle() {
     );
 }
 
-// ============================================================================
 // Latency Tests
-// ============================================================================
 
 /// Test policy evaluation latency under load
 #[tokio::test]
@@ -428,9 +420,7 @@ async fn test_policy_evaluation_latency() {
     );
 }
 
-// ============================================================================
 // Mock Helpers
-// ============================================================================
 
 fn current_timestamp_ms() -> i64 {
     std::time::SystemTime::now()

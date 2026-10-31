@@ -45,21 +45,15 @@ struct OpenAiChoice {
     message: Option<OpenAiMessage>,
     delta: Option<OpenAiDelta>,
     finish_reason: Option<String>,
-    #[allow(dead_code)]
-    index: usize,
 }
 
 #[derive(Debug, Deserialize)]
 struct OpenAiMessage {
-    #[allow(dead_code)]
-    role: String,
     content: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct OpenAiDelta {
-    #[allow(dead_code)]
-    role: Option<String>,
     content: Option<String>,
 }
 
@@ -93,8 +87,6 @@ struct EmbeddingRequest {
 #[derive(Debug, Deserialize)]
 struct EmbeddingResponse {
     data: Vec<EmbeddingData>,
-    #[allow(dead_code)]
-    usage: Option<OpenAiUsage>,
 }
 
 #[derive(Debug, Deserialize)]

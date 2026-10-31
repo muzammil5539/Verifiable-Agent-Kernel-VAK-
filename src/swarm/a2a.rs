@@ -13,9 +13,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur in A2A protocol operations
 #[derive(Debug, Error)]
@@ -40,9 +38,7 @@ pub enum A2AError {
 /// Result type alias for A2A protocol operations
 pub type A2AResult<T> = Result<T, A2AError>;
 
-// ============================================================================
 // Agent Card
-// ============================================================================
 
 /// Describes an agent's identity, capabilities, and connectivity information
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -113,9 +109,7 @@ impl AgentCard {
     }
 }
 
-// ============================================================================
 // Capability
-// ============================================================================
 
 /// Represents a capability that an agent can advertise and provide
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -154,9 +148,7 @@ impl A2ACapability {
     }
 }
 
-// ============================================================================
 // Message Types
-// ============================================================================
 
 /// Types of messages exchanged between agents
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -246,9 +238,7 @@ impl A2AMessage {
     }
 }
 
-// ============================================================================
 // Discovery Service
-// ============================================================================
 
 /// Service for discovering and tracking registered agents
 pub struct DiscoveryService {
@@ -368,9 +358,7 @@ impl Default for DiscoveryService {
     }
 }
 
-// ============================================================================
 // A2A Protocol
-// ============================================================================
 
 /// A callback for messages of one type.
 type MessageHandler = Box<dyn Fn(&A2AMessage) + Send + Sync>;
@@ -459,9 +447,7 @@ impl Default for A2AProtocol {
     }
 }
 
-// ============================================================================
 // AgentCard Discovery Service (SWM-002)
-// ============================================================================
 
 /// Configuration for agent card discovery (SWM-002)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -878,9 +864,7 @@ impl Default for AgentCardDiscovery {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

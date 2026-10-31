@@ -12,24 +12,20 @@ use std::collections::HashMap;
 
 // Import policy types from the VAK policy module
 use vak::policy::{
-    ConditionOperator, PolicyCondition, PolicyConfig, PolicyContext, PolicyDecision, PolicyEffect,
-    PolicyEngine, PolicyRule,
+    ConditionOperator, PolicyCondition, PolicyConfig, PolicyContext, PolicyEffect, PolicyEngine,
+    PolicyRule,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== VAK Policy Engine Demo ===\n");
 
-    // =========================================================================
     // Part 1: Create and Configure the Policy Engine
-    // =========================================================================
 
     println!("Part 1: Setting up the Policy Engine\n");
 
     let mut engine = PolicyEngine::new();
 
-    // -------------------------------------------------------------------------
     // Rule 1: Allow admins to access any resource
-    // -------------------------------------------------------------------------
     // This is a high-priority rule that grants full access to administrators
 
     let admin_rule = PolicyRule {
@@ -48,9 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     engine.add_rule(admin_rule);
     println!("✓ Added rule: admin-full-access (priority: 100)");
 
-    // -------------------------------------------------------------------------
     // Rule 2: Allow users to read public resources
-    // -------------------------------------------------------------------------
 
     let public_read_rule = PolicyRule {
         id: "public-read".to_string(),
@@ -64,9 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     engine.add_rule(public_read_rule);
     println!("✓ Added rule: public-read (priority: 50)");
 
-    // -------------------------------------------------------------------------
     // Rule 3: Allow analysts to access data resources during business hours
-    // -------------------------------------------------------------------------
     // This demonstrates ABAC with environment-based conditions
 
     let analyst_rule = PolicyRule {
@@ -92,9 +84,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     engine.add_rule(analyst_rule);
     println!("✓ Added rule: analyst-data-access (priority: 60)");
 
-    // -------------------------------------------------------------------------
     // Rule 4: Deny access to sensitive resources by default
-    // -------------------------------------------------------------------------
 
     let sensitive_deny_rule = PolicyRule {
         id: "sensitive-deny-default".to_string(),
@@ -108,9 +98,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     engine.add_rule(sensitive_deny_rule);
     println!("✓ Added rule: sensitive-deny-default (priority: 10)");
 
-    // -------------------------------------------------------------------------
     // Rule 5: Allow security team to access sensitive resources
-    // -------------------------------------------------------------------------
 
     let security_sensitive_rule = PolicyRule {
         id: "security-sensitive-access".to_string(),
@@ -128,9 +116,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     engine.add_rule(security_sensitive_rule);
     println!("✓ Added rule: security-sensitive-access (priority: 70)\n");
 
-    // =========================================================================
     // Part 2: Create Different Policy Contexts
-    // =========================================================================
 
     println!("Part 2: Creating Policy Contexts\n");
 
@@ -191,9 +177,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     println!("✓ Created context: Security (role=security, clearance=4)\n");
 
-    // =========================================================================
     // Part 3: Evaluate Policies with Different Contexts
-    // =========================================================================
 
     println!("Part 3: Policy Evaluation Results\n");
     println!("{:-<70}", "");
@@ -281,9 +265,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("{:-<70}", "");
     }
 
-    // =========================================================================
     // Part 4: Loading Policies from YAML (Alternative Approach)
-    // =========================================================================
 
     println!("\nPart 4: Loading Policies from YAML File\n");
 
@@ -331,9 +313,7 @@ rules:
         );
     }
 
-    // =========================================================================
     // Part 5: Complex ABAC Conditions
-    // =========================================================================
 
     println!("\nPart 5: Advanced ABAC Condition Examples\n");
 
@@ -397,24 +377,4 @@ rules:
     println!("\n=== Policy Demo Complete ===");
 
     Ok(())
-}
-
-// =============================================================================
-// Helper: Print a policy decision with formatting
-// =============================================================================
-
-#[allow(dead_code)]
-fn print_decision(description: &str, decision: &PolicyDecision) {
-    let icon = if decision.allowed { "✓" } else { "✗" };
-    let status = if decision.allowed {
-        "ALLOWED"
-    } else {
-        "DENIED"
-    };
-
-    println!("{} {} - {}", icon, status, description);
-    println!("  Reason: {}", decision.reason);
-    if let Some(rule) = &decision.matched_rule {
-        println!("  Matched Rule: {}", rule);
-    }
 }

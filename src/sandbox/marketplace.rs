@@ -39,9 +39,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for the marketplace client
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,9 +113,7 @@ impl MarketplaceConfig {
     }
 }
 
-// ============================================================================
 // Skill Metadata
-// ============================================================================
 
 /// Skill category
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -366,9 +362,7 @@ pub struct SkillReview {
     pub helpful_count: u32,
 }
 
-// ============================================================================
 // Search and Query
-// ============================================================================
 
 /// Sort order for search results
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -495,9 +489,7 @@ pub struct SearchResults {
     pub has_more: bool,
 }
 
-// ============================================================================
 // Marketplace Errors
-// ============================================================================
 
 /// Marketplace-related errors
 #[derive(Debug, Clone, thiserror::Error)]
@@ -597,9 +589,7 @@ pub enum MarketplaceError {
     },
 }
 
-// ============================================================================
 // Install Result
-// ============================================================================
 
 /// Result of skill installation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -633,9 +623,7 @@ pub struct UninstallResult {
     pub orphaned_dependencies: Vec<String>,
 }
 
-// ============================================================================
 // Marketplace Client
-// ============================================================================
 
 /// Cache entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1262,9 +1250,7 @@ impl std::fmt::Debug for MarketplaceClient {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

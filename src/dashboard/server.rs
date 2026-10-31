@@ -10,9 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for the dashboard server
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,9 +75,7 @@ impl DashboardConfig {
     }
 }
 
-// ============================================================================
 // Dashboard Server
-// ============================================================================
 
 /// Dashboard server for VAK monitoring
 pub struct DashboardServer {
@@ -212,9 +208,7 @@ impl DashboardServer {
     }
 }
 
-// ============================================================================
 // HTTP Response
-// ============================================================================
 
 /// Simple HTTP response
 #[derive(Debug, Clone)]
@@ -254,9 +248,7 @@ impl HttpResponse {
     }
 }
 
-// ============================================================================
 // Dashboard HTML Generator
-// ============================================================================
 
 fn escape_html(s: &str) -> String {
     let mut escaped = String::with_capacity(s.len());
@@ -385,9 +377,7 @@ fn format_bytes(bytes: f64) -> String {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

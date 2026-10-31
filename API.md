@@ -141,7 +141,7 @@ let config: &KernelConfig = kernel.config();
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `new` | `async fn new(config: KernelConfig) -> Result<Self, KernelError>` | Creates a kernel instance. Validates config, loads skills, configures sandbox. |
-| `execute` | `async fn execute(&self, agent_id: &AgentId, session_id: &SessionId, request: ToolRequest) -> Result<ToolResponse, KernelError>` | Runs the mediation pipeline: admit, budget, decide, record the decision, execute, record the outcome, respond with an `AuditReceipt`. Refusals at any stage are recorded. |
+| `execute` | `async fn execute(&self, agent_id: &AgentId, session_id: &SessionId, request: ToolRequest) -> Result<ToolResponse, KernelError>` | Runs the mediation pipeline: admit, budget, decide, guard, record the decision, execute, record the outcome, respond with an `AuditReceipt`. Refusals at any stage are recorded. |
 | `evaluate_policy` | `async fn evaluate_policy(&self, agent_id: &AgentId, request: &ToolRequest) -> PolicyDecision` | The Decide stage alone, with the agent's record as principal. No admission, budget or audit. |
 | `register_agent` | `async fn register_agent(&self, record: AgentRecord) -> Result<(), KernelError>` | Adds or replaces an agent record: attributes, status, own tool scope. |
 | `end_session` | `async fn end_session(&self, session_id: &SessionId) -> bool` | Releases a session's binding to its agent. |
@@ -167,6 +167,7 @@ let kernel = Kernel::builder(config)
     .with_agent_registry(registry.clone())   // Admit: Arc<dyn AgentRegistry>
     .with_budget(budget)                     // Budget: Arc<dyn Budget>
     .with_policy(pdp)                        // Decide: Arc<dyn PolicyDecisionPoint>
+    .with_guard(judge)                       // Guard: Arc<dyn Guard>, zero or more
     .with_audit_log(log)                     // Record: Arc<dyn AuditLog>
     .with_audit_signing_key(key)             // signs tree heads
     .with_tool(handler)                      // Execute: impl ToolHandler
@@ -183,7 +184,67 @@ registry.suspend(&agent_id, "key rotated").await?;  // refused from the next req
 | `AgentRegistry` | `InMemoryAgentRegistry` (unknown agents get an anonymous record) | `security.require_registered_agents` refuses unknown agents |
 | `Budget` | `AgentRateBudget::per_minute(n)` | `security.enable_rate_limiting`, `security.max_requests_per_minute` |
 | `PolicyDecisionPoint` | `CedarPolicy` (feature `cedar`), `EnforcerPolicy` (YAML) or `ConfigPolicy`; `DenyAll` if configured policies don't load | `policy.format`, `policy.policy_paths`, `policy.cedar_schema` |
+| `Guard` | none | `KernelBuilder::with_guard`; `policy.min_assurance` requires a guard's pass |
 | `AuditLog` | `FileAuditLog` (JSONL) or `SqliteAuditLog`, else `MemoryAuditLog` | `audit.log_path`, `audit.format` (`jsonl` or `sqlite`) |
+
+### Guards and assurance levels
+
+A guard checks a call the policy already allowed (`docs/adr/0013`):
+
+- **Its verdict.** It answers `Pass`, `Abstain` (not its kind of call), `Deny` or
+  `Escalate`.
+- **Its level.** It declares one `Assurance` level, from weakest to strongest:
+  `Experimental`, `Heuristic`, `Checked` or `Enforced`.
+- **Refusals.** Any guard's `Deny` or `Escalate` refuses the call with
+  `KernelError::PolicyViolation { policy_id: "guard.<name>", .. }`. There is no
+  approval channel yet, so an escalation refuses too.
+- **Failures.** A guard that panics, or doesn't answer within
+  `max_execution_time`, denies.
+- **Don't block.** The kernel can interrupt a guard only where it awaits.
+  - **A late answer** from a blocking guard (a slow `FunctionGuard`) becomes a
+    denial.
+  - **No answer** keeps the call waiting.
+
+  Keep `FunctionGuard` closures quick, and write slow checks as async guards.
+
+```rust
+use vak::kernel::{Assurance, FunctionGuard, GuardVerdict, Kernel};
+
+let kernel = Kernel::builder(config)
+    .with_guard(Arc::new(FunctionGuard::new("no-rm", Assurance::Enforced, |req| {
+        if req.request.tool_name == "shell" && req.request.parameters.to_string().contains("rm -rf") {
+            GuardVerdict::deny("rm -rf")
+        } else {
+            GuardVerdict::Abstain
+        }
+    })))
+    .build()
+    .await?;
+```
+
+`policy.min_assurance` maps tool-name patterns to the level a guard must have passed a
+call at:
+
+```yaml
+policy:
+  min_assurance:
+    "payment:*": enforced
+```
+
+- **What meets it.** A guard of that level or above returning `Pass`. The policy's own
+  allow doesn't count.
+- **When nothing meets it.** The call is refused as `policy.min_assurance`.
+- **Overlapping patterns.** The highest level applies.
+- **Refused at startup.** Patterns other than `*`, `prefix*`, `*suffix` or an exact
+  name, and the level `experimental`.
+
+`AuditEntry::guards` is set on an allowed call's decision entry, and on the entry for a
+guard or `policy.min_assurance` refusal. It records the level required, and each guard
+that ran, in order, with its verdict and level; guards after a refusal don't run.
+
+It is never set on admit, budget or policy-denial entries, even when a level covers
+the tool, so a missing field doesn't mean no level applied. It is also absent when no
+guard is registered and no level applies. `Kernel::evaluate_policy` runs no guards.
 
 ---
 
@@ -254,7 +315,7 @@ config.validate()?;
 |--------|------------|
 | `SecurityConfig` | `enable_sandboxing`, `require_signed_requests`, `allowed_tools`, `blocked_tools`, `enable_rate_limiting`, `max_requests_per_minute` |
 | `AuditConfig` | `enabled`, `log_level`, `log_path`, `format`, `include_bodies`, `max_log_size_bytes`, `retention_count` (the last two don't apply to the kernel's log, which is never rotated) |
-| `PolicyConfig` | `enabled`, `default_decision`, `policy_paths`, `format` (`yaml` or `cedar`), `cedar_schema`, `enable_caching`, `cache_ttl_seconds` |
+| `PolicyConfig` | `enabled`, `default_decision`, `policy_paths`, `format` (`yaml` or `cedar`), `cedar_schema`, `enable_caching`, `cache_ttl_seconds`, `min_assurance` (tool pattern to `Assurance`, ADR 0013) |
 | `ResourceConfig` | `max_memory_mb`, `max_cpu_time_ms`, `max_connections`, `max_request_size_bytes`, `max_response_size_bytes` |
 
 **Defaults:**
@@ -707,6 +768,8 @@ assert!(entry.verify_integrity());
 | `decision` | `PolicyDecision` | Policy outcome |
 | `hash` | `String` | SHA-256 of entry contents |
 | `previous_hash` | `Option<String>` | Link to previous entry |
+| `outcome` | `Option<AuditOutcome>` | On an outcome entry: what happened when the tool ran |
+| `guards` | `Option<GuardChecks>` | On an entry for a call that reached the Guard stage: the level `policy.min_assurance` required and each guard that ran, with its verdict (ADR 0013) |
 
 ### The kernel's audit log
 

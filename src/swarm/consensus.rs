@@ -26,9 +26,7 @@ use thiserror::Error;
 use super::voting::VoteDirection;
 use super::SwarmAgentId;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during consensus operations
 #[derive(Debug, Error)]
@@ -62,9 +60,7 @@ pub enum ConsensusError {
     ProtocolViolation(String),
 }
 
-// ============================================================================
 // Consensus Mechanism
-// ============================================================================
 
 /// Types of consensus mechanisms
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -86,9 +82,7 @@ pub enum ConsensusMechanism {
     QuadraticMajority,
 }
 
-// ============================================================================
 // Consensus Configuration
-// ============================================================================
 
 /// Configuration for consensus operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -172,9 +166,7 @@ impl ConsensusConfig {
     }
 }
 
-// ============================================================================
 // Consensus Vote
-// ============================================================================
 
 /// A vote in a consensus round
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -225,9 +217,7 @@ impl ConsensusVote {
     }
 }
 
-// ============================================================================
 // Consensus Result
-// ============================================================================
 
 /// Result of a consensus operation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -280,9 +270,7 @@ impl ConsensusResult {
     }
 }
 
-// ============================================================================
 // Consensus Protocol Trait
-// ============================================================================
 
 /// Trait for consensus protocols
 pub trait ConsensusProtocol: Send + Sync {
@@ -300,9 +288,7 @@ pub trait ConsensusProtocol: Send + Sync {
     fn has_quorum(&self, vote_count: usize, eligible: usize) -> bool;
 }
 
-// ============================================================================
 // Majority Consensus
-// ============================================================================
 
 /// Simple majority consensus implementation
 #[derive(Debug, Clone)]
@@ -373,9 +359,7 @@ impl ConsensusProtocol for MajorityConsensus {
     }
 }
 
-// ============================================================================
 // Weighted Consensus
-// ============================================================================
 
 /// Agent weight information
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -518,9 +502,7 @@ impl ConsensusProtocol for WeightedConsensus {
     }
 }
 
-// ============================================================================
 // BFT Consensus
-// ============================================================================
 
 /// Byzantine Fault Tolerant consensus implementation
 #[derive(Debug, Clone)]
@@ -626,9 +608,7 @@ impl ConsensusProtocol for BftConsensus {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

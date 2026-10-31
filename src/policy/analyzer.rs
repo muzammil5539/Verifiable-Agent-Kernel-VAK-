@@ -55,9 +55,7 @@ use tracing::{debug, info, warn};
 
 use super::enforcer::PolicySet;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during policy analysis
 #[derive(Debug, Error)]
@@ -91,9 +89,7 @@ pub enum AnalyzerError {
 /// Result type for analyzer operations
 pub type AnalyzerResult<T> = Result<T, AnalyzerError>;
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for the policy analyzer
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,9 +121,7 @@ impl Default for AnalyzerConfig {
     }
 }
 
-// ============================================================================
 // Safety Invariants
-// ============================================================================
 
 /// A safety invariant that policies must satisfy
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -233,9 +227,7 @@ pub enum InvariantSeverity {
     Critical,
 }
 
-// ============================================================================
 // Analysis Results
-// ============================================================================
 
 /// Result of analyzing a policy violation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -391,9 +383,7 @@ impl AnalysisReport {
     }
 }
 
-// ============================================================================
 // Policy Analyzer
-// ============================================================================
 
 /// The policy analyzer for checking safety invariants
 pub struct PolicyAnalyzer {
@@ -717,9 +707,7 @@ impl std::fmt::Debug for PolicyAnalyzer {
     }
 }
 
-// ============================================================================
 // Helper Functions
-// ============================================================================
 
 /// Compute a hash of the policy set
 fn compute_policy_hash(policies: &PolicySet) -> String {
@@ -850,9 +838,7 @@ fn patterns_overlap(pattern_a: &str, pattern_b: &str) -> bool {
     pattern_a.starts_with(pattern_b) || pattern_b.starts_with(pattern_a)
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

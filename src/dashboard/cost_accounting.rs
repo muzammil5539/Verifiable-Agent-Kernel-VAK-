@@ -51,9 +51,7 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during cost accounting
 #[derive(Debug, Error)]
@@ -88,9 +86,7 @@ pub enum CostError {
 /// Result type for cost accounting operations
 pub type CostResult<T> = Result<T, CostError>;
 
-// ============================================================================
 // Cost Configuration
-// ============================================================================
 
 /// Pricing rates for different resource types
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -179,9 +175,7 @@ impl Default for CostConfig {
     }
 }
 
-// ============================================================================
 // Usage Metrics
-// ============================================================================
 
 /// Token usage metrics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -291,9 +285,7 @@ impl ApiUsage {
     }
 }
 
-// ============================================================================
 // Execution Cost
-// ============================================================================
 
 /// Complete cost breakdown for an execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -426,9 +418,7 @@ impl CostBreakdown {
     }
 }
 
-// ============================================================================
 // Cost Accountant
-// ============================================================================
 
 /// Main cost accounting system
 pub struct CostAccountant {
@@ -828,9 +818,7 @@ impl Default for CostAccountant {
     }
 }
 
-// ============================================================================
 // Supporting Types
-// ============================================================================
 
 /// Global cost statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -928,9 +916,7 @@ impl BillingReport {
     }
 }
 
-// ============================================================================
 // Utility Functions
-// ============================================================================
 
 /// Get current timestamp in milliseconds
 fn current_timestamp_millis() -> u64 {
@@ -977,9 +963,7 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

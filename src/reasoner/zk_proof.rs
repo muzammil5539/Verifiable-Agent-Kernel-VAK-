@@ -43,7 +43,7 @@
 //! # }
 //! ```
 //!
-//! # ⚠️ Not cryptographically sound
+//! # Not cryptographically sound
 //!
 //! This module does **not** currently provide a zero-knowledge proof system.
 //! [`ZkVerifier::verify`] checks only that a proof is well-formed — that its
@@ -66,9 +66,7 @@ use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during ZK proof operations
 #[derive(Debug, Error)]
@@ -115,9 +113,7 @@ pub enum ZkError {
 /// Result type for ZK proof operations
 pub type ZkResult<T> = Result<T, ZkError>;
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for ZK proof operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -171,9 +167,7 @@ impl ProofConfig {
     }
 }
 
-// ============================================================================
 // ZK Statement Types
-// ============================================================================
 
 /// The type of ZK statement being proved
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -340,9 +334,7 @@ impl ZkStatement {
     }
 }
 
-// ============================================================================
 // ZK Proof
-// ============================================================================
 
 /// A zero-knowledge proof
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -409,9 +401,7 @@ impl VerificationResult {
     }
 }
 
-// ============================================================================
 // ZK Prover
-// ============================================================================
 
 /// Zero-knowledge proof generator
 #[derive(Debug, Clone)]
@@ -608,9 +598,7 @@ impl ZkProver {
     }
 }
 
-// ============================================================================
 // ZK Verifier
-// ============================================================================
 
 /// Zero-knowledge proof verifier
 #[derive(Debug, Clone)]
@@ -793,9 +781,7 @@ impl ZkVerifier {
     }
 }
 
-// ============================================================================
 // Proof Registry
-// ============================================================================
 
 /// Registry for storing and retrieving proofs
 #[derive(Debug)]
@@ -868,9 +854,7 @@ impl Default for ProofRegistry {
     }
 }
 
-// ============================================================================
 // Utility Functions
-// ============================================================================
 
 /// Create a commitment to a value (useful for identity attribute proofs)
 pub fn commit_value(value: &[u8], domain: &str) -> String {
@@ -923,9 +907,7 @@ pub fn compute_set_root(elements: &[&[u8]], domain: &str) -> String {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

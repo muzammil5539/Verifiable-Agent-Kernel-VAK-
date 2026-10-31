@@ -10,18 +10,18 @@
 
 ## **1\. Executive Summary and Architectural Philosophy**
 
-This report serves as a definitive architectural audit and strategic execution roadmap for the **Verifiable Agent Kernel (VAK)**. As the Senior Systems Architect and Product Manager overseeing this initiative, I have conducted a rigorous Gap Analysis comparing the provided Minimum Viable Product (MVP) documentation against the stringent requirements of a production-grade, Operating System-like control plane for Artificial Intelligence agents. The VAK represents a fundamental paradigm shift in the orchestration of autonomous systems: moving from the current industry standard of loose, framework-based orchestration (e.g., LangChain, AutoGen) to a kernel-based architecture where agents are treated as untrusted processes requiring strict isolation, resource metering, and cryptographic verification.
+This report is a gap analysis of the **Verifiable Agent Kernel (VAK)** MVP documentation against what an operating-system-like control plane for AI agents needs, with a roadmap to close the gaps. VAK replaces framework-based orchestration (LangChain, AutoGen) with a kernel that treats agents as untrusted processes: isolated, metered and cryptographically verified.
 
-The contemporary landscape of AI agent development is characterized by "probabilistic indeterminacy"—systems that act with impressive capability but cannot be audited, constrained, or debugged with certainty. The VAK aims to solve this by wrapping the probabilistic engine (the Large Language Model) in a deterministic envelope (the Rust/WASM Kernel) secured by Attribute-Based Access Control (ABAC) and Neuro-Symbolic verification. This report validates that while the MVP establishes a functional baseline using Rust and WebAssembly, it currently lacks the necessary depth in **preemptive scheduling**, **formal policy verification**, **cryptographic provenance**, and **structured reasoning** to be considered "verifiable" in a mission-critical context.
+Most agent systems today are capable but cannot be audited, constrained or debugged with certainty. VAK wraps the probabilistic engine (the LLM) in a deterministic envelope (the Rust/WASM kernel) secured by attribute-based access control (ABAC) and neuro-symbolic verification. The MVP has a working baseline in Rust and WebAssembly. It lacks **preemptive scheduling**, **formal policy verification**, **cryptographic provenance** and **structured reasoning**, so it could not yet be called "verifiable" for mission-critical use.
 
 ### **1.1 The Philosophy of the Agent Process**
 
-To understand the identified gaps, one must first accept the core theoretical premise of the VAK: **The Agent is a Process.** In traditional operating system theory, a kernel is responsible for the secure multiplexing of hardware resources—CPU time, memory address space, and I/O devices—among competing processes. The kernel does not concern itself with the "intent" of a process, only its adherence to permission boundaries.
+To understand the identified gaps, one must first accept the core theoretical premise of the VAK: **The Agent is a Process.** In traditional operating system theory, a kernel shares hardware (CPU time, memory address space, I/O devices) among competing processes. The kernel does not concern itself with the "intent" of a process, only its adherence to permission boundaries.
 
 In the VAK, the "Agent" is the process. However, unlike a standard binary process which is deterministic, an Agent Process is probabilistic. This introduces novel architectural challenges:
 
-* **The Halting Problem is Real:** Agents effectively running while(true) loops via recursive prompting are a standard failure mode. The kernel must enforce termination not just via wall-clock time, but via "cognitive effort" (token consumption or compute fuel).  
-* **Context is Memory:** For an agent, "RAM" is the context window and the vector store. The kernel must manage the "Virtual Memory" of the agent—swapping context in and out of the active window—ensuring that an agent cannot read memory segments (documents) it is not authorized to access.1  
+* **The Halting Problem is Real:** Agents effectively running while(true) loops via recursive prompting are a standard failure mode. The kernel must enforce termination by wall-clock time and also by "cognitive effort" (token consumption or compute fuel).  
+* **Context is Memory:** For an agent, "RAM" is the context window and the vector store. The kernel must manage the agent's "virtual memory" by swapping context in and out of the active window, and must ensure an agent cannot read memory segments (documents) it is not authorized to access.1  
 * **Syscalls are Prompts:** When an agent needs to affect the world (read a file, call an API), it emits a specific token sequence. This is the equivalent of a syscall INT 0x80. The kernel must intercept this "Semantic Syscall," validate it against the ABAC policy, and only then execute the underlying Rust host function.2
 
 ### **1.2 The Verifiability Triad**
@@ -32,13 +32,13 @@ The architectural target for VAK rests on three non-negotiable pillars of verifi
 2. **Semantic Verification (Reasoning):** The intent (LLM output) is checked against logic constraints (Neuro-Symbolic) before action. The system utilizes logic programming to prove safety invariants.4  
 3. **Authorization Verification (Policy):** The action is permitted by a formally verifiable policy engine. We move beyond "if statements" to cryptographic proofs of permission.2
 
-The following sections dissect the current MVP against these pillars, identifying specific gaps in the Rust codebase and proposing concrete remediations leveraging the latest research in the Rust ecosystem, including **Wasmtime** for runtime execution, **Cedar** for policy enforcement, **rs-merkle** for audit trails, and **Crepe/Scallop** for neuro-symbolic reasoning.
+The following sections dissect the current MVP against these pillars, identifying specific gaps in the Rust codebase and proposing concrete remediations using current Rust ecosystem tools, including **Wasmtime** for runtime execution, **Cedar** for policy enforcement, **rs-merkle** for audit trails, and **Crepe/Scallop** for neuro-symbolic reasoning.
 
 ## ---
 
 **2\. Deep Gap Analysis: Code vs. Specification**
 
-This section compares the implied state of the MVP (based on standard Rust agent implementations and the provided query) against the required specifications for a robust VAK. The analysis identifies four primary "Gap Zones": Runtime Isolation, Policy Enforcement, Memory Provenance, and Cognitive Reasoning.
+This section compares the implied state of the MVP (based on standard Rust agent implementations and the provided query) against the specifications a VAK needs. The analysis identifies four primary "Gap Zones": Runtime Isolation, Policy Enforcement, Memory Provenance, and Cognitive Reasoning.
 
 ### **2.1 The Runtime Gap: From "Execution" to "Preemption"**
 
@@ -147,28 +147,28 @@ Before the VAK can be deployed in a high-stakes production environment (e.g., au
 
 ### **3.1 Kernel Stability & Isolation Gates**
 
-* \[x\] **Deterministic Termination:** Does the system pass the "Infinite Loop Test"? An agent containing loop { i \+= 1 } must be terminated by the Epoch Interruption mechanism within \<100ms of the deadline.7 ✅ *Implemented: RT-001, RT-002, RT-006*
-* \[x\] **Memory Containment:** Does the PoolingAllocationStrategy successfully prevent a "Memory Bomb" attack? The host process RSS (Resident Set Size) must not exceed the defined quota even when 50 agents try to allocate 4GB each.8 ✅ *Implemented: RT-003*
-* \[x\] **Panic Safety:** Is the WASM/Host boundary panic-safe? If a host function panics (e.g., unwrap on a None value), it must be caught via std::panic::catch\_unwind to prevent bringing down the entire VAK node. ✅ *Implemented: RT-005*
-* \[x\] **Async Re-entrancy:** Are all host functions fully async and compatible with tokio? Blocking operations in host functions will stall the cooperative scheduler. ✅ *Implemented: RT-004*
+* \[x\] **Deterministic Termination:** Does the system pass the "Infinite Loop Test"? An agent containing loop { i \+= 1 } must be terminated by the Epoch Interruption mechanism within \<100ms of the deadline.7 *Implemented: RT-001, RT-002, RT-006*
+* \[x\] **Memory Containment:** Does the PoolingAllocationStrategy successfully prevent a "Memory Bomb" attack? The host process RSS (Resident Set Size) must not exceed the defined quota even when 50 agents try to allocate 4GB each.8 *Implemented: RT-003*
+* \[x\] **Panic Safety:** Is the WASM/Host boundary panic-safe? If a host function panics (e.g., unwrap on a None value), it must be caught via std::panic::catch\_unwind to prevent bringing down the entire VAK node. *Implemented: RT-005*
+* \[x\] **Async Re-entrancy:** Are all host functions fully async and compatible with tokio? Blocking operations in host functions will stall the cooperative scheduler. *Implemented: RT-004*
 
 ### **3.2 Security & Governance Gates**
 
-* \[x\] **Supply Chain Hardening:** Has the codebase been audited with cargo-audit 21 for vulnerability databases and cargo-deny 22 for license compatibility? ✅ *Implemented: SEC-001, SEC-002*
-* \[x\] **Unsafe Hygiene:** Has cargo-geiger 23 been run to identify all instances of unsafe Rust? Each instance must be manually reviewed and documented with a // SAFETY: comment explaining the invariant. ✅ *Implemented: SEC-003*
-* \[x\] **Default Deny Policy:** Does the Cedar integration fail closed? If the policy file is missing or malformed, the Authorizer must deny all actions. ✅ *Implemented: POL-007*
-* \[x\] **Secret Scrubbing:** Does the memory snapshot mechanism automatically redact patterns resembling API keys (e.g., sk-proj-...) before persisting snapshots to disk? ✅ *Implemented: MEM-006*
+* \[x\] **Supply Chain Hardening:** Has the codebase been audited with cargo-audit 21 for vulnerability databases and cargo-deny 22 for license compatibility? *Implemented: SEC-001, SEC-002*
+* \[x\] **Unsafe Hygiene:** Has cargo-geiger 23 been run to identify all instances of unsafe Rust? Each instance must be manually reviewed and documented with a // SAFETY: comment explaining the invariant. *Implemented: SEC-003*
+* \[x\] **Default Deny Policy:** Does the Cedar integration fail closed? If the policy file is missing or malformed, the Authorizer must deny all actions. *Implemented: POL-007*
+* \[x\] **Secret Scrubbing:** Does the memory snapshot mechanism automatically redact patterns resembling API keys (e.g., sk-proj-...) before persisting snapshots to disk? *Implemented: MEM-006*
 
 ### **3.3 Interoperability Gates**
 
-* \[x\] **MCP Compliance:** Does the kernel implement the **Model Context Protocol (MCP)**?24 This is critical for ecosystem adoption, allowing the VAK to natively use tools from Anthropic, GitHub, and others without custom adapters. ✅ *Implemented: INT-001, INT-002*
-* \[x\] **A2A Handshake:** Can the kernel facilitate an **Agent-to-Agent (A2A)** capability exchange?25 Agent A should be able to query Agent B's interface definition to negotiate a collaboration protocol. ✅ *Implemented: SWM-001*
+* \[x\] **MCP Compliance:** Does the kernel implement the **Model Context Protocol (MCP)**?24 This is critical for ecosystem adoption, allowing the VAK to natively use tools from Anthropic, GitHub, and others without custom adapters. *Implemented: INT-001, INT-002*
+* \[x\] **A2A Handshake:** Can the kernel facilitate an **Agent-to-Agent (A2A)** capability exchange?25 Agent A should be able to query Agent B's interface definition to negotiate a collaboration protocol. *Implemented: SWM-001*
 
 ### **3.4 Observability & Forensics Gates**
 
-* \[x\] **Distributed Tracing:** Is tracing implemented with opentelemetry? Spans should exist for "Inference", "Logic Check", "Policy Eval", and "Tool Exec".26 ✅ *Implemented: OBS-001*
-* \[ \] **Cryptographic Replay:** Can a developer take a Merkle Log from a production incident and replay it in a local VAK instance to reproduce the exact state and decision path? ⚠️ *In Progress: OBS-002*
-* \[x\] **Cost Accounting:** Does the kernel track Token Usage \+ Fuel Consumed \+ I/O Bytes to generate a precise micro-bill for the agent's execution? ✅ *Implemented: OBS-003*
+* \[x\] **Distributed Tracing:** Is tracing implemented with opentelemetry? Spans should exist for "Inference", "Logic Check", "Policy Eval", and "Tool Exec".26 *Implemented: OBS-001*
+* \[ \] **Cryptographic Replay:** Can a developer take a Merkle Log from a production incident and replay it in a local VAK instance to reproduce the exact state and decision path? *In Progress: OBS-002*
+* \[x\] **Cost Accounting:** Does the kernel track Token Usage \+ Fuel Consumed \+ I/O Bytes to generate a precise micro-bill for the agent's execution? *Implemented: OBS-003*
 
 ## ---
 
@@ -176,7 +176,7 @@ Before the VAK can be deployed in a high-stakes production environment (e.g., au
 
 This roadmap transforms the VAK from a theoretical prototype to a hardened "Iron Kernel." It is structured into four phases, prioritizing stability and security before feature expansion.
 
-### **Phase 1: Core Kernel Stability (The "Iron Kernel")** ✅ COMPLETE
+### **Phase 1: Core Kernel Stability (The "Iron Kernel")** COMPLETE
 
 **Goal:** A runtime that cannot be crashed, stalled, or exploited by the agent.
 
@@ -196,7 +196,7 @@ This roadmap transforms the VAK from a theoretical prototype to a hardened "Iron
    * **Action:** Use linker.func\_wrap\_async for all I/O bound host functions (fs, net). Ensure the AgentState struct implements Send \+ Sync to move across Tokio threads.  
    * **Research Ref:** 9 (Async Host Functions).
 
-### **Phase 2: The Policy Layer (The "Digital Superego")** ✅ COMPLETE
+### **Phase 2: The Policy Layer (The "Digital Superego")** COMPLETE
 
 **Goal:** Formal verification of all agent actions.
 
@@ -215,7 +215,7 @@ This roadmap transforms the VAK from a theoretical prototype to a hardened "Iron
    * **Architecture:** Hot-reloading of policies.  
    * **Action:** Store .cedar files in the Merkle Log. When the log updates, trigger a reload of the PolicySet in memory using ArcSwap for lock-free updates.
 
-### **Phase 3: The Memory & Provenance Layer (The "Immutable Past")** ✅ COMPLETE
+### **Phase 3: The Memory & Provenance Layer (The "Immutable Past")** COMPLETE
 
 **Goal:** Cryptographic proof of history and state.
 
@@ -234,7 +234,7 @@ This roadmap transforms the VAK from a theoretical prototype to a hardened "Iron
    * **Architecture:** Use petgraph to build relationships between CIDs.  
    * **Action:** Create edges like (ThoughtHash) \-\> \[Caused\] \-\> (ActionHash). This allows for graph-based traversal of the agent's reasoning chain.
 
-### **Phase 4: The Neuro-Symbolic Cognitive Layer (The "Prefrontal Cortex")** ✅ COMPLETE
+### **Phase 4: The Neuro-Symbolic Cognitive Layer (The "Prefrontal Cortex")** COMPLETE
 
 **Goal:** Logic-based safety constraints.
 
@@ -250,7 +250,7 @@ This roadmap transforms the VAK from a theoretical prototype to a hardened "Iron
    * **Action:** Use a grammar-based sampler (e.g., kbnf) during the inference call. constrain the output to match Action(Target, Type).  
    * **Research Ref:** 30 (KBNF).
 
-### **Phase 5: Ecosystem & Interoperability** ⚠️ PARTIALLY COMPLETE
+### **Phase 5: Ecosystem & Interoperability** PARTIALLY COMPLETE
 
 **Goal:** Standardized communication.
 
@@ -310,7 +310,7 @@ This roadmap transforms the VAK from a theoretical prototype to a hardened "Iron
 
 A critical insight derived from the gap analysis is the handling of **Time**. In standard computing, time is a passive metric. In the VAK, time is an *adversary*. An agent stuck in a "reasoning loop" (generating endless Chain-of-Thought tokens) is indistinguishable from a crashed process to the user, but it consumes expensive inference credits.
 
-The epoch\_interruption mechanism 7 is not just a performance optimization; it is a **financial firewall**. It decouples the VAK's responsiveness from the agent's behavior. By setting an epoch deadline, the VAK asserts: "You have 50ms to think. If you are not done, you must yield." If the agent is running a long computation, the VAK can use epoch\_deadline\_async\_yield\_and\_update 7 to capture the agent's stack, suspend it, process other high-priority system tasks (like an incoming "Stop" signal from the user), and then resume the agent. This capability—**Preemptive Multitasking for AI**—is what separates a "Script Runner" from a "Kernel."
+The epoch\_interruption mechanism 7 is a **financial firewall** as well as a performance optimization. It decouples the VAK's responsiveness from the agent's behavior. By setting an epoch deadline, the VAK asserts: "You have 50ms to think. If you are not done, you must yield." If the agent is running a long computation, the VAK can use epoch\_deadline\_async\_yield\_and\_update 7 to capture the agent's stack, suspend it, process other high-priority system tasks (like an incoming "Stop" signal from the user), and then resume the agent. This capability, **preemptive multitasking for AI**, separates a "script runner" from a "kernel."
 
 ### **6.2 The Neuro-Symbolic "Safety Valve"**
 
@@ -323,7 +323,7 @@ Datalog provides a **Deterministic Safety Valve**. The logic rules in crepe oper
 
 ### **6.3 Security Through Dependency Hygiene**
 
-The VAK sits at the intersection of two dangerous ecosystems: AI (rapidly evolving, experimental code) and Systems (requiring stability). The recommendation to use cargo-audit, cargo-deny, and cargo-geiger 23 is crucial. The Rust ecosystem is generally safe, but "supply chain attacks" via compromised crates are a real threat.
+The VAK sits at the intersection of two dangerous ecosystems: AI (rapidly evolving, experimental code) and Systems (requiring stability). Running cargo-audit, cargo-deny and cargo-geiger 23 is necessary. The Rust ecosystem is generally safe, but "supply chain attacks" via compromised crates are a real threat.
 
 * cargo-deny: Ensures that no dependency uses a license incompatible with your enterprise constraints (e.g., AGPL in a proprietary product).  
 * cargo-geiger: Scans dependencies for unsafe blocks. A kernel aiming for "Verification" cannot rely on a dependency that uses unchecked pointer arithmetic, as this invalidates the memory safety guarantees of the entire system.
@@ -332,7 +332,7 @@ The VAK sits at the intersection of two dangerous ecosystems: AI (rapidly evolvi
 
 By adopting a **Merkle DAG** 13 for memory, the VAK enables a revolutionary debugging workflow. In traditional systems, if an agent fails, you look at textual logs. In VAK, because every state transition is hashed and linked, a developer can take the RootHash of a failed session, spin up a local VAK instance, and "checkout" that hash. This restores the *exact* memory state, vector store indices, and context window of the agent at that moment. The developer can then "Step Forward" one decision at a time to identify exactly where the reasoning logic diverged. This transforms AI debugging from "reading tea leaves" to "engineering forensics."
 
-This report provides the blueprint for building the VAK not just as a tool, but as a foundational piece of infrastructure—a **Trust Engine** for the autonomous future.
+This report is the blueprint for building VAK as infrastructure: a **trust engine** for autonomous agents.
 
 #### **Works cited**
 

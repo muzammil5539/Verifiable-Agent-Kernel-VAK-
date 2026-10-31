@@ -26,11 +26,13 @@
 //! log_level = "info"
 //! ```
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use super::guard::{validate_required_level, validate_tool_pattern, Assurance};
 use super::types::KernelError;
 
 /// Main kernel configuration structure.
@@ -124,7 +126,17 @@ impl KernelConfig {
     /// - `max_concurrent_agents` is 0
     /// - `max_execution_time` is 0
     /// - `policy.format` is `cedar` in a build without the `cedar` feature
+    /// - a `policy.min_assurance` tool pattern is malformed, or requires
+    ///   `experimental`
     pub fn validate(&self) -> Result<(), KernelError> {
+        for (pattern, level) in &self.policy.min_assurance {
+            validate_tool_pattern(pattern)
+                .and_then(|()| validate_required_level(*level))
+                .map_err(|message| KernelError::InvalidConfiguration {
+                    message: format!("policy.min_assurance: {message}"),
+                })?;
+        }
+
         if self.policy.format == PolicyFormat::Cedar && !cfg!(feature = "cedar") {
             return Err(KernelError::InvalidConfiguration {
                 message: "policy.format is cedar, but this build of vak lacks the `cedar` feature"
@@ -627,6 +639,14 @@ pub struct PolicyConfig {
     /// Cache TTL in seconds.
     #[serde(default = "default_cache_ttl")]
     pub cache_ttl_seconds: u64,
+
+    /// The guard assurance a tool needs before it runs: tool-name pattern
+    /// (`*`, `prefix*`, `*suffix` or exact) to level. A matching call runs
+    /// only if a guard of that level or above *passed* it; the policy's own
+    /// allow doesn't count. Where patterns overlap, the highest level
+    /// applies. This holds whatever `enabled` says. See `docs/adr/0013`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub min_assurance: BTreeMap<String, Assurance>,
 }
 
 fn default_cache_ttl() -> u64 {
@@ -643,6 +663,7 @@ impl Default for PolicyConfig {
             cedar_schema: None,
             enable_caching: true,
             cache_ttl_seconds: default_cache_ttl(),
+            min_assurance: BTreeMap::new(),
         }
     }
 }

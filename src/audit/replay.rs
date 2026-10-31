@@ -54,9 +54,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during replay operations
 #[derive(Debug, Error)]
@@ -109,9 +107,7 @@ pub enum ReplayError {
 /// Result type for replay operations
 pub type ReplayResult<T> = Result<T, ReplayError>;
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for replay sessions
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,9 +170,7 @@ impl ReplayConfig {
     }
 }
 
-// ============================================================================
 // Replay Step
-// ============================================================================
 
 /// A single step in a replay session
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -221,9 +215,7 @@ pub enum StepComparison {
     Skipped,
 }
 
-// ============================================================================
 // Replay Session
-// ============================================================================
 
 /// A replay session loaded from a Merkle Log
 #[derive(Debug)]
@@ -417,9 +409,7 @@ impl ReplaySession {
     }
 }
 
-// ============================================================================
 // Active Replay
-// ============================================================================
 
 /// An active replay session that can be stepped through
 pub struct ActiveReplay {
@@ -607,9 +597,7 @@ impl ActiveReplay {
     }
 }
 
-// ============================================================================
 // Replay Report
-// ============================================================================
 
 /// Report generated after a replay session
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -681,9 +669,7 @@ impl ReplayReport {
     }
 }
 
-// ============================================================================
 // Replay Verifier
-// ============================================================================
 
 /// Verifier for Merkle Log integrity
 pub struct ReplayVerifier {
@@ -829,9 +815,7 @@ impl Default for ReplayVerifier {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

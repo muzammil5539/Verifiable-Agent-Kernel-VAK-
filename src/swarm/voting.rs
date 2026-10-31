@@ -32,9 +32,7 @@ use thiserror::Error;
 
 use super::SwarmAgentId;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during voting operations
 #[derive(Debug, Error, Clone)]
@@ -64,9 +62,7 @@ pub enum VotingError {
     InvalidDirection,
 }
 
-// ============================================================================
 // Vote Types
-// ============================================================================
 
 /// Direction of a vote
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -139,9 +135,7 @@ impl Vote {
     }
 }
 
-// ============================================================================
 // Agent Credits
-// ============================================================================
 
 /// Voting credits available to an agent
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,9 +182,7 @@ impl AgentCredits {
     }
 }
 
-// ============================================================================
 // Voting Configuration
-// ============================================================================
 
 /// Configuration for a voting session
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -247,9 +239,7 @@ impl VotingConfig {
     }
 }
 
-// ============================================================================
 // Quadratic Voting
-// ============================================================================
 
 /// Quadratic voting calculator
 #[derive(Debug, Clone)]
@@ -284,9 +274,7 @@ impl QuadraticVoting {
     }
 }
 
-// ============================================================================
 // Proposal
-// ============================================================================
 
 /// A proposal to be voted on
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -328,9 +316,7 @@ impl Proposal {
     }
 }
 
-// ============================================================================
 // Vote Receipt
-// ============================================================================
 
 /// Receipt returned after recording a vote
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -347,9 +333,7 @@ pub struct VoteReceipt {
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
-// ============================================================================
 // Voting Outcome
-// ============================================================================
 
 /// Outcome of a finalized voting session
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -368,9 +352,7 @@ pub struct VotingOutcome {
     pub finalized_at: chrono::DateTime<chrono::Utc>,
 }
 
-// ============================================================================
 // Voting Session
-// ============================================================================
 
 /// Session state
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -527,9 +509,7 @@ impl VotingSession {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

@@ -42,9 +42,7 @@ use std::collections::HashMap;
 use std::process::Command;
 use thiserror::Error;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors specific to Z3 integration
 #[derive(Debug, Error)]
@@ -84,9 +82,7 @@ impl From<Z3Error> for VerificationError {
     }
 }
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for Z3 verifier
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,9 +134,7 @@ impl Z3Config {
     }
 }
 
-// ============================================================================
 // SMT-LIB2 Builder
-// ============================================================================
 
 /// Builder for SMT-LIB2 formulas.
 ///
@@ -287,9 +281,7 @@ impl SmtLibBuilder {
     }
 }
 
-// ============================================================================
 // SMT-LIB2 quoting
-// ============================================================================
 
 /// SMT-LIB and theory names a field must not shadow. Fields are restricted to
 /// `[A-Za-z_][A-Za-z0-9_]*`, so dotted theory functions (`str.len`, …) can't
@@ -349,9 +341,7 @@ pub fn smt_string(value: &str) -> Result<String, Z3Error> {
     Ok(literal)
 }
 
-// ============================================================================
 // Z3 Formal Verifier
-// ============================================================================
 
 /// Z3-based formal verifier
 pub struct Z3FormalVerifier {
@@ -856,9 +846,7 @@ impl FormalVerifier for Z3FormalVerifier {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

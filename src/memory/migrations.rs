@@ -24,9 +24,7 @@
 use rusqlite::{params, Connection};
 use thiserror::Error;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during migrations
 #[derive(Debug, Error)]
@@ -67,9 +65,7 @@ impl From<rusqlite::Error> for MigrationError {
     }
 }
 
-// ============================================================================
 // Migration Types
-// ============================================================================
 
 /// A database migration
 #[derive(Debug, Clone)]
@@ -129,9 +125,7 @@ pub struct MigrationRecord {
     pub checksum: String,
 }
 
-// ============================================================================
 // Migration Registry
-// ============================================================================
 
 /// Get all available migrations
 pub fn get_all_migrations() -> Vec<Migration> {
@@ -393,9 +387,7 @@ pub fn get_all_migrations() -> Vec<Migration> {
     ]
 }
 
-// ============================================================================
 // Migration Runner
-// ============================================================================
 
 /// Runs database migrations
 pub struct MigrationRunner<'a> {
@@ -590,9 +582,7 @@ fn calculate_checksum(sql: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

@@ -51,9 +51,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for LangChain adapter
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,9 +116,7 @@ impl LangChainConfig {
     }
 }
 
-// ============================================================================
 // Tool Call Representation
-// ============================================================================
 
 /// Represents a LangChain tool call
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -184,9 +180,7 @@ impl ToolCall {
     }
 }
 
-// ============================================================================
 // Chain Execution
-// ============================================================================
 
 /// Represents a LangChain chain execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -242,9 +236,7 @@ impl ChainExecution {
     }
 }
 
-// ============================================================================
 // LangChain Adapter
-// ============================================================================
 
 /// Main adapter for LangChain integration
 pub struct LangChainAdapter {
@@ -769,9 +761,7 @@ impl ReasoningContext {
     }
 }
 
-// ============================================================================
 // LLM Call Representation (INT-003)
-// ============================================================================
 
 /// Represents an LLM call being intercepted
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -853,9 +843,7 @@ impl LlmCall {
     }
 }
 
-// ============================================================================
 // Tool Execution Result (INT-003)
-// ============================================================================
 
 /// Records the result of a tool execution for audit tracking
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -878,9 +866,7 @@ pub struct ToolExecutionRecord {
     pub audit_entry_id: Option<String>,
 }
 
-// ============================================================================
 // Callback Handler Trait (INT-003)
-// ============================================================================
 
 /// LangChain-style callback handler for lifecycle events.
 ///
@@ -1000,9 +986,7 @@ impl LangChainCallbackHandler for AuditCallbackHandler {
     }
 }
 
-// ============================================================================
 // Extended LangChain Adapter Methods (INT-003)
-// ============================================================================
 
 impl LangChainAdapter {
     /// Add a callback handler
@@ -1248,9 +1232,7 @@ impl LangChainAdapter {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

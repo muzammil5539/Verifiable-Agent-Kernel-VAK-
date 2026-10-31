@@ -9,9 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for metrics collection
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,9 +55,7 @@ impl MetricsConfig {
     }
 }
 
-// ============================================================================
 // Metric Types
-// ============================================================================
 
 /// A counter metric (monotonically increasing)
 #[derive(Debug)]
@@ -341,9 +337,7 @@ impl Histogram {
     }
 }
 
-// ============================================================================
 // Metrics Collector
-// ============================================================================
 
 /// Collects and manages all VAK metrics
 pub struct MetricsCollector {
@@ -585,9 +579,7 @@ impl Default for MetricsCollector {
     }
 }
 
-// ============================================================================
 // Prometheus Exporter
-// ============================================================================
 
 /// Prometheus metrics exporter
 pub struct PrometheusExporter {
@@ -617,9 +609,7 @@ impl PrometheusExporter {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

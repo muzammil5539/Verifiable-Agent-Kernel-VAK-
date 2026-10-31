@@ -65,6 +65,66 @@ pub enum DatalogError {
 /// Result type for Datalog operations
 pub type DatalogResult<T> = Result<T, DatalogError>;
 
+/// Canonicalise a path lexically, without touching the filesystem (finding V3).
+///
+/// Collapses repeated separators, drops `.` components, resolves `..`, and
+/// cuts the path at the first NUL byte (a C filesystem call would stop there).
+/// An absolute path cannot climb above `/`. A relative path keeps leading
+/// `..` components, because the working directory is unknown. The empty
+/// relative path becomes `.`.
+///
+/// Symlinks and case-insensitive filesystems are out of scope: resolving them
+/// needs the filesystem, which a pure rule check must not read.
+pub fn canonical_path(path: &str) -> String {
+    let path = path.split('\0').next().unwrap_or("");
+    let absolute = path.starts_with('/');
+    let mut parts: Vec<&str> = Vec::new();
+    for part in path.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                if matches!(parts.last(), Some(&last) if last != "..") {
+                    parts.pop();
+                } else if !absolute {
+                    parts.push("..");
+                }
+            }
+            other => parts.push(other),
+        }
+    }
+    match (absolute, parts.is_empty()) {
+        (true, true) => "/".to_string(),
+        (false, true) => ".".to_string(),
+        (true, false) => format!("/{}", parts.join("/")),
+        (false, false) => parts.join("/"),
+    }
+}
+
+/// Whether `inner` is `outer` or lies under it, compared by whole components.
+/// Both arguments must already be canonical.
+fn path_is_within(inner: &str, outer: &str) -> bool {
+    if outer == "/" {
+        return inner.starts_with('/');
+    }
+    inner == outer
+        || inner
+            .strip_prefix(outer)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
+/// Whether a canonical `target` matches a canonical sensitive-file `pattern`.
+/// An absolute pattern names one file. A relative pattern such as `.env` or
+/// `.ssh/id_rsa` matches that file in any directory.
+fn sensitive_pattern_matches(pattern: &str, target: &str) -> bool {
+    if pattern.starts_with('/') {
+        return pattern == target;
+    }
+    target == pattern
+        || target
+            .strip_suffix(pattern)
+            .is_some_and(|head| head.ends_with('/'))
+}
+
 /// A fact in the Datalog knowledge base
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Fact {
@@ -223,6 +283,17 @@ impl std::hash::Hash for Fact {
 }
 
 impl Fact {
+    /// The fact with any path argument canonicalised (finding V3).
+    /// The engine stores and looks up facts in this form.
+    fn canonical(self) -> Self {
+        match self {
+            Fact::CriticalFile(p) => Fact::CriticalFile(canonical_path(&p)),
+            Fact::SensitiveFile(p) => Fact::SensitiveFile(canonical_path(&p)),
+            Fact::SystemPath(p) => Fact::SystemPath(canonical_path(&p)),
+            other => other,
+        }
+    }
+
     /// Create a critical file fact
     pub fn critical_file(path: impl Into<String>) -> Self {
         Fact::CriticalFile(path.into())
@@ -490,10 +561,7 @@ impl SafetyEngine {
             "Cannot delete critical system files",
             vec!["delete_file".to_string(), "remove".to_string()],
             |engine, action, target, _agent| {
-                if engine
-                    .facts
-                    .contains(&Fact::CriticalFile(target.to_string()))
-                {
+                if engine.is_critical_file(target) {
                     Some(
                         Violation::new(
                             "RULE_001_CRITICAL_DELETE",
@@ -520,10 +588,7 @@ impl SafetyEngine {
                 "append".to_string(),
             ],
             |engine, action, target, _agent| {
-                if engine
-                    .facts
-                    .contains(&Fact::CriticalFile(target.to_string()))
-                {
+                if engine.is_critical_file(target) {
                     Some(
                         Violation::new(
                             "RULE_002_CRITICAL_MODIFY",
@@ -546,10 +611,7 @@ impl SafetyEngine {
             "Cannot access sensitive files without proper capability",
             vec!["read_file".to_string(), "open".to_string()],
             |engine, action, target, _agent| {
-                if engine
-                    .facts
-                    .contains(&Fact::SensitiveFile(target.to_string()))
-                {
+                if engine.is_sensitive_file(target) {
                     Some(
                         Violation::new(
                             "RULE_003_SENSITIVE_ACCESS",
@@ -628,21 +690,17 @@ impl SafetyEngine {
                 "create_dir".to_string(),
             ],
             |engine, action, target, _agent| {
-                for fact in &engine.facts {
-                    if let Fact::SystemPath(path) = fact {
-                        if target.starts_with(path) {
-                            return Some(
-                                Violation::new(
-                                    "RULE_006_SYSTEM_PATH",
-                                    format!("Attempted operation in system path: {}", target),
-                                    action,
-                                    target,
-                                )
-                                .with_severity(0.9)
-                                .with_fact(format!("SystemPath(\"{}\")", path)),
-                            );
-                        }
-                    }
+                if let Some(path) = engine.system_path_containing(target) {
+                    return Some(
+                        Violation::new(
+                            "RULE_006_SYSTEM_PATH",
+                            format!("Attempted operation in system path: {}", target),
+                            action,
+                            target,
+                        )
+                        .with_severity(0.9)
+                        .with_fact(format!("SystemPath(\"{}\")", path)),
+                    );
                 }
                 None
             },
@@ -815,20 +873,43 @@ impl SafetyEngine {
         self.facts.insert(Fact::RestrictedTool("mkfs".to_string()));
     }
 
-    /// Add a fact to the knowledge base
+    /// Add a fact to the knowledge base. Path arguments are canonicalised.
     pub fn add_fact(&mut self, fact: Fact) {
         debug!(?fact, "Adding fact to knowledge base");
-        self.facts.insert(fact);
+        self.facts.insert(fact.canonical());
     }
 
     /// Remove a fact from the knowledge base
     pub fn remove_fact(&mut self, fact: &Fact) -> bool {
-        self.facts.remove(fact)
+        self.facts.remove(&fact.clone().canonical())
     }
 
     /// Check if a fact exists
     pub fn has_fact(&self, fact: &Fact) -> bool {
-        self.facts.contains(fact)
+        self.facts.contains(&fact.clone().canonical())
+    }
+
+    /// Whether `target` is a critical file, after canonicalising it (V3).
+    fn is_critical_file(&self, target: &str) -> bool {
+        self.facts
+            .contains(&Fact::CriticalFile(canonical_path(target)))
+    }
+
+    /// Whether `target` matches a sensitive-file fact, after canonicalising it (V3).
+    fn is_sensitive_file(&self, target: &str) -> bool {
+        let target = canonical_path(target);
+        self.facts.iter().any(|fact| {
+            matches!(fact, Fact::SensitiveFile(pattern) if sensitive_pattern_matches(pattern, &target))
+        })
+    }
+
+    /// The system path fact that contains `target`, by whole components (V3).
+    fn system_path_containing(&self, target: &str) -> Option<&str> {
+        let target = canonical_path(target);
+        self.facts.iter().find_map(|fact| match fact {
+            Fact::SystemPath(path) if path_is_within(&target, path) => Some(path.as_str()),
+            _ => None,
+        })
     }
 
     /// Add a custom safety rule
@@ -1127,5 +1208,113 @@ mod tests {
         // Try to use rm -rf
         let verdict = engine.check_action("execute_tool", "rm -rf");
         assert!(verdict.is_violation());
+    }
+
+    // --- V3: paths are compared in canonical form ---
+
+    #[test]
+    fn canonical_path_cases() {
+        for (input, want) in [
+            ("/etc/shadow", "/etc/shadow"),
+            ("/etc//shadow", "/etc/shadow"),
+            ("/etc/./shadow", "/etc/shadow"),
+            ("/etc/../etc/shadow", "/etc/shadow"),
+            ("/etc/shadow/", "/etc/shadow"),
+            ("//etc///shadow", "/etc/shadow"),
+            ("/../../etc/shadow", "/etc/shadow"),
+            ("/", "/"),
+            ("/..", "/"),
+            ("", "."),
+            ("./.env", ".env"),
+            ("a/../.env", ".env"),
+            ("../x", "../x"),
+            ("a/../../x", "../x"),
+            ("/etc/shadow\0.txt", "/etc/shadow"),
+        ] {
+            assert_eq!(canonical_path(input), want, "input {input:?}");
+        }
+    }
+
+    #[test]
+    fn canonical_path_is_idempotent() {
+        for input in ["/a//b/../c/.", "x/../../y", "", "/", "./a/./b/", "../.."] {
+            let once = canonical_path(input);
+            assert_eq!(canonical_path(&once), once, "input {input:?}");
+        }
+    }
+
+    #[test]
+    fn v3_critical_file_cannot_be_reached_by_aliases() {
+        let mut engine = SafetyEngine::new();
+        for target in [
+            "/etc//shadow",
+            "/etc/../etc/shadow",
+            "/etc/./shadow",
+            "/etc/shadow/",
+            "/tmp/../etc/shadow",
+            "/etc/shadow\0.txt",
+        ] {
+            for action in ["delete_file", "write_file"] {
+                let verdict = engine.check_action(action, target);
+                let SafetyVerdict::Violation(v) = verdict else {
+                    panic!("{action} {target:?} was not refused");
+                };
+                assert!(
+                    v.iter().any(|x| matches!(
+                        x.rule_id.as_str(),
+                        "RULE_001_CRITICAL_DELETE" | "RULE_002_CRITICAL_MODIFY"
+                    )),
+                    "{action} {target:?} missed the critical-file rule"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn v3_sensitive_file_matches_in_any_directory() {
+        let mut engine = SafetyEngine::new();
+        for target in [
+            "./.env",
+            "app/../.env",
+            "/home/user/.env",
+            "/home/user/.ssh//id_rsa",
+            "/root/.aws/./credentials",
+        ] {
+            assert!(
+                engine.check_action("read_file", target).is_violation(),
+                "{target:?} was not refused"
+            );
+        }
+        // Only whole components match.
+        assert!(engine
+            .check_action("read_file", "/home/user/my.env")
+            .is_safe());
+        assert!(engine
+            .check_action("read_file", "/home/user/.envrc")
+            .is_safe());
+    }
+
+    #[test]
+    fn v3_system_path_matches_whole_components() {
+        let mut engine = SafetyEngine::new();
+        assert!(engine
+            .check_action("create_dir", "/tmp/../etc/new")
+            .is_violation());
+        assert!(engine.check_action("create_dir", "/etc").is_violation());
+        // `/etcetera` and `/usrlocal` are not under `/etc` or `/usr`.
+        assert!(engine.check_action("create_dir", "/etcetera/x").is_safe());
+        assert!(engine.check_action("create_dir", "/usrlocal").is_safe());
+    }
+
+    #[test]
+    fn v3_facts_added_by_callers_are_canonicalised() {
+        let mut engine = SafetyEngine::new();
+        engine.add_fact(Fact::critical_file("/srv//data/../keys/"));
+        assert!(engine.has_fact(&Fact::critical_file("/srv/keys")));
+        assert!(engine
+            .check_action("delete_file", "/srv/./keys")
+            .is_violation());
+        assert!(engine.remove_fact(&Fact::critical_file("/srv/x/../keys")));
+        assert!(!engine.has_fact(&Fact::critical_file("/srv/keys")));
     }
 }

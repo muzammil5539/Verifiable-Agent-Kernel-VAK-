@@ -157,9 +157,7 @@ pub struct PolicyConfig {
     pub rules: Vec<PolicyRule>,
 }
 
-// =============================================================================
 // Rate Limiting (Issue #13)
-// =============================================================================
 
 /// Configuration for rate limiting policy evaluations
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -295,9 +293,7 @@ impl Default for RateLimiter {
     }
 }
 
-// =============================================================================
 // Policy Evaluation Cache (Issue #40)
-// =============================================================================
 
 /// Configuration for policy evaluation caching
 #[derive(Debug, Clone)]
