@@ -146,7 +146,9 @@ request path. In order of leverage:
          First fix its UTF-8 slicing panic (`prompt_injection.rs`
          `&input[..max_input_length]`), and drop the allowlist short-circuit,
          which skips detection entirely.
-      3. **Datalog on Ascent with canonical paths (V3)**, as an Enforced guard.
+      3. **Datalog on Ascent (V3)**, as an Enforced guard. The canonical-path
+         bypass is fixed in `reasoner::datalog`; what remains is the real
+         fixpoint engine.
 
       Until one is added, a `min_assurance` floor refuses its tools. The Python
       SDK and `VakRuntime` build kernels with `Kernel::new` and can't add guards.
