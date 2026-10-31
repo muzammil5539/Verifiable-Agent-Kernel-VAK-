@@ -50,9 +50,7 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for AutoGPT adapter
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,9 +137,7 @@ impl AutoGPTConfig {
     }
 }
 
-// ============================================================================
 // Task Plan
-// ============================================================================
 
 /// Represents an AutoGPT task plan
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -278,9 +274,7 @@ impl TaskPlan {
     }
 }
 
-// ============================================================================
 // Execution Result
-// ============================================================================
 
 /// Result of a command execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -340,9 +334,7 @@ impl ExecutionResult {
     }
 }
 
-// ============================================================================
 // AutoGPT Adapter
-// ============================================================================
 
 /// Main adapter for AutoGPT integration
 pub struct AutoGPTAdapter {
@@ -386,7 +378,6 @@ pub struct AutoGPTStats {
 
 /// State for an executing plan
 #[derive(Debug)]
-#[allow(dead_code)]
 struct PlanExecutionState {
     /// Unique plan identifier
     plan_id: String,
@@ -398,20 +389,6 @@ struct PlanExecutionState {
     completed_steps: usize,
     /// Steps that were blocked
     blocked_steps: Vec<usize>,
-}
-
-impl PlanExecutionState {
-    /// Create a new plan execution state
-    #[allow(dead_code)]
-    pub fn new(plan_id: String) -> Self {
-        Self {
-            plan_id,
-            started_at: Instant::now(),
-            current_step: 0,
-            completed_steps: 0,
-            blocked_steps: Vec::new(),
-        }
-    }
 }
 
 impl AutoGPTAdapter {
@@ -1342,9 +1319,7 @@ pub struct PlanEvaluation {
     pub max_allowed_steps: usize,
 }
 
-// ============================================================================
 // Extended AutoGPT Adapter Methods (INT-004)
-// ============================================================================
 
 /// Callback handler trait for AutoGPT lifecycle events (INT-004)
 #[async_trait::async_trait]
@@ -1794,9 +1769,7 @@ impl AutoGPTAdapter {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

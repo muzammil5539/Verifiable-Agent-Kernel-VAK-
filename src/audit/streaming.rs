@@ -37,9 +37,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::{broadcast, mpsc, watch};
 use uuid::Uuid;
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for the audit stream manager
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,9 +115,7 @@ impl StreamConfig {
     }
 }
 
-// ============================================================================
 // Stream Events
-// ============================================================================
 
 /// Types of stream events
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -319,9 +315,7 @@ impl StreamAlert {
     }
 }
 
-// ============================================================================
 // Stream Filters
-// ============================================================================
 
 /// Filter criteria for stream subscriptions
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -457,9 +451,7 @@ impl StreamFilter {
     }
 }
 
-// ============================================================================
 // Subscriber Management
-// ============================================================================
 
 /// Unique identifier for a subscriber
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -511,9 +503,7 @@ struct Subscriber {
     sender: mpsc::Sender<StreamEvent>,
 }
 
-// ============================================================================
 // Audit Stream Manager
-// ============================================================================
 
 /// Manager for real-time audit log streaming
 pub struct AuditStreamManager {
@@ -915,9 +905,7 @@ impl std::fmt::Debug for AuditStreamManager {
     }
 }
 
-// ============================================================================
 // External System Integration
-// ============================================================================
 
 /// Sink for external system integration
 pub trait StreamSink: Send + Sync {
@@ -1103,9 +1091,7 @@ impl StreamSink for WebhookSink {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

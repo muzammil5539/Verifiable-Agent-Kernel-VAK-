@@ -1634,10 +1634,8 @@ mod tests {
         );
     }
 
-    // ------------------------------------------------------------------
     // Mediation pipeline: ports, registered tools, fail-closed dispatch,
     // and audit proofs (docs/architecture-v2.md §5)
-    // ------------------------------------------------------------------
 
     use crate::audit::transparency::{verify_consistency, verify_inclusion};
     use crate::kernel::custom_handlers::HandlerFuture;

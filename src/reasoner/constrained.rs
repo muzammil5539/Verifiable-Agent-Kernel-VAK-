@@ -45,9 +45,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-// ============================================================================
 // Output Grammar
-// ============================================================================
 
 /// A loaded output grammar for validation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,9 +77,7 @@ impl OutputGrammar {
     }
 }
 
-// ============================================================================
 // Output Validation Error
-// ============================================================================
 
 /// A validation error for output constraints
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,9 +90,7 @@ pub struct ValidationError {
     pub suggested_repair: Option<String>,
 }
 
-// ============================================================================
 // Constrained Decoder
-// ============================================================================
 
 /// Constrained decoding and validation
 pub struct ConstrainedDecoder {
@@ -206,9 +200,7 @@ impl ConstrainedDecoder {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

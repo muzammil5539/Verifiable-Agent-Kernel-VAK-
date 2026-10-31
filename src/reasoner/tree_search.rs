@@ -46,9 +46,7 @@ use tokio::sync::RwLock;
 
 use super::{PrmError, ProcessRewardModel, ReasoningStep, ThoughtScore};
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during tree search operations
 #[derive(Debug, Error)]
@@ -89,9 +87,7 @@ pub enum TreeSearchError {
 /// Result type for tree search operations
 pub type TreeSearchResult<T> = Result<T, TreeSearchError>;
 
-// ============================================================================
 // Node Types
-// ============================================================================
 
 /// Unique identifier for a node in the search tree
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -231,9 +227,7 @@ impl SearchNode {
     }
 }
 
-// ============================================================================
 // Search Tree
-// ============================================================================
 
 /// The Monte Carlo Tree Search tree structure
 #[derive(Debug)]
@@ -362,9 +356,7 @@ impl SearchTree {
     }
 }
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for Tree of Thoughts search
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -461,9 +453,7 @@ impl TreeSearchConfig {
     }
 }
 
-// ============================================================================
 // Search Result
-// ============================================================================
 
 /// Result of a Tree of Thoughts search
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -509,9 +499,7 @@ impl SearchResult {
     }
 }
 
-// ============================================================================
 // Thought Generator Trait
-// ============================================================================
 
 /// Trait for generating candidate thoughts during expansion
 #[async_trait]
@@ -547,9 +535,7 @@ pub trait ThoughtGenerator: Send + Sync {
     ) -> TreeSearchResult<Option<bool>>;
 }
 
-// ============================================================================
 // Simple Thought Generator (for testing)
-// ============================================================================
 
 /// A simple thought generator for testing purposes
 pub struct SimpleThoughtGenerator {
@@ -606,9 +592,7 @@ impl ThoughtGenerator for SimpleThoughtGenerator {
     }
 }
 
-// ============================================================================
 // Tree of Thoughts Search
-// ============================================================================
 
 /// Tree of Thoughts (ToT) search implementation using MCTS
 ///
@@ -914,9 +898,7 @@ impl<P: ProcessRewardModel, G: ThoughtGenerator> TreeOfThoughts<P, G> {
     }
 }
 
-// ============================================================================
 // Builder Pattern for TreeOfThoughts
-// ============================================================================
 
 /// Builder for creating TreeOfThoughts instances
 pub struct TreeOfThoughtsBuilder<P: ProcessRewardModel> {
@@ -969,9 +951,7 @@ impl<P: ProcessRewardModel> TreeOfThoughtsBuilder<P> {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

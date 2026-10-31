@@ -36,9 +36,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Replication mode for multi-region setup
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -270,9 +268,7 @@ impl MultiRegionConfig {
     }
 }
 
-// ============================================================================
 // Region Health Status
-// ============================================================================
 
 /// Health status of a region
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -348,9 +344,7 @@ impl RegionHealth {
     }
 }
 
-// ============================================================================
 // Replication Status
-// ============================================================================
 
 /// Replication status between regions
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -394,9 +388,7 @@ pub struct MultiRegionStatus {
     pub total_entries: u64,
 }
 
-// ============================================================================
 // Multi-Region S3 Backend
-// ============================================================================
 
 /// Multi-region S3 audit backend with replication support
 ///
@@ -1011,9 +1003,7 @@ impl AuditBackend for MultiRegionS3Backend {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

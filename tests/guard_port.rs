@@ -106,9 +106,7 @@ fn verdicts(entry: &AuditEntry) -> Vec<(String, Assurance, GuardVerdict)> {
         .collect()
 }
 
-// ---------------------------------------------------------------------------
 // Guards can refuse what the policy allowed
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn a_guard_denial_refuses_an_allowed_call_and_is_recorded() {
@@ -275,9 +273,7 @@ async fn guards_see_the_call_and_the_policys_decision() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // A guard that can't answer doesn't let the call through
-// ---------------------------------------------------------------------------
 
 #[derive(Debug)]
 struct Panicking;
@@ -424,9 +420,7 @@ async fn a_guard_that_doesnt_answer_in_time_denies() {
     assert_eq!(runs.load(Ordering::SeqCst), 0);
 }
 
-// ---------------------------------------------------------------------------
 // policy.min_assurance
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn a_heuristic_pass_does_not_meet_an_enforced_floor() {
@@ -594,9 +588,7 @@ async fn the_highest_matching_level_applies() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // The audit record
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn rewriting_a_recorded_verdict_breaks_the_entry() {
@@ -725,9 +717,7 @@ async fn evaluate_policy_is_the_decide_stage_alone() {
         .is_err());
 }
 
-// ---------------------------------------------------------------------------
 // Configuration
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn guards_need_distinct_names() {

@@ -67,9 +67,7 @@ use thiserror::Error;
 use tokio::sync::{broadcast, RwLock};
 use uuid::Uuid;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur in swarm operations
 #[derive(Debug, Error)]
@@ -118,9 +116,7 @@ pub enum SwarmError {
 /// Result type for swarm operations
 pub type SwarmResult<T> = Result<T, SwarmError>;
 
-// ============================================================================
 // Agent Identity
-// ============================================================================
 
 /// Unique identifier for a swarm agent
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -155,9 +151,7 @@ impl std::fmt::Display for SwarmAgentId {
     }
 }
 
-// ============================================================================
 // Agent Role
-// ============================================================================
 
 /// Role of an agent in the swarm
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -190,9 +184,7 @@ impl std::fmt::Display for AgentRole {
     }
 }
 
-// ============================================================================
 // Swarm Agent
-// ============================================================================
 
 /// Represents an agent participating in the swarm
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -269,9 +261,7 @@ impl SwarmAgent {
     }
 }
 
-// ============================================================================
 // Swarm Configuration
-// ============================================================================
 
 /// Configuration for the swarm coordinator
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -337,9 +327,7 @@ impl SwarmConfig {
     }
 }
 
-// ============================================================================
 // Swarm Coordinator
-// ============================================================================
 
 /// Central coordinator for swarm operations
 pub struct SwarmCoordinator {
@@ -526,9 +514,7 @@ impl SwarmCoordinator {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

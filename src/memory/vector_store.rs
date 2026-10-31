@@ -33,9 +33,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during vector storage operations
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,9 +101,7 @@ impl std::error::Error for VectorStoreError {}
 /// Result type for vector storage operations
 pub type VectorStoreResult<T> = Result<T, VectorStoreError>;
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for vector storage
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,9 +203,7 @@ pub enum IndexType {
     },
 }
 
-// ============================================================================
 // Vector Entry
-// ============================================================================
 
 /// A vector entry with embedding, content, and metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -326,9 +320,7 @@ impl From<bool> for MetadataValue {
     }
 }
 
-// ============================================================================
 // Search Results
-// ============================================================================
 
 /// A search result with the entry and similarity score
 #[derive(Debug, Clone)]
@@ -414,9 +406,7 @@ pub enum FilterOp {
     Contains,
 }
 
-// ============================================================================
 // Vector Store Trait
-// ============================================================================
 
 /// Trait for vector storage backends
 pub trait VectorStore: Send + Sync {
@@ -458,9 +448,7 @@ pub trait VectorStore: Send + Sync {
     fn dimension(&self) -> usize;
 }
 
-// ============================================================================
 // In-Memory Implementation
-// ============================================================================
 
 /// In-memory vector store implementation for development and testing
 pub struct InMemoryVectorStore {
@@ -694,9 +682,7 @@ impl std::fmt::Debug for InMemoryVectorStore {
     }
 }
 
-// ============================================================================
 // Collection Manager
-// ============================================================================
 
 /// Manages multiple vector collections
 pub struct VectorCollectionManager {
@@ -783,9 +769,7 @@ impl std::fmt::Debug for VectorCollectionManager {
     }
 }
 
-// ============================================================================
 // Helper Functions
-// ============================================================================
 
 /// Compute SHA-256 hash
 fn compute_sha256(data: &[u8]) -> [u8; 32] {
@@ -839,9 +823,7 @@ fn manhattan_distance(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b.iter()).map(|(x, y)| (x - y).abs()).sum()
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -1152,9 +1134,7 @@ mod tests {
     }
 }
 
-// ============================================================================
 // Optimized Vector Store (Issue #10)
-// ============================================================================
 
 /// Statistics for vector store operations
 #[derive(Debug, Clone, Default)]

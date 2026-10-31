@@ -79,9 +79,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-// ============================================================================
 // Audit Entry Types
-// ============================================================================
 
 /// Represents a single audit log entry with cryptographic chaining
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -131,9 +129,7 @@ impl std::fmt::Display for AuditDecision {
     }
 }
 
-// ============================================================================
 // Audit Backend Trait (Issue #3)
-// ============================================================================
 
 /// Trait for audit storage backends
 ///
@@ -207,9 +203,7 @@ pub enum AuditError {
     BackendError(String),
 }
 
-// ============================================================================
 // Memory Backend (Default)
-// ============================================================================
 
 /// In-memory audit backend (for testing and development)
 #[derive(Debug, Default)]
@@ -504,9 +498,7 @@ impl AuditBackend for FileAuditBackend {
     }
 }
 
-// ============================================================================
 // SQLite Backend (Issue #4 - Queryable Persistent Storage)
-// ============================================================================
 
 /// SQLite-based audit backend with full queryability
 ///
@@ -845,9 +837,7 @@ impl AuditBackend for SqliteAuditBackend {
     }
 }
 
-// ============================================================================
 // Ed25519 Signing Support (Issue #51 - Non-repudiation)
-// ============================================================================
 
 /// Signing key manager for audit entry signatures
 ///
@@ -953,9 +943,7 @@ impl Default for AuditSigner {
     }
 }
 
-// ============================================================================
 // Audit Logger with Pluggable Backend
-// ============================================================================
 
 /// Cryptographic audit logger with hash-chained entries
 ///
@@ -1859,9 +1847,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // SQLite Backend Tests (Issue #4)
-    // ========================================================================
 
     #[test]
     fn test_sqlite_backend_in_memory() {
@@ -1978,9 +1964,7 @@ mod tests {
         assert_eq!(last.id, 10);
     }
 
-    // ========================================================================
     // Ed25519 Signing Tests (Issue #51)
-    // ========================================================================
 
     #[test]
     fn test_signer_creation() {
@@ -2114,9 +2098,7 @@ mod tests {
         assert!(result);
     }
 
-    // ========================================================================
     // Rotation Tests (Issue #20)
-    // ========================================================================
 
     #[test]
     fn test_rotation_evicts_oldest_entries() {

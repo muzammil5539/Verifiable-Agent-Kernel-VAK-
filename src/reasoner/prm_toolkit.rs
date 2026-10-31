@@ -45,9 +45,7 @@ use std::collections::HashMap;
 use std::fmt;
 use thiserror::Error;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during PRM toolkit operations
 #[derive(Debug, Error)]
@@ -84,9 +82,7 @@ pub enum ToolkitError {
 /// Result type for toolkit operations
 pub type ToolkitResult<T> = Result<T, ToolkitError>;
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for the PRM toolkit
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,9 +136,7 @@ impl ToolkitConfig {
     }
 }
 
-// ============================================================================
 // Training / Evaluation Data
-// ============================================================================
 
 /// A single training/evaluation example
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -339,9 +333,7 @@ impl EvaluationDataset {
     }
 }
 
-// ============================================================================
 // Evaluation Metrics
-// ============================================================================
 
 /// Comprehensive evaluation metrics for a PRM
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -484,9 +476,7 @@ pub struct PromptTemplate {
     pub description: String,
 }
 
-// ============================================================================
 // PRM Toolkit
-// ============================================================================
 
 /// Main toolkit for PRM evaluation and fine-tuning
 #[derive(Debug, Clone)]
@@ -920,9 +910,7 @@ impl PrmToolkit {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

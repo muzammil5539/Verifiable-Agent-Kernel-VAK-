@@ -47,9 +47,7 @@ use std::sync::{Arc, RwLock};
 use thiserror::Error;
 use tracing::{debug, info};
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during CAS operations
 #[derive(Debug, Error)]
@@ -91,9 +89,7 @@ pub enum CASError {
 /// Result type for CAS operations
 pub type CASResult<T> = Result<T, CASError>;
 
-// ============================================================================
 // Content ID
-// ============================================================================
 
 /// Content Identifier - a hash-based address for content
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -167,9 +163,7 @@ impl std::fmt::Display for ContentId {
     }
 }
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for Content-Addressable Storage
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -254,9 +248,7 @@ impl CASConfig {
     }
 }
 
-// ============================================================================
 // Content Metadata
-// ============================================================================
 
 /// Metadata about stored content
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -307,9 +299,7 @@ impl ContentMetadata {
     }
 }
 
-// ============================================================================
 // Storage Statistics
-// ============================================================================
 
 /// Statistics about the CAS
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -339,9 +329,7 @@ impl CASStats {
     }
 }
 
-// ============================================================================
 // Content-Addressable Store Implementation
-// ============================================================================
 
 /// Content-Addressable Storage backend
 pub struct ContentAddressableStore {
@@ -650,9 +638,7 @@ impl ContentAddressableStore {
         Ok(cid)
     }
 
-    // ========================================================================
     // Helper Methods
-    // ========================================================================
 
     /// Get file path for a given key using sharding
     fn get_file_path(&self, hex_key: &str) -> CASResult<PathBuf> {
@@ -733,9 +719,7 @@ impl ContentAddressableStore {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

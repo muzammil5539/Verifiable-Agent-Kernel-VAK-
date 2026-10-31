@@ -62,9 +62,7 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur in the verification gateway
 #[derive(Debug, Error)]
@@ -107,9 +105,7 @@ impl From<VerificationError> for GatewayError {
 /// Result type for gateway operations
 pub type GatewayResult<T> = Result<T, GatewayError>;
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for the verification gateway
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,9 +169,7 @@ impl GatewayConfig {
     }
 }
 
-// ============================================================================
 // High-Stakes Action Categories
-// ============================================================================
 
 /// Category of high-stakes action
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -216,9 +210,7 @@ pub enum RiskLevel {
     Critical = 3,
 }
 
-// ============================================================================
 // High-Stakes Action Definition
-// ============================================================================
 
 /// Definition of a high-stakes action with its invariants
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -354,9 +346,7 @@ impl ForbiddenPattern {
     }
 }
 
-// ============================================================================
 // Verification Result
-// ============================================================================
 
 /// Result of a verification check
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -435,9 +425,7 @@ pub struct ViolationDetail {
     pub remediation: Option<String>,
 }
 
-// ============================================================================
 // Verification Gateway
-// ============================================================================
 
 /// Cached results, by request key, with when each was cached.
 type VerificationCache = HashMap<String, (GatewayVerificationResult, DateTime<Utc>)>;
@@ -921,9 +909,7 @@ impl VerificationGateway {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

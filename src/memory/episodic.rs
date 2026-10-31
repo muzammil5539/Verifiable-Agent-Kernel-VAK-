@@ -33,9 +33,7 @@ use std::collections::HashMap;
 use std::fmt;
 use uuid::Uuid;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Error that occurs when verifying the integrity of an episode chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,9 +143,7 @@ impl From<ChainVerificationError> for ImportError {
     }
 }
 
-// ============================================================================
 // Episode ID
-// ============================================================================
 
 /// A unique identifier for an episode, wrapping a UUID v7.
 ///
@@ -202,9 +198,7 @@ impl From<EpisodeId> for Uuid {
     }
 }
 
-// ============================================================================
 // Episode
-// ============================================================================
 
 /// A single episode in the agent's memory, representing an action-observation pair.
 ///
@@ -399,9 +393,7 @@ impl Episode {
     }
 }
 
-// ============================================================================
 // Episode Chain
-// ============================================================================
 
 /// An append-only chain of episodes with Merkle chain integrity.
 ///
@@ -547,9 +539,7 @@ impl EpisodeChain {
     }
 }
 
-// ============================================================================
 // Episodic Memory
-// ============================================================================
 
 /// The main interface for episodic memory management.
 ///
@@ -707,9 +697,7 @@ impl EpisodicMemory {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

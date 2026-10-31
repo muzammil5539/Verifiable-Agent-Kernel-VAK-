@@ -53,9 +53,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during knowledge graph operations
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,9 +125,7 @@ impl std::error::Error for KnowledgeGraphError {}
 /// Result type for knowledge graph operations
 pub type KnowledgeGraphResult<T> = Result<T, KnowledgeGraphError>;
 
-// ============================================================================
 // Entity Types
-// ============================================================================
 
 /// Unique identifier for an entity
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -422,9 +418,7 @@ impl PartialEq for Entity {
 
 impl Eq for Entity {}
 
-// ============================================================================
 // Relationship Types
-// ============================================================================
 
 /// Common relationship types in the knowledge graph
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -583,9 +577,7 @@ impl PartialEq for Relationship {
 
 impl Eq for Relationship {}
 
-// ============================================================================
 // Knowledge Graph
-// ============================================================================
 
 /// Configuration for the knowledge graph
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -665,9 +657,7 @@ impl KnowledgeGraph {
         self.graph.edge_count()
     }
 
-    // ========================================================================
     // Entity Operations
-    // ========================================================================
 
     /// Add an entity to the graph
     pub fn add_entity(&mut self, entity: Entity) -> KnowledgeGraphResult<EntityId> {
@@ -777,9 +767,7 @@ impl KnowledgeGraph {
             .collect()
     }
 
-    // ========================================================================
     // Relationship Operations
-    // ========================================================================
 
     /// Add a relationship between two entities
     pub fn add_relationship(
@@ -911,9 +899,7 @@ impl KnowledgeGraph {
         results
     }
 
-    // ========================================================================
     // Graph Traversal
-    // ========================================================================
 
     /// Find all paths between two entities up to max depth
     pub fn find_paths(
@@ -1068,9 +1054,7 @@ impl KnowledgeGraph {
         }
     }
 
-    // ========================================================================
     // Serialization
-    // ========================================================================
 
     /// Export the graph to a serializable format
     pub fn export(&self) -> KnowledgeGraphResult<KnowledgeGraphExport> {
@@ -1159,9 +1143,7 @@ pub struct KnowledgeGraphExport {
     pub relationships: Vec<Relationship>,
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

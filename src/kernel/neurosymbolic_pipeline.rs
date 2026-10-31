@@ -62,9 +62,7 @@ use thiserror::Error;
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during pipeline execution
 #[derive(Debug, Error)]
@@ -119,9 +117,7 @@ pub enum PipelineError {
 /// Result type for pipeline operations
 pub type PipelineResult<T> = Result<T, PipelineError>;
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for the neuro-symbolic pipeline
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -199,9 +195,7 @@ impl PipelineConfig {
     }
 }
 
-// ============================================================================
 // Plan Types
-// ============================================================================
 
 /// An action proposed by the LLM
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -337,9 +331,7 @@ impl AgentPlan {
     }
 }
 
-// ============================================================================
 // Validation Result Types
-// ============================================================================
 
 /// Result of Datalog validation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -393,9 +385,7 @@ pub struct PrmScore {
     pub feedback: Option<String>,
 }
 
-// ============================================================================
 // Pipeline Execution Result
-// ============================================================================
 
 /// Complete result of pipeline execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -424,9 +414,7 @@ pub struct ExecutionResult {
     pub stage_timings: HashMap<String, u64>,
 }
 
-// ============================================================================
 // Pipeline State
-// ============================================================================
 
 /// Current state of the pipeline during execution
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -464,9 +452,7 @@ impl std::fmt::Display for PipelineStage {
     }
 }
 
-// ============================================================================
 // Datalog Validator Interface
-// ============================================================================
 
 /// Interface for Datalog validation
 pub trait DatalogValidator: Send + Sync {
@@ -629,9 +615,7 @@ impl DefaultDatalogValidator {
     }
 }
 
-// ============================================================================
 // Policy Checker Interface
-// ============================================================================
 
 /// Interface for policy checking
 pub trait PolicyChecker: Send + Sync {
@@ -726,9 +710,7 @@ impl PolicyChecker for DefaultPolicyChecker {
     }
 }
 
-// ============================================================================
 // PRM Scorer Interface
-// ============================================================================
 
 /// Interface for Process Reward Model scoring
 pub trait PrmScorer: Send + Sync {
@@ -812,9 +794,7 @@ impl PrmScorer for DefaultPrmScorer {
     }
 }
 
-// ============================================================================
 // Main Pipeline Implementation
-// ============================================================================
 
 /// The main Neuro-Symbolic Pipeline
 pub struct NeuroSymbolicPipeline {
@@ -1110,9 +1090,7 @@ impl NeuroSymbolicPipeline {
     }
 }
 
-// ============================================================================
 // Helper Functions
-// ============================================================================
 
 fn current_timestamp_millis() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1122,9 +1100,7 @@ fn current_timestamp_millis() -> u64 {
         .as_millis() as u64
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

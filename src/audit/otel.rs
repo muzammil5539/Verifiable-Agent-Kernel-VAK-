@@ -43,9 +43,7 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during tracing operations
 #[derive(Debug, Error)]
@@ -74,9 +72,7 @@ pub enum TracingError {
 /// Result type for tracing operations
 pub type TracingResult<T> = Result<T, TracingError>;
 
-// ============================================================================
 // Span Types
-// ============================================================================
 
 /// Types of spans in the VAK system
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -132,9 +128,7 @@ pub enum SpanStatus {
     InProgress,
 }
 
-// ============================================================================
 // Trace Context
-// ============================================================================
 
 /// Trace context for distributed tracing propagation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -205,9 +199,7 @@ impl Default for TraceContext {
     }
 }
 
-// ============================================================================
 // Span
-// ============================================================================
 
 /// A span representing a unit of work
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -390,9 +382,7 @@ impl From<bool> for AttributeValue {
     }
 }
 
-// ============================================================================
 // Tracer Configuration
-// ============================================================================
 
 /// Configuration for the VAK tracer
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -430,9 +420,7 @@ impl Default for TracingConfig {
     }
 }
 
-// ============================================================================
 // VAK Tracer
-// ============================================================================
 
 /// The main tracer for VAK operations
 pub struct VakTracer {
@@ -659,9 +647,7 @@ impl<'a> SpanContext<'a> {
     }
 }
 
-// ============================================================================
 // Statistics
-// ============================================================================
 
 /// Tracer statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -676,9 +662,7 @@ pub struct TracerStats {
     pub service_name: String,
 }
 
-// ============================================================================
 // OTLP Export (Simplified)
-// ============================================================================
 
 /// Simplified OTLP exporter for spans
 #[derive(Debug)]
@@ -762,9 +746,7 @@ impl OtlpExporter {
     }
 }
 
-// ============================================================================
 // Kernel-Specific Tracing Helpers (OBS-001)
-// ============================================================================
 
 impl VakTracer {
     /// Start a span for inference operations
@@ -871,9 +853,7 @@ where
     }
 }
 
-// ============================================================================
 // Helper Functions
-// ============================================================================
 
 /// Generate a 128-bit trace ID
 fn generate_trace_id() -> String {
@@ -895,9 +875,7 @@ fn current_time_ns() -> u64 {
         .as_nanos() as u64
 }
 
-// ============================================================================
 // Convenience Macros
-// ============================================================================
 
 /// Create a span for inference operations
 #[macro_export]
@@ -931,9 +909,7 @@ macro_rules! trace_tool_exec {
     };
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

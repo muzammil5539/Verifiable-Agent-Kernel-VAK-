@@ -57,9 +57,7 @@ fn counting_tool(runs: Arc<AtomicUsize>) -> impl ToolHandler + 'static {
     })
 }
 
-// ---------------------------------------------------------------------------
 // Receipts and outcome leaves
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn receipt_proves_decision_and_outcome() {
@@ -106,9 +104,7 @@ async fn receipt_proves_decision_and_outcome() {
     assert_eq!(outcome.result_sha256.as_deref(), Some(expected.as_str()));
 }
 
-// ---------------------------------------------------------------------------
 // Stage 1: Admit
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn unregistered_agents_are_refused_when_registration_is_required() {
@@ -268,9 +264,7 @@ async fn an_agents_scope_narrows_any_policy() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Stage 2: Budget
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn the_configured_rate_limit_is_enforced() {
@@ -319,9 +313,7 @@ async fn the_configured_rate_limit_is_enforced() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Stage 3: principal attributes reach policy (K8)
-// ---------------------------------------------------------------------------
 
 const PERMIT_INTERNAL_AGENTS: &str = r#"
 version: "1.0"
@@ -435,9 +427,7 @@ async fn the_pdp_sees_the_record_and_the_session() {
     ));
 }
 
-// ---------------------------------------------------------------------------
 // Stages 5 and 7: record before acting
-// ---------------------------------------------------------------------------
 
 /// An audit log whose appends start failing after `fail_from` successes.
 #[derive(Debug)]
@@ -533,9 +523,7 @@ async fn an_unrecorded_outcome_returns_the_response_without_a_receipt() {
     assert_eq!(kernel.get_audit_log().await.len(), 1, "decision only");
 }
 
-// ---------------------------------------------------------------------------
 // The file-backed audit log
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn audit_log_path_persists_across_restarts() {

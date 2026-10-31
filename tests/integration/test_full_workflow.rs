@@ -6,9 +6,7 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-// ============================================================================
 // Test: Complete Agent Workflow
-// ============================================================================
 
 /// Test the complete agent registration and tool execution workflow
 #[tokio::test]
@@ -215,9 +213,7 @@ async fn test_policy_hot_reload() {
     assert!(!policy_manager.check("agent-1", "write", "/data"));
 }
 
-// ============================================================================
 // Mock Types and Helper Functions
-// ============================================================================
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]

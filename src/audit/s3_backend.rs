@@ -31,9 +31,7 @@ use std::io::Write;
 use std::sync::{Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for S3 audit backend
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,9 +130,7 @@ impl S3Config {
     }
 }
 
-// ============================================================================
 // S3 Audit Backend
-// ============================================================================
 
 /// S3-based audit backend for cloud archival
 ///
@@ -477,9 +473,7 @@ impl AuditBackend for S3AuditBackend {
     }
 }
 
-// ============================================================================
 // S3 Object Listing (for archive queries)
-// ============================================================================
 
 /// Represents an archived audit log object in S3
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -524,9 +518,7 @@ impl ArchiveQuery {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

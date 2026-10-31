@@ -45,9 +45,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during constrained decoding
 #[derive(Debug, Error)]
@@ -81,9 +79,7 @@ pub enum ConstraintError {
 /// Result type for constraint operations
 pub type ConstraintResult<T> = Result<T, ConstraintError>;
 
-// ============================================================================
 // Grammar Types
-// ============================================================================
 
 /// A compiled grammar for constraining output
 #[derive(Debug, Clone)]
@@ -96,22 +92,18 @@ pub struct Grammar {
     terminals: HashSet<String>,
     /// Non-terminal symbols
     non_terminals: HashSet<String>,
-    /// Start symbol
-    #[allow(dead_code)] // Retained for future grammar expansion and validation.
-    start_symbol: String,
     /// Validation regex (for quick validation)
     validation_regex: Option<Regex>,
 }
 
 impl Grammar {
-    /// Create a new grammar with a start symbol
-    pub fn new(name: impl Into<String>, start_symbol: impl Into<String>) -> Self {
+    /// Create a new grammar
+    pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             rules: Vec::new(),
             terminals: HashSet::new(),
             non_terminals: HashSet::new(),
-            start_symbol: start_symbol.into(),
             validation_regex: None,
         }
     }
@@ -187,9 +179,7 @@ impl GrammarRule {
     }
 }
 
-// ============================================================================
 // Constraint Types
-// ============================================================================
 
 /// Types of output constraints
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -421,9 +411,7 @@ impl RegexConstraint {
     }
 }
 
-// ============================================================================
 // Parsed Output Types
-// ============================================================================
 
 /// A parsed Datalog fact
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -501,16 +489,11 @@ pub struct ParsedVakAction {
     pub reasoning: Option<String>,
 }
 
-// ============================================================================
 // Main Decoder
-// ============================================================================
 
 /// Constrained decoder for LLM output
 #[derive(Debug)]
 pub struct ConstrainedDecoder {
-    /// Precompiled grammars cache
-    #[allow(dead_code)] // Retained for future caching of compiled grammars.
-    grammar_cache: HashMap<String, Grammar>,
     /// Datalog fact regex
     datalog_fact_regex: Regex,
     /// VAK action regex
@@ -530,7 +513,6 @@ impl ConstrainedDecoder {
     #[allow(clippy::unwrap_used)]
     pub fn new() -> Self {
         Self {
-            grammar_cache: HashMap::new(),
             // Match patterns like: Predicate(arg1, arg2, ...)
             datalog_fact_regex: Regex::new(r#"^([A-Z][a-zA-Z0-9_]*)\s*\(\s*(.+)\s*\)$"#).unwrap(),
             // Match patterns like: {"action": "...", "target": "...", ...}
@@ -667,12 +649,10 @@ impl ConstrainedDecoder {
         ))
     }
 
-    // ========================================================================
     // Private Helper Methods
-    // ========================================================================
 
     fn build_datalog_grammar(&self, constraint: &DatalogConstraint) -> ConstraintResult<Grammar> {
-        let mut grammar = Grammar::new("datalog", "<facts>");
+        let mut grammar = Grammar::new("datalog");
 
         // Add fact production
         if constraint.allow_facts {
@@ -729,7 +709,7 @@ impl ConstrainedDecoder {
     }
 
     fn build_json_grammar(&self, constraint: &JsonSchemaConstraint) -> ConstraintResult<Grammar> {
-        let mut grammar = Grammar::new("json", "<value>");
+        let mut grammar = Grammar::new("json");
 
         grammar.add_rule(GrammarRule::new("<value>", vec!["<object>".to_string()]));
         grammar.add_rule(GrammarRule::new("<value>", vec!["<array>".to_string()]));
@@ -762,7 +742,7 @@ impl ConstrainedDecoder {
     }
 
     fn build_action_grammar(&self, constraint: &VakActionConstraint) -> ConstraintResult<Grammar> {
-        let mut grammar = Grammar::new("vak_action", "<action>");
+        let mut grammar = Grammar::new("vak_action");
 
         // Build action type alternatives
         for action in &constraint.allowed_actions {
@@ -788,7 +768,7 @@ impl ConstrainedDecoder {
         &self,
         constraint: &CustomGrammarConstraint,
     ) -> ConstraintResult<Grammar> {
-        let mut grammar = Grammar::new("custom", &constraint.start_symbol);
+        let mut grammar = Grammar::new("custom");
 
         // Simple KBNF-like parsing
         for line in constraint.grammar_definition.lines() {
@@ -811,7 +791,7 @@ impl ConstrainedDecoder {
     }
 
     fn build_choice_grammar(&self, constraint: &ChoiceConstraint) -> ConstraintResult<Grammar> {
-        let mut grammar = Grammar::new("choice", "<choice>");
+        let mut grammar = Grammar::new("choice");
 
         for choice in &constraint.choices {
             grammar.add_rule(GrammarRule::new("<choice>", vec![choice.clone()]));
@@ -821,7 +801,7 @@ impl ConstrainedDecoder {
     }
 
     fn build_regex_grammar(&self, constraint: &RegexConstraint) -> ConstraintResult<Grammar> {
-        let mut grammar = Grammar::new("regex", "<pattern>");
+        let mut grammar = Grammar::new("regex");
         grammar = grammar.with_validation_regex(&constraint.pattern)?;
         Ok(grammar)
     }
@@ -1076,9 +1056,7 @@ impl ConstrainedDecoder {
     }
 }
 
-// ============================================================================
 // Helper Functions
-// ============================================================================
 
 /// Calculate JSON nesting depth
 fn json_depth(value: &serde_json::Value) -> usize {
@@ -1089,9 +1067,7 @@ fn json_depth(value: &serde_json::Value) -> usize {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

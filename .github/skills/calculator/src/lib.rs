@@ -12,8 +12,8 @@
 //!
 //! | Function | Line | Purpose | Status |
 //! |----------|------|---------|--------|
-//! | `dealloc` | ~46 | Memory deallocation via `Vec::from_raw_parts` | ✅ Reviewed |
-//! | `execute` | ~195 | Input pointer read via `slice::from_raw_parts` | ✅ Reviewed |
+//! | `dealloc` | ~46 | Memory deallocation via `Vec::from_raw_parts` | Reviewed |
+//! | `execute` | ~195 | Input pointer read via `slice::from_raw_parts` | Reviewed |
 //!
 //! ## Safety Invariants
 //!
@@ -49,9 +49,7 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 use core::slice;
 use serde::{Deserialize, Serialize};
 
-// =============================================================================
 // Memory Allocation Helpers for WASM
-// =============================================================================
 
 /// Allocate memory for the host to write input data.
 /// Returns a pointer to the allocated memory.
@@ -92,9 +90,7 @@ pub extern "C" fn dealloc(ptr: *mut u8, size: usize) {
     }
 }
 
-// =============================================================================
 // Input/Output Data Structures
-// =============================================================================
 
 /// Input format for skill invocation
 #[derive(Deserialize)]
@@ -138,9 +134,7 @@ impl SkillOutput {
     }
 }
 
-// =============================================================================
 // Calculator Operations
-// =============================================================================
 
 /// Add two numbers
 #[inline]
@@ -170,9 +164,7 @@ fn divide(a: f64, b: f64) -> Option<f64> {
     }
 }
 
-// =============================================================================
 // Main Entry Point
-// =============================================================================
 
 /// Process the input JSON and execute the requested operation
 fn process_input(input: &str) -> SkillOutput {
@@ -270,9 +262,7 @@ fn create_output_buffer(output: &SkillOutput) -> *const u8 {
     ptr
 }
 
-// =============================================================================
 // Tests (run with `cargo test`)
-// =============================================================================
 
 #[cfg(test)]
 mod tests {

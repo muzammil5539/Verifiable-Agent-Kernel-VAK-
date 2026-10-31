@@ -33,9 +33,7 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
     core::arch::wasm32::unreachable()
 }
 
-// =============================================================================
 // Memory Allocation Helpers
-// =============================================================================
 
 /// Allocate memory for host input.
 #[no_mangle]
@@ -58,9 +56,7 @@ pub extern "C" fn dealloc(ptr: *mut u8, size: usize) {
     }
 }
 
-// =============================================================================
 // Data Structures
-// =============================================================================
 
 #[derive(Deserialize)]
 struct SkillInput {
@@ -126,9 +122,7 @@ impl SkillOutput {
     }
 }
 
-// =============================================================================
 // JSON Operations
-// =============================================================================
 
 fn json_depth(val: &serde_json::Value) -> usize {
     match val {
@@ -156,9 +150,7 @@ fn extract_path(val: &serde_json::Value, path: &str) -> Option<serde_json::Value
     Some(current.clone())
 }
 
-// =============================================================================
 // Main Logic
-// =============================================================================
 
 fn process_input(input: &str) -> SkillOutput {
     let parsed: Result<SkillInput, _> = serde_json::from_str(input);
@@ -268,9 +260,7 @@ fn process_input(input: &str) -> SkillOutput {
     }
 }
 
-// =============================================================================
 // WASM Entry Point
-// =============================================================================
 
 /// Main entry point for the skill.
 #[no_mangle]
@@ -304,9 +294,7 @@ fn create_output_buffer(output: &SkillOutput) -> *const u8 {
     ptr
 }
 
-// =============================================================================
 // Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {

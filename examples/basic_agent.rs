@@ -15,9 +15,7 @@ use vak::prelude::*;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // =========================================================================
     // Step 1: Initialize Tracing (Optional but Recommended)
-    // =========================================================================
     // VAK uses the `tracing` crate for structured logging.
     // This helps you observe kernel operations in real-time.
 
@@ -25,9 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("=== VAK Basic Agent Example ===\n");
 
-    // =========================================================================
     // Step 2: Create Kernel with Configuration
-    // =========================================================================
     // The kernel is the central component that manages agents, enforces policies,
     // executes tools, and maintains audit logs.
 
@@ -46,9 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("✓ Kernel initialized successfully\n");
 
-    // =========================================================================
     // Step 3: Register an Agent
-    // =========================================================================
     // Agents are the entities that interact with the kernel.
     // Each agent has:
     // - A unique identifier (AgentId or String)
@@ -66,9 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("✓ Agent ID: {}", agent_id);
     println!("✓ Session ID: {}\n", session_id);
 
-    // =========================================================================
     // Step 4: Execute a Tool Request
-    // =========================================================================
     // Tools are sandboxed functions that agents can invoke.
     // The kernel validates each tool call against policies before execution.
 
@@ -98,9 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  Output: {}\n", res);
     }
 
-    // =========================================================================
     // Step 5: Execute Another Tool (Demonstrating Multiple Operations)
-    // =========================================================================
 
     println!("Step 4: Executing another tool...");
 
@@ -121,9 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  Output: {}\n", res);
     }
 
-    // =========================================================================
     // Step 6: Inspect the Audit Log
-    // =========================================================================
     // Every significant action in VAK is logged to an immutable audit trail.
     // This is crucial for security, compliance, and debugging.
 
@@ -149,9 +137,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// =============================================================================
 // Additional Examples: Error Handling
-// =============================================================================
 
 /// Demonstrates handling common error cases
 #[allow(dead_code)]

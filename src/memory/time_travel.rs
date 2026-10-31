@@ -42,9 +42,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-// ============================================================================
 // Helper Functions
-// ============================================================================
 
 /// Compute SHA-256 hash of data
 fn compute_sha256(data: &[u8]) -> [u8; 32] {
@@ -53,9 +51,7 @@ fn compute_sha256(data: &[u8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during time travel operations
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,9 +132,7 @@ impl std::error::Error for TimeTravelError {}
 /// Result type for time travel operations
 pub type TimeTravelResult<T> = Result<T, TimeTravelError>;
 
-// ============================================================================
 // Snapshot Types
-// ============================================================================
 
 /// Unique identifier for a snapshot
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -395,9 +389,7 @@ impl StateDiff {
     }
 }
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for the time travel manager
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -446,9 +438,7 @@ impl TimeTravelConfig {
     }
 }
 
-// ============================================================================
 // Time Travel Manager
-// ============================================================================
 
 /// Named branch pointer
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -510,9 +500,7 @@ impl TimeTravelManager {
         self.snapshots.len()
     }
 
-    // ========================================================================
     // Working State Operations
-    // ========================================================================
 
     /// Set a value in the working state
     pub fn set(&mut self, key: impl Into<String>, value: Vec<u8>) {
@@ -539,9 +527,7 @@ impl TimeTravelManager {
         self.working_state.keys().map(|s| s.as_str()).collect()
     }
 
-    // ========================================================================
     // Checkpoint Operations
-    // ========================================================================
 
     /// Create a checkpoint from the current working state
     pub fn create_checkpoint(&mut self, label: impl Into<String>) -> SnapshotId {
@@ -705,9 +691,7 @@ impl TimeTravelManager {
         Ok(StateDiff::compute(snapshot, &working_checkpoint))
     }
 
-    // ========================================================================
     // Branch Operations
-    // ========================================================================
 
     /// Create a new branch at the current head
     pub fn create_branch(&mut self, name: impl Into<String>) -> TimeTravelResult<()> {
@@ -749,9 +733,7 @@ impl TimeTravelManager {
             .ok_or_else(|| TimeTravelError::BranchNotFound(name.to_string()))
     }
 
-    // ========================================================================
     // Verification & Integrity
-    // ========================================================================
 
     /// Verify the entire chain from head to genesis
     pub fn verify_chain(&self) -> TimeTravelResult<bool> {
@@ -794,9 +776,7 @@ impl TimeTravelManager {
             .map(|s| s.hash)
     }
 
-    // ========================================================================
     // Maintenance
-    // ========================================================================
 
     /// Remove old snapshots based on configuration
     fn prune_old_snapshots(&mut self) {
@@ -897,9 +877,7 @@ pub struct TimeTravelExport {
     pub working_state: HashMap<String, Vec<u8>>,
 }
 
-// ============================================================================
 // Full Checkout Capability (MEM-005 Enhancement)
-// ============================================================================
 
 /// A complete memory state checkout that can be used to recreate exact state
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1024,9 +1002,7 @@ pub struct StateChange {
     pub new_hash: Option<String>,
 }
 
-// ============================================================================
 // Checkout Types (MEM-005 Enhanced)
-// ============================================================================
 
 /// Options for checkout operations
 #[derive(Debug, Clone, Default)]
@@ -1091,9 +1067,7 @@ pub struct CheckoutStateSummary {
 }
 
 impl TimeTravelManager {
-    // ========================================================================
     // Checkout Operations (MEM-005 Enhanced)
-    // ========================================================================
 
     /// Checkout a snapshot by its Merkle root hash (MEM-005)
     ///
@@ -1318,20 +1292,6 @@ impl TimeTravelManager {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    fn compute_merkle_root_from_state(&self, state: &HashMap<String, Vec<u8>>) -> String {
-        let mut hasher = Sha256::new();
-        let mut keys: Vec<_> = state.keys().collect();
-        keys.sort();
-
-        for key in keys {
-            hasher.update(key.as_bytes());
-            hasher.update(&state[key]);
-        }
-
-        hex::encode(hasher.finalize())
-    }
-
     /// Generate replay steps between two snapshots
     ///
     /// Returns None if either snapshot is not found or if there's no valid path between them.
@@ -1444,22 +1404,6 @@ impl TimeTravelManager {
         Some(steps)
     }
 
-    /// Compute the current merkle root from working state
-    // Retained for future integrity verification of working state.
-    #[allow(dead_code)]
-    fn compute_current_merkle_root(&self) -> [u8; 32] {
-        let mut hasher = Sha256::new();
-        let mut keys: Vec<_> = self.working_state.keys().collect();
-        keys.sort();
-
-        for key in keys {
-            hasher.update(key.as_bytes());
-            hasher.update(&self.working_state[key]);
-        }
-
-        hasher.finalize().into()
-    }
-
     /// Step forward one decision at a time (for debugging)
     pub fn step_forward(&mut self) -> Option<ReplayStep> {
         // Get current head
@@ -1500,9 +1444,7 @@ impl TimeTravelManager {
     }
 }
 
-// ============================================================================
 // Additional Tests
-// ============================================================================
 
 #[cfg(test)]
 mod checkout_tests {

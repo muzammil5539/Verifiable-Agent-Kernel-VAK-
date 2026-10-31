@@ -88,9 +88,7 @@ use tokio::sync::RwLock;
 
 use super::time_travel::{SnapshotId, StateCheckpoint};
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during snapshot operations
 #[derive(Debug, Error)]
@@ -131,9 +129,7 @@ impl From<serde_json::Error> for SnapshotError {
 /// Result type for snapshot operations
 pub type SnapshotResult<T> = Result<T, SnapshotError>;
 
-// ============================================================================
 // Snapshot Wrapper (includes agent_id for storage)
-// ============================================================================
 
 /// Wrapper for StateCheckpoint that includes agent_id for storage
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,9 +156,7 @@ impl StoredSnapshot {
     }
 }
 
-// ============================================================================
 // Index Types
-// ============================================================================
 
 /// Summary of a snapshot for the index
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -254,9 +248,7 @@ impl SnapshotIndex {
     }
 }
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for snapshot backends
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -322,9 +314,7 @@ impl Default for SnapshotConfig {
     }
 }
 
-// ============================================================================
 // Snapshot Backend Trait
-// ============================================================================
 
 /// Trait for snapshot storage backends
 #[async_trait]
@@ -356,9 +346,7 @@ pub trait SnapshotBackend: Send + Sync {
     async fn prune_old(&self, agent_id: &str, keep_count: usize) -> SnapshotResult<usize>;
 }
 
-// ============================================================================
 // In-Memory Backend (for testing)
-// ============================================================================
 
 /// In-memory snapshot backend for testing
 pub struct InMemorySnapshotBackend {
@@ -495,9 +483,7 @@ impl SnapshotBackend for InMemorySnapshotBackend {
     }
 }
 
-// ============================================================================
 // File-based Backend
-// ============================================================================
 
 /// File-based snapshot backend with optional gzip compression
 pub struct FileSnapshotBackend {
@@ -753,9 +739,7 @@ impl SnapshotBackend for FileSnapshotBackend {
     }
 }
 
-// ============================================================================
 // Utility Functions
-// ============================================================================
 
 /// Sanitize a string to be safe for use as a filename
 fn sanitize_filename(name: &str) -> String {
@@ -767,9 +751,7 @@ fn sanitize_filename(name: &str) -> String {
         .collect()
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -788,9 +770,7 @@ mod tests {
         )
     }
 
-    // ========================================================================
     // In-Memory Backend Tests
-    // ========================================================================
 
     #[tokio::test]
     async fn test_inmemory_save_and_load() {
@@ -930,9 +910,7 @@ mod tests {
         assert!(matches!(result, Err(SnapshotError::NotFound(_))));
     }
 
-    // ========================================================================
     // File Backend Tests
-    // ========================================================================
 
     #[tokio::test]
     async fn test_file_save_and_load() {
@@ -1100,9 +1078,7 @@ mod tests {
         assert!(matches!(result, Err(SnapshotError::NotFound(_))));
     }
 
-    // ========================================================================
     // Snapshot Index Tests
-    // ========================================================================
 
     #[test]
     fn test_index_add_and_remove() {
@@ -1142,9 +1118,7 @@ mod tests {
         assert_eq!(index.snapshots.len(), 3);
     }
 
-    // ========================================================================
     // Stored Snapshot Tests
-    // ========================================================================
 
     #[test]
     fn test_stored_snapshot_serialization() {
@@ -1159,9 +1133,7 @@ mod tests {
         assert_eq!(deserialized.checkpoint.label, checkpoint.label);
     }
 
-    // ========================================================================
     // Config Tests
-    // ========================================================================
 
     #[test]
     fn test_config_defaults() {
@@ -1184,9 +1156,7 @@ mod tests {
         assert_eq!(config.max_snapshots_per_agent, Some(50));
     }
 
-    // ========================================================================
     // Utility Function Tests
-    // ========================================================================
 
     #[test]
     fn test_sanitize_filename() {
@@ -1196,9 +1166,7 @@ mod tests {
         assert_eq!(sanitize_filename("agent*1?test"), "agent_1_test");
     }
 
-    // ========================================================================
     // Error Tests
-    // ========================================================================
 
     #[test]
     fn test_error_display() {

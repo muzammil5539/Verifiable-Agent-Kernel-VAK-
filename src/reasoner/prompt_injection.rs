@@ -15,12 +15,12 @@
 //!
 //! This module implements the SEC-004 security requirement from the project roadmap:
 //!
-//! - ✅ Detects attempts to override system prompts
-//! - ✅ Pattern-based detection for 5+ injection categories
-//! - ✅ Heuristic analysis for novel attack patterns
-//! - ✅ Configurable risk thresholds and blocking behavior
-//! - ✅ Context-aware analysis with conversation history
-//! - ✅ Statistics tracking for monitoring and tuning
+//! - Detects attempts to override system prompts
+//! - Pattern-based detection for 5+ injection categories
+//! - Heuristic analysis for novel attack patterns
+//! - Configurable risk thresholds and blocking behavior
+//! - Context-aware analysis with conversation history
+//! - Statistics tracking for monitoring and tuning
 //! - ⏳ Datalog sandbox rules (planned for future enhancement)
 //!
 //! # Attack Categories Detected
@@ -66,9 +66,7 @@ use std::collections::HashMap;
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during prompt injection detection
 #[derive(Debug, Error)]
@@ -89,9 +87,7 @@ pub enum InjectionError {
 /// Result type for injection detection operations
 pub type InjectionResult<T> = Result<T, InjectionError>;
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for prompt injection detection
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,9 +160,7 @@ impl DetectorConfig {
     }
 }
 
-// ============================================================================
 // Injection Types
-// ============================================================================
 
 /// Types of prompt injection attacks
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -234,9 +228,7 @@ impl InjectionType {
     }
 }
 
-// ============================================================================
 // Detection Result
-// ============================================================================
 
 /// Result of analyzing an input for prompt injection
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -320,9 +312,7 @@ pub enum RecommendedAction {
     Block,
 }
 
-// ============================================================================
 // Detection Patterns
-// ============================================================================
 
 /// Built-in detection patterns
 struct DetectionPatterns {
@@ -384,9 +374,7 @@ impl DetectionPatterns {
     }
 }
 
-// ============================================================================
 // Prompt Injection Detector
-// ============================================================================
 
 /// Main detector for prompt injection attacks
 pub struct PromptInjectionDetector {
@@ -787,9 +775,7 @@ impl PromptInjectionDetector {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

@@ -6,9 +6,7 @@
 use proptest::prelude::*;
 use std::collections::HashMap;
 
-// ============================================================================
 // Strategy Definitions
-// ============================================================================
 
 /// Generate arbitrary agent IDs (valid UUIDs)
 fn arb_agent_name() -> impl Strategy<Value = String> {
@@ -61,9 +59,7 @@ fn arb_operands() -> impl Strategy<Value = Vec<f64>> {
     )
 }
 
-// ============================================================================
 // Kernel Type Properties
-// ============================================================================
 
 mod kernel_type_properties {
     use super::*;
@@ -88,9 +84,7 @@ mod kernel_type_properties {
     }
 }
 
-// ============================================================================
 // Policy Engine Properties
-// ============================================================================
 
 mod policy_properties {
     use super::*;
@@ -233,9 +227,7 @@ mod policy_properties {
     }
 }
 
-// ============================================================================
 // Audit Chain Properties
-// ============================================================================
 
 mod audit_properties {
     use super::*;
@@ -311,9 +303,7 @@ mod audit_properties {
     }
 }
 
-// ============================================================================
 // Memory State Properties
-// ============================================================================
 
 #[cfg(feature = "memory")]
 mod memory_properties {
@@ -420,9 +410,7 @@ mod memory_properties {
     }
 }
 
-// ============================================================================
 // Calculator Properties
-// ============================================================================
 
 mod calculator_properties {
     use super::*;
@@ -474,9 +462,7 @@ mod calculator_properties {
     }
 }
 
-// ============================================================================
 // Serialization Roundtrip Properties
-// ============================================================================
 
 #[cfg(feature = "llm")]
 mod serialization_properties {
@@ -517,9 +503,7 @@ mod serialization_properties {
     }
 }
 
-// ============================================================================
 // LLM Integration Properties
-// ============================================================================
 
 mod integration_properties {
     use super::*;
@@ -625,9 +609,7 @@ mod integration_properties {
     }
 }
 
-// ============================================================================
 // Secrets Properties
-// ============================================================================
 
 mod secrets_properties {
     use super::*;

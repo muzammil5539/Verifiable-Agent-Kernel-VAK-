@@ -4,9 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Adapter-specific errors
 #[derive(Debug, Error)]
@@ -53,9 +51,7 @@ pub enum AdapterError {
 /// Result type for adapter operations
 pub type AdapterResult<T> = Result<T, AdapterError>;
 
-// ============================================================================
 // Hook Types
-// ============================================================================
 
 /// Decision made by an interception hook
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,9 +105,7 @@ pub trait InterceptionHook: Send + Sync {
     fn evaluate(&self, action: &ActionContext) -> HookDecision;
 }
 
-// ============================================================================
 // Action Context
-// ============================================================================
 
 /// Context about an action being performed
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -205,9 +199,7 @@ impl ActionContext {
     }
 }
 
-// ============================================================================
 // Interception Result
-// ============================================================================
 
 /// Result of action interception
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -226,9 +218,7 @@ pub struct InterceptionResult {
     pub audit_entry_id: Option<String>,
 }
 
-// ============================================================================
 // Adapter Configuration Base
-// ============================================================================
 
 /// Base configuration for all adapters
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -263,9 +253,7 @@ impl Default for BaseAdapterConfig {
     }
 }
 
-// ============================================================================
 // VAK Connection
-// ============================================================================
 
 /// Connection to the VAK kernel
 pub struct VakConnection {

@@ -33,9 +33,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors from secrets management operations
 #[derive(Debug, Error)]
@@ -72,9 +70,7 @@ pub enum SecretsError {
 /// Result type for secrets operations
 pub type SecretsResult<T> = Result<T, SecretsError>;
 
-// ============================================================================
 // Secret Types
-// ============================================================================
 
 /// A retrieved secret value with metadata
 #[derive(Debug, Clone)]
@@ -143,9 +139,7 @@ impl Secret {
     }
 }
 
-// ============================================================================
 // Provider Trait
-// ============================================================================
 
 /// Trait for secrets provider backends
 #[async_trait]
@@ -175,9 +169,7 @@ pub trait SecretsProvider: Send + Sync {
     fn name(&self) -> &str;
 }
 
-// ============================================================================
 // Environment Variables Provider
-// ============================================================================
 
 /// Reads secrets from environment variables
 ///
@@ -262,9 +254,7 @@ impl SecretsProvider for EnvSecretsProvider {
     }
 }
 
-// ============================================================================
 // In-Memory Provider (for testing)
-// ============================================================================
 
 /// In-memory secrets provider for testing
 pub struct MemorySecretsProvider {
@@ -350,9 +340,7 @@ impl SecretsProvider for MemorySecretsProvider {
     }
 }
 
-// ============================================================================
 // File-based Provider
-// ============================================================================
 
 /// Reads secrets from a JSON file on disk
 ///
@@ -430,9 +418,7 @@ impl SecretsProvider for FileSecretsProvider {
     }
 }
 
-// ============================================================================
 // Secrets Manager
-// ============================================================================
 
 /// Central secrets manager with caching and provider abstraction
 pub struct SecretsManager {
@@ -552,9 +538,7 @@ impl SecretsManager {
     }
 }
 
-// ============================================================================
 // Chained Provider
-// ============================================================================
 
 /// A provider that chains multiple providers, trying each in order
 pub struct ChainedSecretsProvider {
@@ -627,9 +611,7 @@ impl SecretsProvider for ChainedSecretsProvider {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

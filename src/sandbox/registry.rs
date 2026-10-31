@@ -322,9 +322,7 @@ pub enum PermissionError {
     SkillNotFound(SkillId),
 }
 
-// ============================================================================
 // Signature Verification (SBX-002)
-// ============================================================================
 
 /// Errors that can occur during signature verification
 #[derive(Debug, Clone, thiserror::Error)]
@@ -1435,9 +1433,7 @@ wasm_path: "./test.wasm"
         assert_eq!(deserialized.version, manifest.version);
     }
 
-    // =========================================================================
     // Signature Verification Tests (SBX-002)
-    // =========================================================================
 
     #[test]
     fn test_signature_config_default() {

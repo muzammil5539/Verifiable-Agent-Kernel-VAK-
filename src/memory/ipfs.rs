@@ -37,9 +37,7 @@ use std::fmt;
 use std::sync::{Arc, RwLock};
 use thiserror::Error;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during IPFS operations
 #[derive(Debug, Error)]
@@ -80,9 +78,7 @@ pub enum IpfsError {
 /// Result type for IPFS operations
 pub type IpfsResult<T> = Result<T, IpfsError>;
 
-// ============================================================================
 // Content Identifier (CID)
-// ============================================================================
 
 /// Content Identifier (similar to IPFS CID v1)
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -177,9 +173,7 @@ impl fmt::Display for ContentId {
     }
 }
 
-// ============================================================================
 // Block Types
-// ============================================================================
 
 /// A block of data in the IPFS store
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -232,9 +226,7 @@ impl Block {
     }
 }
 
-// ============================================================================
 // DAG Node
-// ============================================================================
 
 /// A node in a Merkle DAG
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -302,9 +294,7 @@ impl DagNode {
     }
 }
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for the IPFS-Lite store
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -358,9 +348,7 @@ impl IpfsConfig {
     }
 }
 
-// ============================================================================
 // Store Statistics
-// ============================================================================
 
 /// Statistics about the IPFS store
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -375,9 +363,7 @@ pub struct StoreStats {
     pub dag_roots: usize,
 }
 
-// ============================================================================
 // IPFS-Lite Store
-// ============================================================================
 
 /// In-memory IPFS-like content-addressable store
 pub struct IpfsLiteStore {
@@ -702,9 +688,7 @@ impl fmt::Debug for IpfsLiteStore {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

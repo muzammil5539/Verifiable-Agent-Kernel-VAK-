@@ -22,9 +22,7 @@ use uuid::Uuid;
 use super::guard::GuardChecks;
 use crate::audit::transparency::SignedTreeHead;
 
-// ============================================================================
 // Identifier Types
-// ============================================================================
 
 /// A unique identifier for an agent in the system.
 ///
@@ -175,9 +173,7 @@ impl fmt::Display for AuditId {
     }
 }
 
-// ============================================================================
 // Policy Types
-// ============================================================================
 
 /// The result of a policy evaluation.
 ///
@@ -262,9 +258,7 @@ impl PolicyDecision {
     }
 }
 
-// ============================================================================
 // Request/Response Types
-// ============================================================================
 
 /// A request from an agent to execute a tool.
 ///
@@ -428,9 +422,7 @@ pub struct AuditReceipt {
     pub tree_head: SignedTreeHead,
 }
 
-// ============================================================================
 // Audit Types
-// ============================================================================
 
 /// What happened when an allowed tool call ran.
 ///
@@ -645,9 +637,7 @@ impl AuditEntry {
     }
 }
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur in the VAK kernel.
 ///

@@ -42,9 +42,7 @@ use std::fmt;
 use std::path::Path;
 use thiserror::Error;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during formal verification
 #[derive(Debug, Error)]
@@ -103,9 +101,7 @@ pub enum VerificationError {
     InvalidRegex(String),
 }
 
-// ============================================================================
 // Value Types
-// ============================================================================
 
 /// A value that can be used in constraints
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -241,9 +237,7 @@ impl fmt::Display for ConstraintValue {
     }
 }
 
-// ============================================================================
 // Constraint Types
-// ============================================================================
 
 /// Kind of constraint to verify
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -444,9 +438,7 @@ impl fmt::Display for Constraint {
     }
 }
 
-// ============================================================================
 // Verification Results
-// ============================================================================
 
 /// Result of a verification
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -604,9 +596,7 @@ impl BatchVerificationResult {
     }
 }
 
-// ============================================================================
 // Constraint File
-// ============================================================================
 
 /// A file containing multiple constraints
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -661,9 +651,7 @@ impl ConstraintFile {
     }
 }
 
-// ============================================================================
 // Formal Verifier Trait
-// ============================================================================
 
 /// Trait for formal verification implementations
 pub trait FormalVerifier: Send + Sync {
@@ -688,9 +676,7 @@ pub trait FormalVerifier: Send + Sync {
     fn validate_constraint(&self, constraint: &Constraint) -> Result<(), VerificationError>;
 }
 
-// ============================================================================
 // Constraint Verifier Configuration
-// ============================================================================
 
 /// Configuration for the constraint verifier
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -716,9 +702,7 @@ impl Default for VerifierConfig {
     }
 }
 
-// ============================================================================
 // Constraint Verifier Implementation
-// ============================================================================
 
 /// Pure Rust constraint verifier
 ///
@@ -1301,9 +1285,7 @@ impl FormalVerifier for ConstraintVerifier {
     }
 }
 
-// ============================================================================
 // Backward Compatibility Alias
-// ============================================================================
 
 /// Alias for `ConstraintVerifier` for backward compatibility
 ///
@@ -1313,9 +1295,7 @@ pub type Z3Verifier = ConstraintVerifier;
 /// Alias for `VerifierConfig` for backward compatibility
 pub type Z3Config = VerifierConfig;
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

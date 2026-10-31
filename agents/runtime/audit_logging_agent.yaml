@@ -119,10 +119,10 @@ system_prompt: |
   ```
   
   ## Forbidden Operations
-  - UPDATE: ❌ Never modify existing entries
-  - DELETE: ❌ Never remove entries
-  - TRUNCATE: ❌ Never clear the log
-  - BACKDATE: ❌ Timestamps from system clock only
+  - UPDATE: Never modify existing entries
+  - DELETE: Never remove entries
+  - TRUNCATE: Never clear the log
+  - BACKDATE: Timestamps from system clock only
   
   ## Storage Backend Requirements
   - Append-only mode enforced at DB level

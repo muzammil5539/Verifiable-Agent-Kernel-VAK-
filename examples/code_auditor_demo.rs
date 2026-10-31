@@ -88,10 +88,10 @@ enum FindingSeverity {
 impl std::fmt::Display for FindingSeverity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FindingSeverity::Critical => write!(f, "🔴 CRITICAL"),
-            FindingSeverity::High => write!(f, "🟠 HIGH"),
-            FindingSeverity::Medium => write!(f, "🟡 MEDIUM"),
-            FindingSeverity::Low => write!(f, "🟢 LOW"),
+            FindingSeverity::Critical => write!(f, "[CRITICAL]"),
+            FindingSeverity::High => write!(f, "[HIGH]"),
+            FindingSeverity::Medium => write!(f, "[MEDIUM]"),
+            FindingSeverity::Low => write!(f, "[LOW]"),
             FindingSeverity::Info => write!(f, "ℹ️  INFO"),
         }
     }
@@ -813,7 +813,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("╚════════════════════════════════════════════════════════════════╝\n");
 
     // Create the Code Auditor with default configuration
-    println!("🔧 Initializing Code Auditor...\n");
+    println!("Initializing Code Auditor...\n");
     let config = CodeAuditorConfig::default();
     let mut auditor = CodeAuditor::new(config.clone());
 
@@ -823,21 +823,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   ├── Max Files: {}", config.max_files);
     println!("   └── Forbidden Files: {:?}\n", config.forbidden_files);
 
-    // ==========================================================================
     // Demo 1: Attempt to access a forbidden file (should be blocked)
-    // ==========================================================================
     println!("═══════════════════════════════════════════════════════════════");
     println!("DEMO 1: Testing access control (forbidden file access)\n");
 
     match auditor.analyze_file(".env", "SECRET=value").await {
-        Ok(_) => println!("   ❌ Unexpected: Access should have been denied!"),
-        Err(e) => println!("   ✅ Access correctly denied: {}", e),
+        Ok(_) => println!("   FAIL: Access should have been denied!"),
+        Err(e) => println!("   OK: Access correctly denied: {}", e),
     }
     println!();
 
-    // ==========================================================================
     // Demo 2: Analyze vulnerable code
-    // ==========================================================================
     println!("═══════════════════════════════════════════════════════════════");
     println!("DEMO 2: Analyzing vulnerable code\n");
 
@@ -846,7 +842,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     // Display findings
-    println!("   📋 FINDINGS:\n");
+    println!("   FINDINGS:\n");
     for finding in auditor.get_findings() {
         println!("   ┌──────────────────────────────────────────────────────────");
         println!("   │ {} [{}]", finding.severity, finding.category);
@@ -863,9 +859,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("   └──────────────────────────────────────────────────────────\n");
     }
 
-    // ==========================================================================
     // Demo 3: Analyze safe code (should find minimal issues)
-    // ==========================================================================
     println!("═══════════════════════════════════════════════════════════════");
     println!("DEMO 3: Analyzing safe code\n");
 
@@ -875,12 +869,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     let new_findings = auditor.get_findings().len() - initial_findings;
 
-    println!("   ✅ Safe code analysis complete");
+    println!("   Safe code analysis complete");
     println!("   New findings: {} (expected: minimal)\n", new_findings);
 
-    // ==========================================================================
     // Demo 4: View episodic memory (reasoning chain)
-    // ==========================================================================
     println!("═══════════════════════════════════════════════════════════════");
     println!("DEMO 4: Episodic Memory Chain (Reasoning Trace)\n");
 
@@ -891,56 +883,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start = episodes.len().saturating_sub(10);
     for (i, episode) in episodes.iter().enumerate().skip(start) {
         let type_icon = match episode.action.as_str() {
-            "observation" => "👁️ ",
-            "thought" => "💭",
-            _ => "⚡",
+            "observation" => "obs",
+            "thought" => "thought",
+            _ => "action",
         };
         let content = &episode.observation;
         println!("   [{}] {} {}", i + 1, type_icon, content);
     }
     println!();
 
-    // ==========================================================================
     // Demo 5: Generate cryptographic audit receipt
-    // ==========================================================================
     println!("═══════════════════════════════════════════════════════════════");
     println!("DEMO 5: Cryptographic Audit Receipt\n");
 
     let receipt = auditor.generate_audit_receipt();
     println!("{}", receipt);
 
-    // ==========================================================================
     // Demo 6: Verify audit chain integrity
-    // ==========================================================================
     println!("DEMO 6: Audit Chain Verification\n");
 
     match auditor.audit_logger.verify_chain() {
-        Ok(_) => println!("   ✅ Audit chain integrity verified - no tampering detected\n"),
-        Err(e) => println!("   ❌ Audit chain verification failed: {:?}\n", e),
+        Ok(_) => println!("   OK: Audit chain integrity verified - no tampering detected\n"),
+        Err(e) => println!("   FAIL: Audit chain verification failed: {:?}\n", e),
     }
 
-    // ==========================================================================
     // Summary
-    // ==========================================================================
     println!("═══════════════════════════════════════════════════════════════");
     println!("                        DEMO SUMMARY");
     println!("═══════════════════════════════════════════════════════════════");
     println!();
     println!("   The VAK Autonomous Code Auditor MVP demonstrates:");
     println!();
-    println!("   ✅ Immutable Memory Log (Merkle DAG)");
+    println!("   Immutable Memory Log (Merkle DAG)");
     println!("      └── All observations and thoughts cryptographically linked");
     println!();
-    println!("   ✅ WASM Toolchain");
+    println!("   WASM Toolchain");
     println!("      └── Tools execute in sandboxed environment");
     println!();
-    println!("   ✅ PRM Integration");
+    println!("   PRM Integration");
     println!("      └── Reasoning steps scored for confidence");
     println!();
-    println!("   ✅ Formal Constraints");
+    println!("   Formal Constraints");
     println!("      └── Safety rules enforced (max steps, forbidden files)");
     println!();
-    println!("   ✅ Cryptographic Audit Trail");
+    println!("   Cryptographic Audit Trail");
     println!("      └── Every action logged with hash-chained integrity");
     println!();
     println!("═══════════════════════════════════════════════════════════════\n");

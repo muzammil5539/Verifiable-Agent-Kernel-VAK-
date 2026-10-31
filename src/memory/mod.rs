@@ -123,9 +123,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during state operations
 #[derive(Debug, Clone)]
@@ -162,9 +160,7 @@ impl std::error::Error for StateError {}
 /// Result type for state operations
 pub type StateResult<T> = Result<T, StateError>;
 
-// ============================================================================
 // Namespaced Key
-// ============================================================================
 
 /// Represents a namespaced key in format "agent_id:key"
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -211,9 +207,7 @@ impl std::fmt::Display for NamespacedKey {
     }
 }
 
-// ============================================================================
 // State Value
-// ============================================================================
 
 /// A value stored in the state manager with metadata
 #[derive(Debug, Clone)]
@@ -259,9 +253,7 @@ impl StateValue {
     }
 }
 
-// ============================================================================
 // Merkle Proof
-// ============================================================================
 
 /// A Merkle proof for verifiable reads.
 ///
@@ -338,9 +330,7 @@ pub struct VerifiableRead {
     pub proof: MerkleProof,
 }
 
-// ============================================================================
 // Tier Traits
-// ============================================================================
 
 /// Trait for ephemeral (in-memory) storage backends
 pub trait EphemeralStorage: Send + Sync {
@@ -401,9 +391,7 @@ pub trait MerkleStorage: Send + Sync {
     fn get_root(&self) -> StateResult<[u8; 32]>;
 }
 
-// ============================================================================
 // Default Implementations
-// ============================================================================
 
 /// In-memory ephemeral storage implementation
 #[derive(Debug)]
@@ -767,9 +755,7 @@ impl MerkleStorage for InMemoryMerkleStore {
     }
 }
 
-// ============================================================================
 // State Manager
-// ============================================================================
 
 /// Configuration for the StateManager
 #[derive(Debug, Clone)]
@@ -849,9 +835,7 @@ impl StateManager {
         }
     }
 
-    // ========================================================================
     // Core State Operations
-    // ========================================================================
 
     /// Get state from a specific tier
     pub fn get_state(&self, key: &NamespacedKey, tier: StateTier) -> StateResult<Option<Vec<u8>>> {
@@ -937,9 +921,7 @@ impl StateManager {
         Ok(e || s || m)
     }
 
-    // ========================================================================
     // Verifiable Operations
-    // ========================================================================
 
     /// Get state with cryptographic proof (from Merkle tier)
     pub fn get_with_proof(&self, key: &NamespacedKey) -> StateResult<Option<VerifiableRead>> {
@@ -962,9 +944,7 @@ impl StateManager {
         Ok(proof.verify(value))
     }
 
-    // ========================================================================
     // Semantic Search
-    // ========================================================================
 
     /// Search for semantically similar values
     pub fn semantic_search(
@@ -976,9 +956,7 @@ impl StateManager {
         self.semantic.search(namespace, query_embedding, top_k)
     }
 
-    // ========================================================================
     // Namespace Operations
-    // ========================================================================
 
     /// Clear all ephemeral state for a namespace (e.g., when a session ends)
     pub fn clear_ephemeral_namespace(&self, namespace: &str) -> StateResult<usize> {
@@ -1002,9 +980,7 @@ impl StateManager {
         Ok(false)
     }
 
-    // ========================================================================
     // Helper Methods
-    // ========================================================================
 
     /// Track access for potential auto-promotion
     fn track_access(&self, key: &NamespacedKey) {
@@ -1037,9 +1013,7 @@ impl StateManager {
     }
 }
 
-// ============================================================================
 // Convenience Functions
-// ============================================================================
 
 /// Helper to create a namespaced key for an agent
 pub fn agent_key(agent_id: &str, key: &str) -> NamespacedKey {
@@ -1051,9 +1025,7 @@ pub fn session_key(session_id: &str, key: &str) -> NamespacedKey {
     NamespacedKey::new(format!("session:{}", session_id), key)
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

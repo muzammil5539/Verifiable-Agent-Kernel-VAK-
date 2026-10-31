@@ -47,9 +47,7 @@ use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during constitutional evaluation
 #[derive(Debug, Error)]
@@ -83,9 +81,7 @@ pub enum ConstitutionError {
 /// Result type for constitutional operations
 pub type ConstitutionResult<T> = Result<T, ConstitutionError>;
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 /// Configuration for the Constitutional Engine
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,9 +134,7 @@ impl ConstitutionConfig {
     }
 }
 
-// ============================================================================
 // Constitutional Principles
-// ============================================================================
 
 /// A fundamental principle in the constitution
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,9 +180,7 @@ impl Principle {
     }
 }
 
-// ============================================================================
 // Enforcement Points
-// ============================================================================
 
 /// When in the execution pipeline the rule is enforced
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -215,9 +207,7 @@ impl fmt::Display for EnforcementPoint {
     }
 }
 
-// ============================================================================
 // Constraint Operators
-// ============================================================================
 
 /// Operators for constraint evaluation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -299,9 +289,7 @@ pub enum ConstraintOp {
     Not(Box<ConstraintOp>),
 }
 
-// ============================================================================
 // Constitutional Rules
-// ============================================================================
 
 /// A constitutional rule that must be satisfied
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -369,9 +357,7 @@ impl ConstitutionalRule {
     }
 }
 
-// ============================================================================
 // Constitution (Collection of Principles and Rules)
-// ============================================================================
 
 /// A complete constitution defining principles and rules
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -625,9 +611,7 @@ impl Constitution {
     }
 }
 
-// ============================================================================
 // Constitutional Decision
-// ============================================================================
 
 /// Outcome of a constitutional evaluation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -675,9 +659,7 @@ pub struct RuleViolation {
     pub value: Option<serde_json::Value>,
 }
 
-// ============================================================================
 // Constitutional Engine
-// ============================================================================
 
 /// Engine for evaluating constitutional rules
 #[derive(Debug)]
@@ -991,9 +973,7 @@ pub struct ConstitutionStats {
     pub constitution_locked: bool,
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

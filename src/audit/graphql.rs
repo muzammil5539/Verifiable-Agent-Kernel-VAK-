@@ -40,9 +40,7 @@ use std::sync::{Arc, PoisonError, RwLock};
 use thiserror::Error;
 use tracing::info;
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 /// Errors that can occur during query operations
 #[derive(Debug, Error)]
@@ -63,9 +61,7 @@ pub enum QueryError {
 /// Result type for query operations
 pub type QueryResult<T> = Result<T, QueryError>;
 
-// ============================================================================
 // Data Types
-// ============================================================================
 
 /// Audit log entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -209,9 +205,7 @@ pub struct ChainVerificationResult {
     pub first_invalid_index: Option<i64>,
 }
 
-// ============================================================================
 // Query Types
-// ============================================================================
 
 /// Sort order for queries
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -316,9 +310,7 @@ pub struct QueryResponse<T> {
     pub has_more: bool,
 }
 
-// ============================================================================
 // Query Engine
-// ============================================================================
 
 /// Audit query engine
 pub struct AuditQueryEngine {
@@ -542,9 +534,7 @@ impl AuditQueryEngine {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
