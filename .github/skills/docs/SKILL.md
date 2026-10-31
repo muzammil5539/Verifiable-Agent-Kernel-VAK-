@@ -94,8 +94,8 @@ Each module in `src/` should have documentation in its `mod.rs`:
 //!
 //! | ID | Feature | Status |
 //! |----|---------|--------|
-//! | MEM-001 | rs_merkle Integration | ✅ |
-//! | MEM-002 | Sparse Merkle Tree | ✅ |
+//! | MEM-001 | rs_merkle Integration | Done |
+//! | MEM-002 | Sparse Merkle Tree | Done |
 //!
 //! ## Usage
 //!

@@ -34,10 +34,10 @@ The core request path is built and tested. The research modules around it are no
 | Policy: Cedar (with SymCC property proofs) and YAML ABAC | Built |
 | Audit log: memory, JSONL and SQLite adapters, receipts, proofs | Built |
 | WASM sandbox: Wasmtime 49, fuel and epoch limits, Ed25519-signed skills | Built |
-| Python SDK, MCP `execute_skill` | Built; both run through `Kernel::execute` |
+| Python SDK, MCP `execute_skill` | Built, both through `Kernel::execute` |
 | Datalog safety rules, PRM scoring, Z3, tree search | Heuristic: useful signals, not guarantees |
-| Zero-knowledge proofs | Not a proof system; behind `experimental-zk`, off by default |
-| Sparse Merkle tree, swarm voting | Known unsound; see findings V4 and S1 |
+| Zero-knowledge proofs | Not a proof system. Behind `experimental-zk`, off by default |
+| Sparse Merkle tree, swarm voting | Known unsound (findings V4 and S1) |
 | Constitution, reasoner as guards | Not on the request path yet |
 
 ## Install
@@ -100,7 +100,7 @@ conditions:
 priority: 100
 ```
 
-Operators: `Equals`, `NotEquals`, `LessThan`, `GreaterThan`, `In`, `Contains`, `StartsWith`, `EndsWith`, `Matches`. Example policies are in `policies/`; Cedar policies and their schema are in `policies/cedar/`.
+Operators: `Equals`, `NotEquals`, `LessThan`, `GreaterThan`, `In`, `Contains`, `StartsWith`, `EndsWith`, `Matches`. Example policies are in `policies/`. Cedar policies and their schema are in `policies/cedar/`.
 
 ## Writing a skill
 
@@ -145,7 +145,7 @@ make coverage-check                   # fails under 80% line coverage
 make security                         # cargo audit and cargo deny
 ```
 
-Commit messages follow Conventional Commits; see [CONTRIBUTING.md](CONTRIBUTING.md).
+Commit messages follow Conventional Commits ([CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ## License
 

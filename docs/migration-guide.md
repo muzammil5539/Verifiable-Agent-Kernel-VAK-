@@ -21,7 +21,7 @@
 
 ## Overview
 
-VAK v1.0 is the first production-ready release. This guide covers upgrading from any v0.x version.
+VAK v1.0 is the first tagged release. This guide covers upgrading from any v0.x version. Known gaps are listed in `docs/architecture-v2.md`.
 
 ### Version History
 
@@ -30,7 +30,7 @@ VAK v1.0 is the first production-ready release. This guide covers upgrading from
 | v0.1 (Alpha) | 2026-02-10 | Core kernel, policy engine, audit logging, neuro-symbolic layer |
 | v0.2 (Stable) | 2026-02-13 | Complete ecosystem integrations, Python SDK stable |
 | v0.3 (Beta) | 2026-02-13 | Full test coverage, infrastructure tooling, CI/CD pipeline |
-| **v1.0 (Production)** | **2026-02-13** | **Production-ready with full documentation** |
+| **v1.0** | **2026-02-13** | **First tagged release, with full documentation** |
 
 ### Key Changes in v1.0
 

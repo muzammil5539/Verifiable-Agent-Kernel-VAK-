@@ -1,6 +1,6 @@
 # VAK Python Bindings — Tracking Checklist
 
-> **Status legend**: ✅ Done | 🔧 In Progress | ⬜ Pending
+> **Status legend**: Done | In progress | Pending
 >
 > Last updated: 2026-02-11
 
@@ -12,11 +12,11 @@
 
 | Rust Struct | Python Name | Status | Notes |
 |-------------|-------------|--------|-------|
-| `PyKernel` | `Kernel` | ✅ Done | Full lifecycle, agents, policy, tools, audit |
-| `PyPolicyDecision` | `PolicyDecision` | ✅ Done | effect, policy_id, reason, matched_rules |
-| `PyToolResponse` | `ToolResponse` | ✅ Done | request_id, success, result, error, timing |
-| `PyAuditEntry` | `AuditEntry` | ✅ Done | entry_id, timestamp, level, agent_id, action |
-| `PyRiskLevel` | `RiskLevel` | ✅ Done | LOW, MEDIUM, HIGH, CRITICAL constants |
+| `PyKernel` | `Kernel` | Done | Full lifecycle, agents, policy, tools, audit |
+| `PyPolicyDecision` | `PolicyDecision` | Done | effect, policy_id, reason, matched_rules |
+| `PyToolResponse` | `ToolResponse` | Done | request_id, success, result, error, timing |
+| `PyAuditEntry` | `AuditEntry` | Done | entry_id, timestamp, level, agent_id, action |
+| `PyRiskLevel` | `RiskLevel` | Done | LOW, MEDIUM, HIGH, CRITICAL constants |
 
 ### Need Wrapping — High Priority
 
@@ -97,23 +97,23 @@
 
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
-| `VakKernel` class | `__init__.py` | ✅ Done | Full wrapper with session + agent_context |
-| `AgentConfig` dataclass | `types.py` | ✅ Done | with_capability(), with_tool_access() |
-| `ToolRequest` dataclass | `types.py` | ✅ Done | |
-| `ToolResponse` dataclass | `types.py` | ✅ Done | unwrap() method |
-| `PolicyDecision` dataclass | `types.py` | ✅ Done | is_allowed(), is_denied() |
-| `PolicyEffect` enum | `types.py` | ✅ Done | ALLOW, DENY, AUDIT |
-| `AuditEntry` dataclass | `types.py` | ✅ Done | to_dict() |
-| `AuditLevel` enum | `types.py` | ✅ Done | DEBUG, INFO, WARNING, ERROR, CRITICAL |
-| `VakError` exception | `__init__.py` | ✅ Done | Base exception |
-| `PolicyViolationError` | `__init__.py` | ✅ Done | With policy_id, reason attrs |
-| `AgentNotFoundError` | `__init__.py` | ✅ Done | With agent_id attr |
-| `ToolExecutionError` | `__init__.py` | ✅ Done | With tool_id, execution_time_ms attrs |
-| `AuditError` | `__init__.py` | ✅ Done | For audit chain failures |
-| `RiskLevel` constants | `__init__.py` | ✅ Done | LOW, MEDIUM, HIGH, CRITICAL |
+| `VakKernel` class | `__init__.py` | Done | Full wrapper with session + agent_context |
+| `AgentConfig` dataclass | `types.py` | Done | with_capability(), with_tool_access() |
+| `ToolRequest` dataclass | `types.py` | Done | |
+| `ToolResponse` dataclass | `types.py` | Done | unwrap() method |
+| `PolicyDecision` dataclass | `types.py` | Done | is_allowed(), is_denied() |
+| `PolicyEffect` enum | `types.py` | Done | ALLOW, DENY, AUDIT |
+| `AuditEntry` dataclass | `types.py` | Done | to_dict() |
+| `AuditLevel` enum | `types.py` | Done | DEBUG, INFO, WARNING, ERROR, CRITICAL |
+| `VakError` exception | `__init__.py` | Done | Base exception |
+| `PolicyViolationError` | `__init__.py` | Done | With policy_id, reason attrs |
+| `AgentNotFoundError` | `__init__.py` | Done | With agent_id attr |
+| `ToolExecutionError` | `__init__.py` | Done | With tool_id, execution_time_ms attrs |
+| `AuditError` | `__init__.py` | Done | For audit chain failures |
+| `RiskLevel` constants | `__init__.py` | Done | LOW, MEDIUM, HIGH, CRITICAL |
 | `_StubKernel` fallback | — | Removed | Answered for the kernel without one (ADR 0011); without the native module, kernel methods raise |
-| `_AgentContext` helper | `__init__.py` | ✅ Done | Scoped agent operations |
-| `session()` ctx manager | `__init__.py` | ✅ Done | Auto register/unregister |
+| `_AgentContext` helper | `__init__.py` | Done | Scoped agent operations |
+| `session()` ctx manager | `__init__.py` | Done | Auto register/unregister |
 
 ---
 
@@ -121,8 +121,8 @@
 
 | File | Status | Notes |
 |------|--------|-------|
-| `python/vak/_vak_native.pyi` | ✅ Done | Full stubs for all 6 exposed classes |
-| `python/vak/py.typed` | ✅ Done | PEP 561 marker file |
+| `python/vak/_vak_native.pyi` | Done | Full stubs for all 6 exposed classes |
+| `python/vak/py.typed` | Done | PEP 561 marker file |
 
 ---
 
@@ -130,10 +130,10 @@
 
 | Document | Status | Notes |
 |----------|--------|-------|
-| `README_PYTHON.md` | ✅ Done | Getting started, async, FastAPI, testing |
-| Rust `///` → Python `__doc__` | ✅ Done | PyO3 auto-converts doc comments |
-| `.pyi` docstrings (PEP 257) | ✅ Done | Full docstrings on all stubs |
-| `TODO_BINDINGS.md` | ✅ Done | This file |
+| `README_PYTHON.md` | Done | Getting started, async, FastAPI, testing |
+| Rust `///` → Python `__doc__` | Done | PyO3 auto-converts doc comments |
+| `.pyi` docstrings (PEP 257) | Done | Full docstrings on all stubs |
+| `TODO_BINDINGS.md` | Done | This file |
 
 ---
 
@@ -141,8 +141,8 @@
 
 | Task | Status | Notes |
 |------|--------|-------|
-| `pyproject.toml` (maturin) | ✅ Done | `maturin develop --features python` |
-| `Cargo.toml` optional pyo3 | ✅ Done | `python` feature flag |
+| `pyproject.toml` (maturin) | Done | `maturin develop --features python` |
+| `Cargo.toml` optional pyo3 | Done | `python` feature flag |
 | CI: build + test wheels | ⬜ Pending | GitHub Actions workflow |
 | CI: publish to PyPI | ⬜ Pending | On tag push |
 
@@ -152,11 +152,11 @@
 
 | Test Suite | File | Status | Notes |
 |------------|------|--------|-------|
-| Kernel unit tests | `python/tests/test_kernel.py` | ✅ Done | |
-| Type conversion tests | `python/tests/test_types.py` | ✅ Done | |
-| Integration tests | `python/tests/test_integration.py` | ✅ Done | |
-| Code auditor tests | `python/tests/test_code_auditor.py` | ✅ Done | |
-| Rust-side PyO3 tests | `src/python.rs` | ✅ Done | `#[cfg(test)]` |
+| Kernel unit tests | `python/tests/test_kernel.py` | Done | |
+| Type conversion tests | `python/tests/test_types.py` | Done | |
+| Integration tests | `python/tests/test_integration.py` | Done | |
+| Code auditor tests | `python/tests/test_code_auditor.py` | Done | |
+| Rust-side PyO3 tests | `src/python.rs` | Done | `#[cfg(test)]` |
 | Async pattern tests | `python/tests/test_async.py` | ⬜ Pending | run_in_executor |
 | Mypy strict validation | CI | ⬜ Pending | `mypy --strict` |
 
@@ -164,8 +164,7 @@
 
 ## 7. Priority Roadmap
 
-### Phase 1 — Core (Current) ✅
-
+### Phase 1 — Core (Current)
 - [x] Kernel lifecycle (init, shutdown)
 - [x] Agent CRUD (register, unregister, get, list)
 - [x] Policy evaluation (evaluate, add_rule, validate)

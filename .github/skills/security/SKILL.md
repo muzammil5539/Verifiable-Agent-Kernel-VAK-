@@ -11,11 +11,11 @@ This skill provides instructions for performing security audits on the VAK codeb
 
 | ID | Feature | Status | Implementation |
 |----|---------|--------|----------------|
-| SEC-001 | Supply Chain Hardening | ✅ Complete | `.github/workflows/security.yml` |
-| SEC-002 | License Compliance | ✅ Complete | `deny.toml`, CI workflow |
-| SEC-003 | Unsafe Rust Audit | ✅ Complete | `#![deny(unsafe_code)]` + docs |
-| SEC-004 | Prompt Injection Protection | ✅ Complete | `src/reasoner/prompt_injection.rs` |
-| SEC-005 | Rate Limiting | ✅ Complete | `src/kernel/rate_limiter.rs` |
+| SEC-001 | Supply Chain Hardening | Complete | `.github/workflows/security.yml` |
+| SEC-002 | License Compliance | Complete | `deny.toml`, CI workflow |
+| SEC-003 | Unsafe Rust Audit | Complete | `#![deny(unsafe_code)]` + docs |
+| SEC-004 | Prompt Injection Protection | Complete | `src/reasoner/prompt_injection.rs` |
+| SEC-005 | Rate Limiting | Complete | `src/kernel/rate_limiter.rs` |
 
 ## Prerequisites
 

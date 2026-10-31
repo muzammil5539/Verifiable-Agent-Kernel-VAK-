@@ -11,10 +11,10 @@ This skill provides instructions for running tests to verify the correctness and
 
 | ID | Feature | Status | Notes |
 |----|---------|--------|-------|
-| TST-001 | Infinite Loop Preemption Tests | 🟡 Partial | Basic tests in `preemption_tests.rs` |
+| TST-001 | Infinite Loop Preemption Tests | Partial | Basic tests in `preemption_tests.rs` |
 | TST-002 | Memory Containment Tests | ⏳ Pending | Pooling allocator ready |
-| TST-003 | Policy Verification Tests | 🟡 Partial | Cedar tests in `test_cedar_policy.rs` |
-| TST-004 | Integration Test Coverage | ✅ Complete | Full workflow tests |
+| TST-003 | Policy Verification Tests | Partial | Cedar tests in `test_cedar_policy.rs` |
+| TST-004 | Integration Test Coverage | Complete | Full workflow tests |
 | TST-005 | Benchmark Suite Expansion | ⏳ Pending | Basic benchmarks exist |
 | TST-006 | Python SDK Tests | ⏳ Pending | Foundation exists |
 
