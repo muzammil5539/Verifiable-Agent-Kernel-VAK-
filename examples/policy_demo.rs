@@ -12,8 +12,8 @@ use std::collections::HashMap;
 
 // Import policy types from the VAK policy module
 use vak::policy::{
-    ConditionOperator, PolicyCondition, PolicyConfig, PolicyContext, PolicyDecision, PolicyEffect,
-    PolicyEngine, PolicyRule,
+    ConditionOperator, PolicyCondition, PolicyConfig, PolicyContext, PolicyEffect, PolicyEngine,
+    PolicyRule,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -377,22 +377,4 @@ rules:
     println!("\n=== Policy Demo Complete ===");
 
     Ok(())
-}
-
-// Helper: Print a policy decision with formatting
-
-#[allow(dead_code)]
-fn print_decision(description: &str, decision: &PolicyDecision) {
-    let icon = if decision.allowed { "✓" } else { "✗" };
-    let status = if decision.allowed {
-        "ALLOWED"
-    } else {
-        "DENIED"
-    };
-
-    println!("{} {} - {}", icon, status, description);
-    println!("  Reason: {}", decision.reason);
-    if let Some(rule) = &decision.matched_rule {
-        println!("  Matched Rule: {}", rule);
-    }
 }

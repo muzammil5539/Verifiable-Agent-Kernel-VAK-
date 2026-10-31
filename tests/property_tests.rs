@@ -13,52 +13,6 @@ fn arb_agent_name() -> impl Strategy<Value = String> {
     "[a-zA-Z][a-zA-Z0-9_-]{0,31}".prop_map(|s| s)
 }
 
-/// Generate arbitrary tool names
-#[allow(dead_code)]
-fn arb_tool_name() -> impl Strategy<Value = String> {
-    prop_oneof![
-        Just("calculator".to_string()),
-        Just("echo".to_string()),
-        Just("data_processor".to_string()),
-        Just("system_info".to_string()),
-        "[a-z][a-z0-9_]{0,20}".prop_map(|s| s),
-    ]
-}
-
-/// Generate arbitrary JSON values (limited depth)
-#[allow(dead_code)]
-fn arb_json_value() -> impl Strategy<Value = serde_json::Value> {
-    prop_oneof![
-        Just(serde_json::Value::Null),
-        any::<bool>().prop_map(serde_json::Value::Bool),
-        any::<i64>().prop_map(|n| serde_json::json!(n)),
-        any::<f64>()
-            .prop_filter("finite", |f| f.is_finite())
-            .prop_map(|n| serde_json::json!(n)),
-        "[a-zA-Z0-9 ]{0,100}".prop_map(serde_json::Value::String),
-    ]
-}
-
-/// Generate arithmetic operations
-#[allow(dead_code)]
-fn arb_operation() -> impl Strategy<Value = String> {
-    prop_oneof![
-        Just("add".to_string()),
-        Just("subtract".to_string()),
-        Just("multiply".to_string()),
-        Just("divide".to_string()),
-    ]
-}
-
-/// Generate operands for calculator
-#[allow(dead_code)]
-fn arb_operands() -> impl Strategy<Value = Vec<f64>> {
-    prop::collection::vec(
-        any::<f64>().prop_filter("finite", |f| f.is_finite() && f.abs() < 1e15),
-        1..=10,
-    )
-}
-
 // Kernel Type Properties
 
 mod kernel_type_properties {

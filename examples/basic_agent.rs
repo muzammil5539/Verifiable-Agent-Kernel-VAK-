@@ -136,27 +136,3 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-
-// Additional Examples: Error Handling
-
-/// Demonstrates handling common error cases
-#[allow(dead_code)]
-async fn error_handling_examples() -> Result<(), Box<dyn std::error::Error>> {
-    let config = KernelConfig::default();
-    let kernel = Kernel::new(config).await?;
-
-    let agent_id = AgentId::new();
-    let session_id = SessionId::new();
-
-    // Example: Trying to execute a tool
-    let tool_request = ToolRequest::new("some_tool", serde_json::json!({}));
-
-    match kernel.execute(&agent_id, &session_id, tool_request).await {
-        Ok(result) => println!("Tool executed: success={}", result.success),
-        Err(e) => {
-            eprintln!("Error executing tool: {}", e);
-        }
-    }
-
-    Ok(())
-}
