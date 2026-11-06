@@ -220,6 +220,28 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- The sparse Merkle tree (`memory::sparse_merkle`; finding V4, ADR 0015).
+  - **The root commits to every entry.** Every sibling was the empty subtree, so the
+    root committed only to the last key written, and proofs for earlier keys failed.
+    Every node is now derived from its real children, and the root matches a
+    from-scratch reference whatever the insertion order.
+  - **Proofs are checked, not trusted.** `SparseProof::verify` derives each step's
+    direction and level from the key, binds `is_inclusion` to the presence of a
+    value, and requires 64-digit siblings. A forged proof of absence for a present
+    key no longer verifies.
+  - **Hashes.** Leaves are `SHA-256(0x00 ‖ len ‖ key ‖ len ‖ value)` and nodes
+    `SHA-256(0x01 ‖ left ‖ right)`. Keys containing `:` no longer collide.
+  - **Shared positions.** A tree shallower than 256 refuses a key whose leaf position
+    another key holds (`SparseMerkleError::KeyCollision`), rather than share it.
+  - **Removal.** `remove` restores the root the tree had without the key.
+  - **Import.** `from_export` rebuilds from the exported entries and refuses an
+    export whose root they don't produce (`CorruptExport`).
+  - **Breaking:**
+    - `insert` and `from_export` return `Result`.
+    - `SparseMerkleExport` has `entries` in place of `leaves`.
+    - `SparseMerkleError` is `#[non_exhaustive]`.
+    - `with_depth` keeps the depth between 1 and 256.
+    - Every root and leaf hash changes.
 - **Breaking:** the Python SDK answers only from the kernel (finding I4, ADR 0011).
   - **What goes through the kernel.** `evaluate_policy`, `list_tools`, the audit-log
     methods (`get_audit_logs`, `get_audit_entry`, `verify_audit_chain`,

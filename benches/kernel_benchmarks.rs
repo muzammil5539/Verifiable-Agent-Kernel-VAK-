@@ -1054,7 +1054,7 @@ fn bench_sparse_merkle(c: &mut Criterion) {
             let mut tree = SparseMerkleTree::new();
             let mut i = 0u64;
             b.iter(|| {
-                tree.insert(&format!("key_{}", i), format!("value_{}", i).as_bytes());
+                let _ = tree.insert(&format!("key_{}", i), format!("value_{}", i).as_bytes());
                 i += 1;
             })
         });
@@ -1063,7 +1063,7 @@ fn bench_sparse_merkle(c: &mut Criterion) {
         group.bench_function("get_from_1000", |b| {
             let mut tree = SparseMerkleTree::new();
             for i in 0..1000 {
-                tree.insert(&format!("key_{}", i), format!("value_{}", i).as_bytes());
+                let _ = tree.insert(&format!("key_{}", i), format!("value_{}", i).as_bytes());
             }
             b.iter(|| black_box(tree.get("key_500")))
         });
@@ -1072,7 +1072,7 @@ fn bench_sparse_merkle(c: &mut Criterion) {
         group.bench_function("generate_proof", |b| {
             let mut tree = SparseMerkleTree::new();
             for i in 0..100 {
-                tree.insert(&format!("key_{}", i), format!("value_{}", i).as_bytes());
+                let _ = tree.insert(&format!("key_{}", i), format!("value_{}", i).as_bytes());
             }
             b.iter(|| black_box(tree.generate_proof("key_50").unwrap()))
         });
@@ -1081,7 +1081,7 @@ fn bench_sparse_merkle(c: &mut Criterion) {
         group.bench_function("verify_proof", |b| {
             let mut tree = SparseMerkleTree::new();
             for i in 0..100 {
-                tree.insert(&format!("key_{}", i), format!("value_{}", i).as_bytes());
+                let _ = tree.insert(&format!("key_{}", i), format!("value_{}", i).as_bytes());
             }
             let proof = tree.generate_proof("key_50").unwrap();
             b.iter(|| black_box(tree.verify_proof(&proof)))

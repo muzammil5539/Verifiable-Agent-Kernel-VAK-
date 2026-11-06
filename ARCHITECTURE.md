@@ -321,7 +321,7 @@ Three-tier hierarchical memory with cryptographic integrity.
 | `VectorStore` | `vector_store.rs` | Embedding-based semantic search |
 | `KnowledgeGraph` | `knowledge_graph.rs` | Entity-relationship graph (`petgraph`) |
 | `ContentAddressableStore` | `content_addressable.rs` | Hash-based CAS |
-| `SparseMerkleTree` | `sparse_merkle.rs` | Efficient inclusion/exclusion proofs |
+| `SparseMerkleTree` | `sparse_merkle.rs` | Inclusion and exclusion proofs over a key-value map; proofs checked against the key (ADR 0015) |
 | `TimeTravelDebugger` | `time_travel.rs` | Snapshot and rollback to any previous state |
 | `SecretScrubber` | `secret_scrubber.rs` | Redacts secrets before storage |
 | `MemorySnapshot` | `snapshot_backend.rs` | State checkpoint persistence |

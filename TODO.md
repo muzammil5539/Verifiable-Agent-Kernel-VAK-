@@ -21,6 +21,13 @@ that language is exactly how the gap went unnoticed for thirteen sprints.
 
 ## Done (verified, not just present)
 
+- [x] The sparse Merkle tree (`docs/adr/0015`, finding V4). Every node is
+      derived from its real children, and the root matches a from-scratch
+      reference. Proofs are checked against the key, not trusted, so a present
+      key can't be proved absent. A shallow tree refuses a shared position, and
+      an import checks its root. The tree isn't on `Kernel::execute`'s path, so
+      its tests are unit tests (`src/memory/sparse_merkle.rs`).
+
 - [x] Information-flow labels (`docs/adr/0014`), driven through `Kernel::execute`
       and `Kernel::execute_labeled` in `tests/ifc_labels.rs`. With
       `policy.labels.enabled`:

@@ -68,7 +68,7 @@ stub or a placeholder.
 | V1 | Zero-knowledge proofs of policy compliance | Not a proof system: the verifier accepts any well-formed 64-hex response. (Already flagged in the module docs; still exported and documented as a feature.) | `src/reasoner/zk_proof.rs:46-60,640` | S1 |
 | V2 | Z3 formal verification | Every variable is pinned to its concrete value and then checked for SAT. That is evaluation of one input, which needs no solver; it proves nothing about other inputs. Field names and string values are spliced into SMT-LIB unescaped (**SMT injection**). `Matches` uses `str.to.re`, which matches the regex *literally*. `Forbidden` translates to `true`, so `verify` reports it satisfied for any resource. Lists are declared as `Int`, and negative numbers are emitted as `-n`, which isn't an SMT-LIB numeral. | `src/reasoner/z3_verifier.rs:376-430` | S1 |
 | V3 | Datalog safety engine (Crepe-style) | Not Datalog: a list of Rust closures, with no fixpoint, no recursion, no negation semantics. Facts matched by exact string, so `/etc//shadow` or `/etc/../etc/shadow` bypassed the `/etc/shadow` rule. **Bypass fixed:** paths are canonicalised lexically (`canonical_path`: separators, `.`, `..`, NUL cut) on both facts and targets, system paths match by whole component (`/etcetera` is not under `/etc`), and a relative sensitive pattern such as `.env` matches in any directory. Symlinks are not resolved, since that needs the filesystem. **Still open:** the engine is closures, not Datalog, so it stays Heuristic until the Ascent port. | `src/reasoner/datalog.rs:486-560,846` | S1 |
-| V4 | Sparse Merkle proofs (MEM-002) | `get_sibling_hash` always returns the empty-subtree hash, so the root commits only to the last key written. Earlier keys can change without changing the root. | `src/memory/sparse_merkle.rs:442` | S1 |
+| V4 | Sparse Merkle proofs (MEM-002) | `get_sibling_hash` always returns the empty-subtree hash, so the root commits only to the last key written. Earlier keys can change without changing the root. `verify` also trusted the proof's own directions, so an exclusion proof for one key could be relabelled to "prove" a present key absent; leaf hashes collided across `:`; a shallow tree let two keys share a leaf; `from_export` trusted the exported root. **Fixed** (ADR 0015): every node is derived from its real children, matching a from-scratch reference; `verify` derives directions, levels and the inclusion flag from the key; leaves and nodes are domain-separated and length-prefixed; a shared position is refused; an import rebuilds and checks its root. | `src/memory/sparse_merkle.rs` | S1 |
 | V5 | Merkle-verified state tier | Leaves are hashed with `std::collections::hash_map::DefaultHasher` (64-bit SipHash, non-cryptographic). Keys aren't committed, only values. Proofs carry no siblings and verify only for single-element trees. | `src/memory/mod.rs:298-320,682-700` | S1 |
 
 ### 2.3 Reasoning, memory, swarm, interop
@@ -315,7 +315,9 @@ level** once implemented.
 - **Sparse Merkle trees.** Use a known-correct construction: Dahlberg, Pulls and
   Peeters' efficient SMT (2016), or the Jellyfish Merkle Tree used by Diem/Aptos. Every
   internal node on a path must be derived from real siblings (fixes V4). Leaves commit
-  to `(key, value)` with domain separation, using SHA-256 (fixes V5).
+  to `(key, value)` with domain separation, using SHA-256 (fixes V5). As built (ADR
+  0015): the standard construction with precomputed empty subtrees, checked against a
+  from-scratch reference; proofs are checked against the key, not trusted.
 - **Append-only episodic memory** is a log, so it reuses the §4.2 transparency log
   rather than a separate Merkle chain.
 - **Vector search.** Brute force is fine below about 10⁵ vectors. Above that, an HNSW
@@ -628,7 +630,8 @@ phase's exit criterion.
       decision's audit entry records each verdict and level. No adapters yet.
 - Guard adapters: the constitution (core, Enforced), the prompt-injection detector
   (Heuristic); Datalog rules on Ascent with canonical paths.
-- Correct sparse Merkle tree (V4); episodic memory on the transparency log.
+- [x] Correct sparse Merkle tree (V4, ADR 0015).
+- Episodic memory on the transparency log.
 - Exit criterion: on AgentDojo, attack success rate with VAK IFC policies is ≤ the
   published CaMeL and Progent numbers, at equal or better utility.
 
