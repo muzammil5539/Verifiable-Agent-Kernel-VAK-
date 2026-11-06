@@ -14,6 +14,10 @@
 //! | resource | `Vak::Tool::"<tool>"`, with `restricted` and `builtin` |
 //! | context | `{ session, arguments }`; `arguments` is `{}` for the generic `call` |
 //!
+//! With `policy.labels.enabled` (docs/adr/0016), the context also carries
+//! `labels`, the information-flow label of the call's arguments, and the tool
+//! carries `external`. A schema declares both, required, or neither.
+//!
 //! The schema is the contract for all of it. A policy that doesn't validate
 //! against the schema fails the load; a request that doesn't match it is
 //! denied. So is a request on which any policy fails to evaluate: Cedar
@@ -33,6 +37,8 @@ use cedar_policy::{
 };
 use serde_json::{json, Value};
 use thiserror::Error;
+
+use crate::kernel::ifc::{Label, Readers};
 
 #[cfg(feature = "cedar-analysis")]
 pub mod analysis;
@@ -131,6 +137,12 @@ pub struct CedarRequest<'a> {
     pub session: &'a str,
     /// The call's arguments. Passed only to an action declared for the tool.
     pub arguments: &'a Value,
+    /// The information-flow label of the call's arguments (docs/adr/0016).
+    /// Supplied as `context.labels`, together with the tool's `external`
+    /// attribute; `None` supplies neither.
+    pub labels: Option<&'a Label>,
+    /// The tool is in `policy.labels.external`. Supplied only with `labels`.
+    pub external: bool,
 }
 
 /// How Cedar decided a call.
@@ -178,6 +190,9 @@ pub struct CedarPolicySet {
     tool_actions: BTreeSet<String>,
     /// Policy ids, for reporting.
     ids: BTreeSet<String>,
+    /// The schema declares `context.labels` and `Tool.external`, so every
+    /// call must carry them (docs/adr/0016).
+    labelled: bool,
 }
 
 impl CedarPolicySet {
@@ -213,6 +228,7 @@ impl CedarPolicySet {
         schema: &str,
         sources: &[(String, String)],
     ) -> Result<Self, CedarPolicyError> {
+        let schema_source = schema;
         #[cfg(feature = "cedar-analysis")]
         let schema_text = schema.to_string();
         let (schema, warnings) = Schema::from_cedarschema_str(schema)
@@ -284,15 +300,16 @@ impl CedarPolicySet {
             .filter(|name| name != CALL_ACTION)
             .collect();
 
-        let set = Self {
+        let mut set = Self {
             schema,
             #[cfg(feature = "cedar-analysis")]
             schema_text,
             policies,
             tool_actions,
             ids,
+            labelled: false,
         };
-        set.check_contract()?;
+        set.labelled = set.check_contract(schema_source)?;
         Ok(set)
     }
 
@@ -304,6 +321,14 @@ impl CedarPolicySet {
     /// The tools the schema declares their own action for.
     pub fn tool_actions(&self) -> impl Iterator<Item = &str> {
         self.tool_actions.iter().map(String::as_str)
+    }
+
+    /// Whether the schema declares `context.labels` and `Tool.external`, so
+    /// that every call must carry a label (docs/adr/0016). The kernel's
+    /// `policy.labels.enabled` must agree, or every call is denied.
+    #[must_use]
+    pub fn takes_labels(&self) -> bool {
+        self.labelled
     }
 
     /// Decides one call.
@@ -369,17 +394,42 @@ impl CedarPolicySet {
         arguments: Value,
     ) -> Result<(Request, Entities), String> {
         let action = uid("Action", action_name)?;
-        let context = Context::from_json_value(
-            json!({ "session": call.session, "arguments": arguments }),
-            Some((&self.schema, &action)),
-        )
-        .map_err(|e| {
+        let context = self.context(&action, call, arguments, call.labels)?;
+        let entities = self.entities(call, call.labels.map(|_| call.external))?;
+        let principal = uid("Agent", call.agent_id)?;
+        let resource = uid("Tool", call.tool)?;
+        let request = Request::new(principal, action, resource, context, Some(&self.schema))
+            .map_err(|e| format!("the request doesn't match the schema: {}", error_chain(&e)))?;
+        Ok((request, entities))
+    }
+
+    /// The context of a call to `action`, with `labels` if given.
+    fn context(
+        &self,
+        action: &EntityUid,
+        call: &CedarRequest<'_>,
+        arguments: Value,
+        labels: Option<&Label>,
+    ) -> Result<Context, String> {
+        let mut context = json!({ "session": call.session, "arguments": arguments });
+        if let (Some(label), Some(map)) = (labels, context.as_object_mut()) {
+            map.insert("labels".to_string(), label_json(label));
+        }
+        Context::from_json_value(context, Some((&self.schema, action))).map_err(|e| {
             format!(
                 "the call doesn't match the schema for {action}: {}",
                 error_chain(&e)
             )
-        })?;
+        })
+    }
 
+    /// The principal and resource entities of a call, the tool with
+    /// `external` if given.
+    fn entities(
+        &self,
+        call: &CedarRequest<'_>,
+        external: Option<bool>,
+    ) -> Result<Entities, String> {
         // The record's attributes first, so they can't override what the
         // kernel itself knows.
         let mut agent_attrs: serde_json::Map<String, Value> = call
@@ -392,10 +442,12 @@ impl CedarPolicySet {
             "name".to_string(),
             Value::String(call.agent_name.to_string()),
         );
+        let mut tool_attrs = json!({ "restricted": call.restricted, "builtin": call.builtin });
+        if let (Some(external), Some(map)) = (external, tool_attrs.as_object_mut()) {
+            map.insert("external".to_string(), Value::Bool(external));
+        }
 
-        let principal = uid("Agent", call.agent_id)?;
-        let resource = uid("Tool", call.tool)?;
-        let entities = Entities::from_json_value(
+        Entities::from_json_value(
             json!([
                 {
                     "uid": { "type": format!("{NAMESPACE}::Agent"), "id": call.agent_id },
@@ -404,7 +456,7 @@ impl CedarPolicySet {
                 },
                 {
                     "uid": { "type": format!("{NAMESPACE}::Tool"), "id": call.tool },
-                    "attrs": { "restricted": call.restricted, "builtin": call.builtin },
+                    "attrs": tool_attrs,
                     "parents": [],
                 },
             ]),
@@ -415,18 +467,71 @@ impl CedarPolicySet {
                 "the agent or tool doesn't match the schema: {}",
                 error_chain(&e)
             )
-        })?;
-
-        let request = Request::new(principal, action, resource, context, Some(&self.schema))
-            .map_err(|e| format!("the request doesn't match the schema: {}", error_chain(&e)))?;
-        Ok((request, entities))
+        })
     }
 
     /// Checks that the schema accepts a generic call with what the kernel
-    /// always supplies.
-    fn check_contract(&self) -> Result<(), CedarPolicyError> {
+    /// supplies, and returns whether that includes labels.
+    ///
+    /// A schema takes labels if every action that applies to requests
+    /// declares `context.labels` and `Tool` declares `external`, all
+    /// required. It takes none if it declares none of them. Anything in
+    /// between is refused:
+    ///
+    /// - **Optional declarations.** An optional declaration would let a
+    ///   `has`-guarded forbid skip, silently, every call that doesn't carry
+    ///   labels.
+    /// - **Partial declarations.** Labels on some actions and not others
+    ///   can't be supplied whole.
+    fn check_contract(&self, schema_text: &str) -> Result<bool, CedarPolicyError> {
+        let declared = label_declarations(schema_text).map_err(CedarPolicyError::Contract)?;
+        let mut optional: Vec<String> = declared
+            .actions
+            .iter()
+            .filter(|(_, labels)| *labels == Some(false))
+            .map(|(action, _)| format!("context.labels of {action}"))
+            .collect();
+        if declared.external == Some(false) {
+            optional.push("Tool.external".to_string());
+        }
+        if !optional.is_empty() {
+            return Err(CedarPolicyError::Contract(format!(
+                "{} declared optional; declare context.labels on every action and \
+                 Tool.external, all required, or none of them (docs/adr/0016)",
+                optional.join(", ")
+            )));
+        }
+
+        let with: Vec<&str> = declared
+            .actions
+            .iter()
+            .filter(|(_, labels)| labels.is_some())
+            .map(|(action, _)| action.as_str())
+            .collect();
+        let labelled = match (declared.external.is_some(), with.len()) {
+            (true, n) if n == declared.actions.len() => true,
+            (false, 0) => false,
+            (external, _) => {
+                let without: Vec<&str> = declared
+                    .actions
+                    .iter()
+                    .filter(|(_, labels)| labels.is_none())
+                    .map(|(action, _)| action.as_str())
+                    .collect();
+                return Err(CedarPolicyError::Contract(format!(
+                    "labels are declared only in part (Tool.external {}; context.labels on \
+                     [{}], not on [{}]); declare context.labels on every action and \
+                     Tool.external, or none of them (docs/adr/0016)",
+                    if external { "declared" } else { "not declared" },
+                    with.join(", "),
+                    without.join(", ")
+                )));
+            }
+        };
+
         let attributes = HashMap::new();
         let arguments = json!({});
+        let label = Label::trusted();
         let probe = CedarRequest {
             agent_id: "contract-check",
             agent_name: "contract-check",
@@ -437,11 +542,131 @@ impl CedarPolicySet {
             builtin: false,
             session: "contract-check",
             arguments: &arguments,
+            labels: labelled.then_some(&label),
+            external: false,
         };
         self.build_as(&probe, CALL_ACTION, json!({}))
-            .map(|_| ())
+            .map(|_| labelled)
             .map_err(CedarPolicyError::Contract)
     }
+}
+
+/// Where a schema declares labels: for each of its actions that applies to
+/// requests, whether its context declares `labels` (`Some(required)`), and
+/// the same for `Tool.external`.
+struct LabelDeclarations {
+    actions: Vec<(String, Option<bool>)>,
+    external: Option<bool>,
+}
+
+/// Reads the label declarations from the schema's JSON form.
+///
+/// # Errors
+///
+/// A description, if the schema doesn't convert or an action's context or
+/// `Tool`'s shape can't be resolved to a record: the kernel can't tell
+/// whether it declares labels.
+fn label_declarations(schema_text: &str) -> Result<LabelDeclarations, String> {
+    let (fragment, _) = cedar_policy::SchemaFragment::from_cedarschema_str(schema_text)
+        .map_err(|e| error_chain(&e))?;
+    let json = fragment.to_json_value().map_err(|e| error_chain(&e))?;
+    let Some(namespace) = json.get(NAMESPACE) else {
+        // Nothing the kernel supplies is declared; the contract probe says
+        // what's missing.
+        return Ok(LabelDeclarations {
+            actions: Vec::new(),
+            external: None,
+        });
+    };
+
+    let mut actions = Vec::new();
+    if let Some(declared) = namespace.get("actions").and_then(Value::as_object) {
+        for (name, action) in declared {
+            let applies = action.get("appliesTo");
+            let principals = applies
+                .and_then(|a| a.get("principalTypes"))
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            if principals == 0 {
+                // An action group: no request is ever made for it.
+                continue;
+            }
+            let labels = match applies.and_then(|a| a.get("context")) {
+                None => None,
+                Some(context) => {
+                    let record = resolve_record(namespace, context).ok_or_else(|| {
+                        format!("can't resolve the context type of action \"{name}\"")
+                    })?;
+                    attribute(record, "labels")
+                }
+            };
+            actions.push((format!("Vak::Action::\"{name}\""), labels));
+        }
+    }
+
+    let external = match namespace.get("entityTypes").and_then(|t| t.get("Tool")) {
+        None => None,
+        Some(tool) => match tool.get("shape") {
+            None => None,
+            Some(shape) => {
+                let record = resolve_record(namespace, shape)
+                    .ok_or_else(|| "can't resolve the shape of Tool".to_string())?;
+                attribute(record, "external")
+            }
+        },
+    };
+
+    Ok(LabelDeclarations { actions, external })
+}
+
+/// `ty` as a record type, following references to the namespace's common
+/// types. `None` if it doesn't resolve to a record.
+fn resolve_record<'a>(namespace: &'a Value, mut ty: &'a Value) -> Option<&'a Value> {
+    for _ in 0..16 {
+        let kind = ty.get("type")?.as_str()?;
+        if kind == "Record" {
+            return Some(ty);
+        }
+        let name = if kind == "EntityOrCommon" {
+            ty.get("name")?.as_str()?
+        } else {
+            kind
+        };
+        let name = name
+            .strip_prefix(NAMESPACE)
+            .and_then(|n| n.strip_prefix("::"))
+            .unwrap_or(name);
+        ty = namespace.get("commonTypes")?.get(name)?;
+    }
+    None
+}
+
+/// Whether `record` declares `name`: `Some(required)`, or `None`.
+fn attribute(record: &Value, name: &str) -> Option<bool> {
+    let declared = record.get("attributes")?.get(name)?;
+    Some(
+        declared
+            .get("required")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+    )
+}
+
+/// A label as Cedar policies read it: `{ integrity, public, readers,
+/// sources }`. `integrity` is `"trusted"` or `"untrusted"`; `readers` is
+/// empty when `public` is true.
+fn label_json(label: &Label) -> Value {
+    let readers: Vec<&str> = match &label.readers {
+        Readers::Public => Vec::new(),
+        Readers::Only(readers) => readers.iter().map(String::as_str).collect(),
+    };
+    let sources: Vec<String> = label.sources.iter().map(ToString::to_string).collect();
+    json!({
+        "integrity": label.integrity.as_str(),
+        "public": label.readers.is_public(),
+        "readers": readers,
+        "sources": sources,
+    })
 }
 
 /// `(file name, contents)` for each policy file in `paths`. A directory
@@ -531,6 +756,8 @@ mod tests {
     const PAYMENTS_SCHEMA: &str =
         include_str!("../../../policies/cedar/examples/payments.cedarschema");
     const PAYMENTS_POLICIES: &str = include_str!("../../../policies/cedar/examples/payments.cedar");
+    const LABELS_SCHEMA: &str = include_str!("../../../policies/cedar/examples/labels.cedarschema");
+    const LABELS_POLICIES: &str = include_str!("../../../policies/cedar/examples/labels.cedar");
 
     fn set(schema: &str, policies: &str) -> CedarPolicySet {
         CedarPolicySet::from_sources(schema, &[("test.cedar".to_string(), policies.to_string())])
@@ -548,6 +775,8 @@ mod tests {
         internal: bool,
         attributes: HashMap<String, Value>,
         arguments: Value,
+        labels: Option<Label>,
+        external: bool,
     }
 
     impl Call {
@@ -558,6 +787,8 @@ mod tests {
                 internal: false,
                 attributes: HashMap::new(),
                 arguments: json!({}),
+                labels: None,
+                external: false,
             }
         }
 
@@ -572,8 +803,152 @@ mod tests {
                 builtin: false,
                 session: "session-1",
                 arguments: &self.arguments,
+                labels: self.labels.as_ref(),
+                external: self.external,
             })
         }
+    }
+
+    fn contract_error(schema: &str) -> String {
+        match load_error(
+            schema,
+            r#"@id("allow") permit (principal, action, resource);"#,
+        ) {
+            CedarPolicyError::Contract(message) => message,
+            other => panic!("expected a contract error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_a_schema_takes_labels_whole_or_not_at_all() {
+        assert!(set(LABELS_SCHEMA, LABELS_POLICIES).takes_labels());
+        assert!(!set(VAK_SCHEMA, DEFAULT_POLICIES).takes_labels());
+
+        // Optional declarations would let a `has`-guarded forbid skip calls
+        // made while labels are off.
+        let optional_context = LABELS_SCHEMA.replacen("labels: Labels }", "labels?: Labels }", 1);
+        assert_ne!(optional_context, LABELS_SCHEMA);
+        assert!(contract_error(&optional_context).contains("optional"));
+        let optional_tool = LABELS_SCHEMA.replace("external: Bool", "external?: Bool");
+        assert!(contract_error(&optional_tool).contains("optional"));
+
+        // An action group applies to no request, so it needs no labels.
+        let with_group =
+            LABELS_SCHEMA.replacen("namespace Vak {", "namespace Vak {\n  action \"mail\";", 1);
+        assert!(set(&with_group, LABELS_POLICIES).takes_labels());
+
+        // A context given as a common type is read through it.
+        let via_type = VAK_SCHEMA.replacen(
+            "context: { session: String, arguments: {} },",
+            "context: Ctx,",
+            1,
+        )
+        .replacen(
+            "namespace Vak {",
+            "namespace Vak {\n  type Ctx = { session: String, arguments: {}, labels?: { integrity: String } };",
+            1,
+        );
+        assert!(contract_error(&via_type).contains("optional"));
+
+        // One without the other can't be supplied whole.
+        let no_external = LABELS_SCHEMA.replace("external: Bool,", "");
+        assert!(contract_error(&no_external).contains("only in part"));
+        let no_context = LABELS_SCHEMA.replacen(", labels: Labels }", " }", 1);
+        assert!(contract_error(&no_context).contains("only in part"));
+    }
+
+    fn labelled(integrity: &str, readers: Option<&[&str]>) -> Label {
+        let mut label = Label::trusted();
+        if integrity == "untrusted" {
+            label = label.with_integrity(crate::kernel::ifc::Integrity::Untrusted);
+        }
+        if let Some(readers) = readers {
+            label = label.with_readers(Readers::only(readers.iter().copied()));
+        }
+        label
+    }
+
+    #[test]
+    fn test_policies_decide_on_labels() {
+        let policies = set(LABELS_SCHEMA, LABELS_POLICIES);
+        let mail = |to: &str, label: Label| Call {
+            arguments: json!({"to": to, "body": "hi"}),
+            labels: Some(label),
+            external: true,
+            ..Call::to("send_email")
+        };
+
+        assert!(mail("bob", labelled("trusted", None))
+            .decide(&policies)
+            .is_allowed());
+        assert_eq!(
+            mail("bob", labelled("untrusted", None)).decide(&policies),
+            CedarDecision::Forbid {
+                policies: vec!["no-external-call-on-untrusted-arguments".to_string()]
+            }
+        );
+        assert!(mail("alice", labelled("trusted", Some(&["alice"])))
+            .decide(&policies)
+            .is_allowed());
+        assert_eq!(
+            mail("bob", labelled("trusted", Some(&["alice"]))).decide(&policies),
+            CedarDecision::Forbid {
+                policies: vec!["email-only-to-allowed-readers".to_string()]
+            }
+        );
+
+        // A generic call reads labels too, and an internal tool may take
+        // untrusted data.
+        let fetch = |external, label| Call {
+            labels: Some(label),
+            external,
+            ..Call::to("fetch")
+        };
+        assert!(!fetch(true, labelled("untrusted", None))
+            .decide(&policies)
+            .is_allowed());
+        assert!(fetch(false, labelled("untrusted", None))
+            .decide(&policies)
+            .is_allowed());
+
+        // Without a label the call doesn't match the schema.
+        assert!(matches!(
+            Call::to("fetch").decide(&policies),
+            CedarDecision::Error { .. }
+        ));
+    }
+
+    #[test]
+    fn test_labels_declared_on_some_actions_only_are_refused() {
+        let with_action = |labels: &str| {
+            VAK_SCHEMA.replacen(
+                "namespace Vak {",
+                &format!(
+                    r#"namespace Vak {{
+  type Ctx = {{ session: String, arguments: {{ to: String }}, {labels} }};
+  action "send_email" in ["call"] appliesTo {{
+    principal: Agent,
+    resource: Tool,
+    context: Ctx,
+  }};"#
+                ),
+                1,
+            )
+        };
+        // A tool's own action declaring labels, optional, while the generic
+        // action doesn't: calls to it would never carry them, and a
+        // `has`-guarded forbid on them would never fire.
+        let optional = contract_error(&with_action("labels?: { integrity: String }"));
+        assert!(optional.contains("send_email"), "{optional}");
+        assert!(optional.contains("optional"), "{optional}");
+
+        // Required on one action only.
+        let partial = contract_error(&with_action("labels: { integrity: String }"));
+        assert!(partial.contains("only in part"), "{partial}");
+
+        // Declaring nothing on the tool's action is fine.
+        let plain = set(&with_action("note?: String"), DEFAULT_POLICIES);
+        assert!(!plain.takes_labels());
     }
 
     #[test]

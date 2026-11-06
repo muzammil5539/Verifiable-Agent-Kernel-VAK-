@@ -268,7 +268,11 @@ level** once implemented.
   - **Where labels go.** YAML rules read `context.args_integrity`, `args_public`,
     `args_readers`, `args_sources` and `resource.external`, and guards see the label
     too. Decision and outcome entries record it.
-  - **Cedar** gets labels in a later slice.
+  - **Cedar (ADR 0016).** Cedar reads the label as `context.labels`, and
+    `resource.external`, when the schema declares them on every action, all required.
+    The setting and the schema must agree, or every call is denied. SymCC proves the
+    example's rules (`policies/cedar/examples/labels.*`), e.g. that no external call on
+    untrusted arguments is ever allowed.
 
 ### 4.5 Neuro-symbolic reasoning: rename honestly, then make each piece real
 
@@ -537,7 +541,7 @@ let proof = kernel.prove_audit_inclusion(0).await?;  // anyone can verify
 | Datalog | Heuristic (exact strings) | Heuristic (documented) | Ascent: Enforced |
 | PRM / ToT | Heuristic (LLM judge) | Heuristic (documented) | trained PRM + calibration |
 | Prompt-injection | Heuristic (regex) | Heuristic | IFC labels: Enforced |
-| IFC labels | none | **Enforced for propagation inside the kernel (2d)**, per agent; only as good as the framework's declared labels and agent identities | value handles for per-argument precision; Cedar policies read labels |
+| IFC labels | none | **Enforced for propagation inside the kernel (2d)**, per agent; only as good as the framework's declared labels and agent identities | value handles for per-argument precision |
 | ZK proofs | unsound | unsound (documented, not default) | zkVM research track |
 | Swarm consensus | unauthenticated tally | unchanged | signed `QuorumVote` |
 
@@ -619,8 +623,9 @@ phase's exit criterion.
       policies and guards read it. `Kernel::execute_labeled` and `Labeled<T>` declare
       labels for data the kernel never returned; declared labels only raise. Unlisted
       tools are untrusted. Decision and outcome entries record the labels.
-- Cedar policies read labels (`context.labels`, `Tool.external`), with a schema
-  contract check.
+- [x] Cedar policies read labels (ADR 0016): `context.labels` and `Tool.external`,
+      declared whole or not at all; SymCC proves the example's information-flow
+      properties.
 - The AgentDojo harness as a benchmark, and value handles for per-argument labels.
 - [x] Slice 2c (ADR 0013): the `Guard` port with assurance levels. `Kernel::execute`
       runs each guard added with `KernelBuilder::with_guard` on calls the policy

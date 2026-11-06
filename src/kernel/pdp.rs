@@ -97,9 +97,16 @@ fn cedar_from_config(config: &KernelConfig) -> Arc<dyn PolicyDecisionPoint> {
         &config.policy.policy_paths,
     ) {
         Ok(policies) => {
+            if let Some(reason) =
+                labels_mismatch(config.policy.labels.enabled, policies.takes_labels())
+            {
+                tracing::error!(%reason, "Cedar policies can't decide - kernel will deny all requests");
+                return Arc::new(DenyAll::new(reason));
+            }
             info!(
                 policies = policies.policy_ids().count(),
                 tool_actions = policies.tool_actions().count(),
+                labels = policies.takes_labels(),
                 "Loaded Cedar policies"
             );
             Arc::new(CedarPolicy::new(policies, config))
@@ -108,6 +115,26 @@ fn cedar_from_config(config: &KernelConfig) -> Arc<dyn PolicyDecisionPoint> {
             tracing::error!(error = %e, "Failed to load Cedar policies - kernel will deny all requests");
             Arc::new(DenyAll::new(format!("Cedar policies failed to load: {e}")))
         }
+    }
+}
+
+/// Why Cedar policies can't decide when `policy.labels.enabled` is
+/// `labels_on` and their schema `takes_labels`, or `None` if the two agree
+/// (docs/adr/0016).
+#[cfg(feature = "cedar")]
+fn labels_mismatch(labels_on: bool, takes_labels: bool) -> Option<String> {
+    match (labels_on, takes_labels) {
+        (true, false) => Some(
+            "policy.labels.enabled is on, but the Cedar schema doesn't declare context.labels \
+             and Tool.external, so its policies can't read labels"
+                .to_string(),
+        ),
+        (false, true) => Some(
+            "the Cedar schema declares context.labels and Tool.external, but \
+             policy.labels.enabled is off, so no call carries them"
+                .to_string(),
+        ),
+        _ => None,
     }
 }
 
@@ -390,7 +417,9 @@ impl PolicyDecisionPoint for DenyAll {
 ///
 /// The principal's attributes come from its agent record, and the tool's
 /// from config: `restricted` from `security.blocked_tools`, `builtin` from
-/// the kernel's built-in tools. Anything Cedar can't decide cleanly (a call
+/// the kernel's built-in tools. With `policy.labels.enabled`, the schema
+/// must declare `context.labels` and `Tool.external`, and every call
+/// carries them; without, it must declare neither (docs/adr/0016). Anything Cedar can't decide cleanly (a call
 /// that doesn't match the schema, a policy that fails to evaluate) is denied.
 ///
 /// The policy set can be replaced while the kernel runs. Each decision uses
@@ -408,6 +437,8 @@ pub struct CedarPolicy {
     reloading: tokio::sync::Mutex<()>,
     blocked_tools: Vec<String>,
     constraints: Option<Vec<String>>,
+    /// `policy.labels`, when enabled (docs/adr/0016).
+    labels: Option<LabelConfig>,
 }
 
 #[cfg(feature = "cedar")]
@@ -421,6 +452,11 @@ impl CedarPolicy {
             reloading: tokio::sync::Mutex::new(()),
             blocked_tools: config.security.blocked_tools.clone(),
             constraints: execution_constraints(config),
+            labels: config
+                .policy
+                .labels
+                .enabled
+                .then(|| config.policy.labels.clone()),
         }
     }
 
@@ -503,7 +539,30 @@ impl PolicyDecisionPoint for CedarPolicy {
             None => ("", false, &no_attributes),
         };
 
-        let decision = self.policies.load().authorize(&CedarRequest {
+        let policies = self.policies.load();
+        if let Some(reason) = labels_mismatch(self.labels.is_some(), policies.takes_labels()) {
+            tracing::error!(tool = %tool, %reason, "Cedar can't decide - denying");
+            return PolicyDecision::Deny {
+                reason,
+                violated_policies: Some(vec!["policy.labels".to_string()]),
+            };
+        }
+        // With labels on, the schema requires them: a call without one
+        // isn't one the policies can decide.
+        let labels = match (&self.labels, req.labels) {
+            (Some(_), None) => {
+                return PolicyDecision::Deny {
+                    reason: "the call carries no information-flow label, and the Cedar policies \
+                             decide only labelled calls"
+                        .to_string(),
+                    violated_policies: Some(vec!["policy.labels".to_string()]),
+                }
+            }
+            (Some(_), labels) => labels,
+            (None, _) => None,
+        };
+
+        let decision = policies.authorize(&CedarRequest {
             agent_id: &agent_id,
             agent_name,
             internal,
@@ -513,6 +572,8 @@ impl PolicyDecisionPoint for CedarPolicy {
             builtin: BUILTIN_TOOLS.contains(&tool.as_str()),
             session: &session,
             arguments: &req.request.parameters,
+            labels,
+            external: self.labels.as_ref().is_some_and(|l| l.is_external(tool)),
         });
 
         match decision {

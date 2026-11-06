@@ -116,7 +116,7 @@
 //! |-----------|-------|-------|
 //! | Kernel mediation | Enforced | Default deny; unknown tools fail closed |
 //! | Guard stage | Enforced, for the stage | Guards only narrow; a guard that fails denies; `policy.min_assurance` counts only guard passes. Each guard's own check is at the level it declares; no adapters ship yet (ADR 0013) |
-//! | Information-flow labels (`policy.labels`) | Enforced, for propagation inside the kernel | Per-agent context labels that only rise; YAML policies and guards read them. Only as good as the framework's declared labels and agent identities; off by default (ADR 0014) |
+//! | Information-flow labels (`policy.labels`) | Enforced, for propagation inside the kernel | Per-agent context labels that only rise; YAML and Cedar policies and guards read them (ADR 0016 for Cedar). Only as good as the framework's declared labels and agent identities; off by default (ADR 0014) |
 //! | Policy (`CedarEnforcer`, YAML) | Enforced | Cedar-style, not the `cedar-policy` engine |
 //! | Policy (`CedarPolicy`, feature `cedar`) | Enforced | The `cedar-policy` engine; schema-validated; errors deny |
 //! | Policy analysis (feature `cedar-analysis`) | Enforced, for the properties stated | SymCC with cvc5: ceilings, floors, never-errors, no-widening reloads |

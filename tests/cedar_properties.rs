@@ -88,6 +88,76 @@ async fn the_shipped_policies_have_their_properties() {
     assert!(report.holds(), "{report}");
 }
 
+fn labels(policies: &str) -> CedarPolicySet {
+    CedarPolicySet::from_sources(
+        &read("policies/cedar/examples/labels.cedarschema"),
+        &[("labels.cedar".to_string(), policies.to_string())],
+    )
+    .unwrap()
+}
+
+fn labels_properties(policies: &CedarPolicySet) -> PolicyProperties {
+    PolicyProperties::load(
+        policies,
+        &[repo("policies/cedar/examples/labels.properties.cedar")],
+    )
+    .unwrap()
+}
+
+/// The information-flow rules (docs/adr/0016) are proved over every
+/// request the labels schema admits: no external call on untrusted
+/// arguments, and private mail only to its readers, while trusted public
+/// mail still goes.
+#[tokio::test]
+#[ignore = "needs cvc5 1.3.1 (set CVC5)"]
+async fn the_labels_example_has_its_properties() {
+    let mut analyzer = Analyzer::new().expect(NEEDS_CVC5);
+    let policies = labels(&read("policies/cedar/examples/labels.cedar"));
+    let report = analyzer
+        .check(&policies, &labels_properties(&policies))
+        .await
+        .unwrap();
+    assert!(report.holds(), "{report}");
+    for check in [
+        Check::Ceiling("untrusted-arguments-never-leave".to_string()),
+        Check::Ceiling("private-mail-reaches-only-its-readers".to_string()),
+        Check::Floor("trusted-public-mail-goes".to_string()),
+    ] {
+        assert!(report.outcome(&check).is_some(), "{check:?} was checked");
+    }
+}
+
+#[tokio::test]
+#[ignore = "needs cvc5 1.3.1 (set CVC5)"]
+async fn dropping_the_untrusted_forbid_breaks_the_labels_ceiling() {
+    let mut analyzer = Analyzer::new().expect(NEEDS_CVC5);
+    let shipped = read("policies/cedar/examples/labels.cedar");
+    let start = shipped
+        .find("@id(\"no-external-call-on-untrusted-arguments\")")
+        .unwrap();
+    let end = shipped
+        .find("// Data with readers goes only to one of them.")
+        .unwrap();
+    let unguarded = labels(&format!("{}{}", &shipped[..start], &shipped[end..]));
+
+    let report = analyzer
+        .check(&unguarded, &labels_properties(&unguarded))
+        .await
+        .unwrap();
+    let outcome = report
+        .outcome(&Check::Ceiling(
+            "untrusted-arguments-never-leave".to_string(),
+        ))
+        .unwrap();
+    assert!(!outcome.holds(), "{report}");
+    let violation = &outcome.violations[0];
+    assert!(violation.confirmed, "the evaluator reproduces it");
+    assert!(
+        violation.counterexample.contains("untrusted"),
+        "{violation:?}"
+    );
+}
+
 #[tokio::test]
 #[ignore = "needs cvc5 1.3.1 (set CVC5)"]
 async fn a_permit_that_forgets_restricted_tools_breaks_the_ceiling() {

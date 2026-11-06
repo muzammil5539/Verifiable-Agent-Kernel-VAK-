@@ -12,6 +12,20 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 `docs/adr/0003-admit-budget-record-outcome-pipeline-stages.md` for the decision records.
 
 ### Added
+- Cedar policies read information-flow labels (ADR 0016).
+  - **What Cedar sees.** With `policy.labels.enabled`, a call's label is
+    `context.labels` (`integrity`, `public`, `readers`, `sources`), and the tool's
+    `external` attribute is `policy.labels.external`.
+  - **The schema contract.** The schema must declare `labels` on every action and
+    `external` on `Tool`, all required. With labels off, it must declare none of
+    them. Optional or partial declarations are refused at load. An optional one
+    would let a `has`-guarded forbid skip calls silently.
+  - **Mismatches.** If the setting and the schema disagree, every call is denied as
+    `policy.labels`. With labels on, an unlabelled call is denied.
+  - **The example.** `policies/cedar/examples/labels.cedarschema`, `labels.cedar` and
+    `labels.properties.cedar`. SymCC proves that no external call on untrusted
+    arguments is allowed, and that private mail reaches only its readers.
+  - **Breaking:** `CedarRequest` gains the public fields `labels` and `external`.
 - Information-flow labels (ADR 0014; slice 2d). Off unless `policy.labels.enabled`.
   - **Labels.** `kernel::ifc`, in the core: `Label` with `Integrity` (`Trusted <
     Untrusted`), `Readers` (`public` or a set) and `Source` (`user`, `tool:<name>`,
@@ -33,7 +47,7 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
     `evaluate_policy` passes the current context label. YAML rules read
     `context.args_integrity`, `args_public`, `args_readers`, `args_sources` and
     `resource.external`. Without labels, a rule that reads them fails closed.
-    `ConfigPolicy` ignores labels, and Cedar doesn't get them yet.
+    `ConfigPolicy` ignores labels. Cedar reads them too (below).
   - **The record.** `AuditEntry::label`: the arguments' label on decision and refusal
     entries, the result's on outcome entries. It is hashed only when present, so
     existing logs verify. The Python binding shows it in an entry's details.

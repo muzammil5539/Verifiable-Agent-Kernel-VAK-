@@ -1,0 +1,52 @@
+// A schema that takes information-flow labels (docs/adr/0014, docs/adr/0016):
+// the kernel's schema in vak.cedarschema, plus `labels` in every action's
+// context and `external` on Tool. Use it with `policy.labels.enabled: true`;
+// the kernel denies every call if the two disagree. Used with labels.cedar
+// by tests/cedar_policy.rs and tests/cedar_properties.rs.
+namespace Vak {
+  // The label of a call's arguments: everything the calling agent has been
+  // given or has declared, since the kernel can't see which value an
+  // argument came from.
+  type Labels = {
+    // "trusted" or "untrusted".
+    integrity: String,
+    // Anyone may read the arguments. When true, `readers` is empty.
+    public: Bool,
+    // Who may, when not public. Empty and not public means no one.
+    readers: Set<String>,
+    // "user", "tool:<name>" or "skill:<name>".
+    sources: Set<String>,
+  };
+
+  entity Agent {
+    internal: Bool,
+    name: String,
+  };
+
+  entity Tool {
+    restricted: Bool,
+    builtin: Bool,
+    // The tool is in `policy.labels.external`: it sends data outside.
+    external: Bool,
+  };
+
+  // Both declarations must be required. An optional one is refused, since a
+  // forbid guarded by `has` would then skip calls without saying so.
+  action "call" appliesTo {
+    principal: Agent,
+    resource: Tool,
+    context: { session: String, arguments: {}, labels: Labels },
+  };
+
+  // A tool whose arguments policies read, so its recipient can be checked
+  // against the readers the data allows.
+  action "send_email" in ["call"] appliesTo {
+    principal: Agent,
+    resource: Tool,
+    context: {
+      session: String,
+      arguments: { to: String, body: String },
+      labels: Labels,
+    },
+  };
+}

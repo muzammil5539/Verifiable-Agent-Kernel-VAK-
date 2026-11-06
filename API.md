@@ -308,7 +308,8 @@ YAML rules read the arguments' label:
 
 Without labels these attributes aren't set, so a rule reading them can't be evaluated:
 a forbid fires, and a permit doesn't grant. `ConfigPolicy` ignores labels. Cedar
-policies can't read them yet. Guards see the label as `GuardRequest::labels`.
+policies read them as `context.labels` (see Cedar policies below; ADR 0016). Guards see
+the label as `GuardRequest::labels`.
 
 To declare data the kernel never returned, wrap it in `Labeled<T>`:
 
@@ -731,6 +732,26 @@ Requests that can't be decided cleanly are denied:
 
 A policy set that doesn't load (a parse or validation error, duplicate `@id`s, no
 policies) makes the kernel deny everything, giving the load error as the reason.
+
+**Information-flow labels** (ADR 0016). With `policy.labels.enabled`, Cedar reads the
+label of each call's arguments as `context.labels` (`integrity`, `public`, `readers`,
+`sources`), and `resource.external`.
+
+- **What the schema must declare.** `labels` in every action's context, and `external`
+  on `Tool`, all required. `policies/cedar/examples/labels.cedarschema` is one to copy.
+- **When labels are off.** The schema must declare none of it.
+- **What is refused.** Optional or partial declarations are refused at load. If the
+  setting and the schema disagree, every call is denied (rule `policy.labels`).
+
+```cedar
+@id("no-external-call-on-untrusted-arguments")
+forbid (principal, action, resource)
+when { resource.external && context.labels.integrity == "untrusted" };
+
+@id("email-only-to-allowed-readers")
+forbid (principal, action == Vak::Action::"send_email", resource)
+unless { context.labels.public || context.labels.readers.contains(context.arguments.to) };
+```
 
 `CedarPolicySet::load(schema, paths)` and `authorize(&CedarRequest)` use the engine
 directly. `CedarPolicy::new(set, &config)` plus `KernelBuilder::with_policy` injects it.

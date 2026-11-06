@@ -13,6 +13,10 @@
 // `policy.cedar_schema` at the copy. The kernel refuses a schema that doesn't
 // accept what it supplies, and denies a request that doesn't match the
 // schema.
+//
+// This schema takes no information-flow labels. For policies that read them,
+// with `policy.labels.enabled`, start from examples/labels.cedarschema
+// (docs/adr/0016).
 namespace Vak {
   // The agent making the call, from its record in the agent registry.
   entity Agent {
