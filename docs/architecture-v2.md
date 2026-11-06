@@ -253,6 +253,22 @@ level** once implemented.
     allowed.
   - Assurance: `Enforced` for label propagation inside the kernel. It is only as good
     as the label hygiene of the agent framework outside it, which the docs must say.
+- **As built (slice 2d, ADR 0014).** Labels are on with `policy.labels.enabled`.
+  - **Per agent.** The kernel keeps a context label per agent, not per session: the
+    join of every result returned to it and every label it declared. The MCP gateway
+    and `VakRuntime::execute_tool_call` open a session per call, so a per-session
+    label would fail open there.
+  - **One label per call.** The kernel can't see which value an argument came from,
+    so a call's arguments get the whole context label. Policies read it as
+    `context.args_*`. A separate `context.integrity` waits for value handles.
+  - **Declared labels only raise.** An agent declares them with
+    `Kernel::execute_labeled` and `Labeled<T>`.
+  - **Results.** A result's label is its tool's source label (`policy.labels.sources`)
+    joined with its arguments'. Unlisted tools are untrusted, except the built-ins.
+  - **Where labels go.** YAML rules read `context.args_integrity`, `args_public`,
+    `args_readers`, `args_sources` and `resource.external`, and guards see the label
+    too. Decision and outcome entries record it.
+  - **Cedar** gets labels in a later slice.
 
 ### 4.5 Neuro-symbolic reasoning: rename honestly, then make each piece real
 
@@ -401,7 +417,9 @@ flowchart TB
 2. **Budget.** Check rate and cost limits, using `RateLimiter`, which already exists but
    isn't called today.
 3. **Decide.** Call `PolicyDecisionPoint::decide`. The PDP sees the request, principal
-   attributes, resource attributes, IFC labels and session history.
+   attributes, resource attributes, IFC labels and session history. As built, the
+   labels are this stage's first step (ADR 0014): with `policy.labels.enabled`, the
+   arguments get the agent's context label, raised by any label the agent declared.
 4. **Guard.** Run zero or more guards. Each guard returns `Pass`, `Deny` or `Escalate`
    with its `Assurance` level. A policy can require, for example, `min_assurance =
    Enforced` for `payment:*`, so an LLM judge can *add* denials but never be the only
@@ -415,6 +433,8 @@ flowchart TB
 6. **Execute.** The executor registry resolves the tool in this order: built-in,
    registered handler, WASM skill, otherwise `ToolNotFound`.
 7. **Record the outcome.** Append an outcome leaf that links to the decision leaf.
+   With labels on, the result's label joins the agent's context label first, and the
+   outcome leaf records it.
 8. **Respond.** Return the `ToolResponse` with a receipt: `{ leaf_index, tree_size, root }`.
 
 ### 5.2 Ports (traits)
@@ -515,6 +535,7 @@ let proof = kernel.prove_audit_inclusion(0).await?;  // anyone can verify
 | Datalog | Heuristic (exact strings) | Heuristic (documented) | Ascent: Enforced |
 | PRM / ToT | Heuristic (LLM judge) | Heuristic (documented) | trained PRM + calibration |
 | Prompt-injection | Heuristic (regex) | Heuristic | IFC labels: Enforced |
+| IFC labels | none | **Enforced for propagation inside the kernel (2d)**, per agent; only as good as the framework's declared labels and agent identities | value handles for per-argument precision; Cedar policies read labels |
 | ZK proofs | unsound | unsound (documented, not default) | zkVM research track |
 | Swarm consensus | unauthenticated tally | unchanged | signed `QuorumVote` |
 
@@ -590,8 +611,15 @@ phase's exit criterion.
       hold and it allows nothing the old set didn't. CI installs cvc5 and proves the
       shipped policies. The analysis found that slice 2a's payments example let a
       finance agent use a blocked tool.
-- IFC labels on tool results and arguments; label-aware policies; the AgentDojo harness
-  as a benchmark.
+- [x] Slice 2d (ADR 0014): information-flow labels. Each result carries a label
+      (integrity, readers, sources). With `policy.labels.enabled`, the kernel keeps a
+      context label per agent that only rises. A call's arguments get it, and YAML
+      policies and guards read it. `Kernel::execute_labeled` and `Labeled<T>` declare
+      labels for data the kernel never returned; declared labels only raise. Unlisted
+      tools are untrusted. Decision and outcome entries record the labels.
+- Cedar policies read labels (`context.labels`, `Tool.external`), with a schema
+  contract check.
+- The AgentDojo harness as a benchmark, and value handles for per-argument labels.
 - [x] Slice 2c (ADR 0013): the `Guard` port with assurance levels. `Kernel::execute`
       runs each guard added with `KernelBuilder::with_guard` on calls the policy
       allowed. A deny or an escalation from any guard refuses the call, as does a

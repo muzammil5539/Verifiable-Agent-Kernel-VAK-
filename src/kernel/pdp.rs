@@ -21,6 +21,7 @@ use async_trait::async_trait;
 use tracing::{info, warn};
 
 use super::config::{DefaultPolicyDecision, KernelConfig, PolicyFormat};
+use super::ifc::{Label, LabelConfig, Readers};
 use super::ports::{PolicyDecisionPoint, PolicyRequest};
 use super::types::PolicyDecision;
 use super::BUILTIN_TOOLS;
@@ -232,6 +233,10 @@ impl PolicyDecisionPoint for ConfigPolicy {
 
 /// Decides with a [`CedarEnforcer`] over YAML policy files (docs/adr/0001).
 ///
+/// With `policy.labels.enabled`, conditions can also read the label of the
+/// call's arguments as `context.args_*`, and `resource.external`
+/// (docs/adr/0014).
+///
 /// The kernel supplies the entity attributes that policy conditions read.
 /// Nothing else populates them, so without this the shipped
 /// `default_policies.yaml`, whose only tool-permit rule is guarded by
@@ -241,6 +246,9 @@ pub struct EnforcerPolicy {
     enforcer: CedarEnforcer,
     blocked_tools: Vec<String>,
     constraints: Option<Vec<String>>,
+    /// `policy.labels`, for `resource.external`. `None` when labels are
+    /// off, so that rules reading label attributes fail closed.
+    labels: Option<LabelConfig>,
 }
 
 impl EnforcerPolicy {
@@ -251,8 +259,38 @@ impl EnforcerPolicy {
             enforcer,
             blocked_tools: config.security.blocked_tools.clone(),
             constraints: execution_constraints(config),
+            labels: config
+                .policy
+                .labels
+                .enabled
+                .then(|| config.policy.labels.clone()),
         }
     }
+}
+
+/// The policy context a YAML rule reads for a call labelled `label`
+/// (docs/adr/0014): `context.args_integrity` (`"trusted"` or
+/// `"untrusted"`), `context.args_public`, `context.args_readers` (only when
+/// not public) and `context.args_sources`.
+///
+/// Without a label none of them is set. A condition that reads one then
+/// can't be evaluated: a forbid rule fires and a permit rule doesn't grant.
+fn labelled_context(context: PolicyContext, label: Option<&Label>) -> PolicyContext {
+    let Some(label) = label else {
+        return context;
+    };
+    let sources: Vec<String> = label.sources.iter().map(ToString::to_string).collect();
+    let mut context = context
+        .with_custom("args_integrity", label.integrity.as_str())
+        .with_custom("args_public", label.readers.is_public())
+        .with_custom("args_sources", sources);
+    if let Readers::Only(readers) = &label.readers {
+        context = context.with_custom(
+            "args_readers",
+            readers.iter().cloned().collect::<Vec<String>>(),
+        );
+    }
+    context
 }
 
 #[async_trait]
@@ -275,13 +313,16 @@ impl PolicyDecisionPoint for EnforcerPolicy {
             .with_attribute("internal", req.principal.is_some_and(|r| r.internal))
             .with_attribute("id", req.agent_id.to_string());
 
-        let resource = Resource::tool(tool.clone())
+        let mut resource = Resource::tool(tool.clone())
             .with_attribute("restricted", self.blocked_tools.contains(tool))
             .with_attribute("internal", BUILTIN_TOOLS.contains(&tool.as_str()))
             .with_attribute("owner", principal.to_entity_uid());
+        if let Some(labels) = &self.labels {
+            resource = resource.with_attribute("external", labels.is_external(tool));
+        }
 
         let action = PolicyAction::tool_execute();
-        let context = PolicyContext::new().with_current_time();
+        let context = labelled_context(PolicyContext::new().with_current_time(), req.labels);
 
         match self
             .enforcer

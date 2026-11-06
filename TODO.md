@@ -21,6 +21,17 @@ that language is exactly how the gap went unnoticed for thirteen sprints.
 
 ## Done (verified, not just present)
 
+- [x] Information-flow labels (`docs/adr/0014`), driven through `Kernel::execute`
+      and `Kernel::execute_labeled` in `tests/ifc_labels.rs`. With
+      `policy.labels.enabled`:
+      - each agent has a context label that only rises. A new session doesn't
+        clear it, and a declared label can't lower it;
+      - results are labelled with their tool's source label and their arguments'
+        label, and unlisted tools are untrusted;
+      - YAML policies and guards read the arguments' label;
+      - decision and outcome entries record the labels, and old logs still
+        verify.
+
 - [x] The Guard stage (`docs/adr/0013`), driven through `Kernel::execute` in
       `tests/guard_port.rs`. The `Guard` port has four assurance levels. Guards
       added with `KernelBuilder::with_guard` run on calls the policy allowed:
@@ -151,6 +162,24 @@ request path. In order of leverage:
       Until one is added, a `min_assurance` floor refuses its tools. The Python
       SDK and `VakRuntime` build kernels with `Kernel::new` and can't add guards.
       Any floor in their config file therefore refuses every matching call.
+- [ ] **Information-flow labels, the rest of §4.4.** Slice 2d (ADR 0014) tracks
+      labels and gives them to YAML policies and guards. Still to do, in order:
+      1. **Cedar policies read labels.** Supply `context.labels` and
+         `Tool.external` when labels are on. Check the schema accepts them at
+         load. Refuse a schema that declares them while labels are off, or
+         `has`-guarded forbids silently never fire.
+      2. **The Python binding declares and reads labels.** `execute_tool` should
+         take a declared label and return the result's.
+      3. **Value handles,** in the manner of CaMeL or FIDES variables. The kernel
+         would keep a result and hand the agent a reference, so arguments can be
+         labelled more precisely than the whole context. Then `context.integrity`
+         and `context.args_integrity` become different labels.
+      4. **The AgentDojo harness** (Phase 2's exit criterion).
+      5. **MCP agent identity.** The gateway takes `agent_id` from the calling
+         model, so a client can shed its label (and its budget) by renaming
+         itself. Bind it to the connection, or require registered agents.
+      6. **Labels are never forgotten.** Each agent's label lives as long as the
+         kernel; an embedder that mints an agent per task keeps one per task.
 - [ ] **Gate high-risk actions on the neuro-symbolic reasoner.** PRM scoring,
       the Datalog safety engine (`src/reasoner/datalog.rs`), and the Z3
       verification gateway are implemented and unit-tested, but

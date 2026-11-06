@@ -1,12 +1,12 @@
 //! Ports: the traits the kernel's mediation pipeline calls.
 //!
 //! The kernel owns *mediation*: every request is admitted, budgeted,
-//! decided, guarded, recorded, then executed, in that order. It does not own *how*
-//! agents are looked up, budgets kept, decisions made, records stored or
-//! tools run. Those sit behind the traits re-exported here, so an embedder
-//! can supply a real Cedar engine, a database-backed registry, or a test
-//! double without forking the kernel. See `docs/architecture-v2.md` §5.2 and
-//! `docs/adr/0003`.
+//! labelled, decided, guarded, recorded, then executed, in that order. It
+//! does not own *how* agents are looked up, budgets kept, decisions made,
+//! records stored or tools run. Those sit behind the traits re-exported
+//! here, so an embedder can supply a real Cedar engine, a database-backed
+//! registry, or a test double without forking the kernel. See
+//! `docs/architecture-v2.md` §5.2 and `docs/adr/0003`.
 //!
 //! | Stage | Port |
 //! |---|---|
@@ -26,15 +26,15 @@ pub use super::guard::Guard;
 pub use super::identity::AgentRegistry;
 
 use super::identity::AgentRecord;
+use super::ifc::Label;
 use super::types::{AgentId, PolicyDecision, SessionId, ToolRequest};
 
 /// What a [`PolicyDecisionPoint`] is asked to decide, and what each
 /// [`Guard`] then checks.
 ///
 /// Marked `#[non_exhaustive]` because the pipeline will hand the PDP more
-/// context over time (session history, information-flow labels); adding a
-/// field must not break existing implementations. Construct it with
-/// [`PolicyRequest::new`].
+/// context over time (session history); adding a field must not break
+/// existing implementations. Construct it with [`PolicyRequest::new`].
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct PolicyRequest<'a> {
@@ -49,6 +49,11 @@ pub struct PolicyRequest<'a> {
     pub principal: Option<&'a AgentRecord>,
     /// The session the request was made in.
     pub session_id: Option<&'a SessionId>,
+    /// The information-flow label of the call's arguments, from the Labels
+    /// stage (`docs/adr/0014`). Set only when `policy.labels.enabled`.
+    /// `None` means nothing is known about where the arguments came from:
+    /// a rule that reads labels must not be satisfied by their absence.
+    pub labels: Option<&'a Label>,
 }
 
 impl<'a> PolicyRequest<'a> {
@@ -60,6 +65,7 @@ impl<'a> PolicyRequest<'a> {
             request,
             principal: None,
             session_id: None,
+            labels: None,
         }
     }
 
@@ -74,6 +80,13 @@ impl<'a> PolicyRequest<'a> {
     #[must_use]
     pub fn with_session(mut self, session_id: &'a SessionId) -> Self {
         self.session_id = Some(session_id);
+        self
+    }
+
+    /// Attaches the label of the call's arguments.
+    #[must_use]
+    pub fn with_labels(mut self, labels: &'a Label) -> Self {
+        self.labels = Some(labels);
         self
     }
 }

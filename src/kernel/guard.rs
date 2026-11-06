@@ -29,6 +29,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::identity::AgentRecord;
+use super::ifc::Label;
 use super::ports::PolicyRequest;
 use super::types::{AgentId, PolicyDecision, SessionId, ToolRequest};
 
@@ -76,8 +77,8 @@ impl fmt::Display for Assurance {
 /// allow it.
 ///
 /// Marked `#[non_exhaustive]`, like [`PolicyRequest`], so the kernel can hand
-/// guards more context (information-flow labels, session history) without
-/// breaking them. Construct it with [`GuardRequest::new`].
+/// guards more context (session history) without breaking them. Construct
+/// it with [`GuardRequest::new`].
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct GuardRequest<'a> {
@@ -92,6 +93,9 @@ pub struct GuardRequest<'a> {
     /// What the policy decided: always an allow, since guards only see
     /// calls the policy allowed.
     pub decision: &'a PolicyDecision,
+    /// The information-flow label of the call's arguments, as the policy
+    /// saw it. Set only when `policy.labels.enabled` (`docs/adr/0014`).
+    pub labels: Option<&'a Label>,
 }
 
 impl<'a> GuardRequest<'a> {
@@ -104,6 +108,7 @@ impl<'a> GuardRequest<'a> {
             principal: policy.principal,
             session_id: policy.session_id,
             decision,
+            labels: policy.labels,
         }
     }
 }

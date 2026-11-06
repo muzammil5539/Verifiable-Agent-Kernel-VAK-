@@ -20,6 +20,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use super::guard::GuardChecks;
+use super::ifc::Label;
 use crate::audit::transparency::SignedTreeHead;
 
 // ============================================================================
@@ -469,8 +470,9 @@ pub struct AuditOutcome {
 /// - A cryptographic hash for integrity verification
 /// - A reference to the previous entry (for chain integrity)
 ///
-/// A *decision* entry records what the kernel decided, before acting, and
-/// what each guard said (`guards`). An *outcome* entry (`outcome` is set)
+/// A *decision* entry records what the kernel decided, before acting, what
+/// each guard said (`guards`), and the label of the call's arguments
+/// (`label`). An *outcome* entry (`outcome` is set)
 /// records what happened after an allowed call ran, and names its decision
 /// entry's leaf.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -512,6 +514,15 @@ pub struct AuditEntry {
     /// (docs/adr/0013).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guards: Option<GuardChecks>,
+
+    /// The information-flow label, when `policy.labels.enabled`
+    /// (docs/adr/0014). On a decision entry, and on a policy or guard
+    /// refusal, the label of the call's arguments, as the policy saw it. On
+    /// an outcome entry, the label of the result the agent was given.
+    /// Absent on admit and budget refusals, which come before the Labels
+    /// stage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<Label>,
 }
 
 impl AuditEntry {
@@ -534,6 +545,7 @@ impl AuditEntry {
             previous_hash: None,
             outcome: None,
             guards: None,
+            label: None,
         };
         entry.hash = entry.compute_hash();
         entry
@@ -565,6 +577,15 @@ impl AuditEntry {
         self
     }
 
+    /// Records the information-flow label: of the call's arguments on a
+    /// decision entry, of the result on an outcome entry.
+    #[must_use]
+    pub fn with_label(mut self, label: Label) -> Self {
+        self.label = Some(label);
+        self.hash = self.compute_hash();
+        self
+    }
+
     /// Computes the SHA-256 hash for an audit entry.
     ///
     /// The digest commits to *every* field that carries meaning, including the
@@ -574,9 +595,9 @@ impl AuditEntry {
     ///
     /// Fields are length-prefixed so that no two distinct entries can produce
     /// the same pre-image by shifting bytes across field boundaries. The
-    /// guard checks and the outcome are absorbed only when present, each
-    /// behind its own tag, so an entry without them hashes exactly as
-    /// entries did before they existed.
+    /// guard checks, the label and the outcome are absorbed only when
+    /// present, each behind its own tag, so an entry without them hashes
+    /// exactly as entries did before they existed.
     fn compute_hash(&self) -> String {
         fn absorb(hasher: &mut Sha256, field: &[u8]) {
             hasher.update((field.len() as u64).to_be_bytes());
@@ -603,6 +624,11 @@ impl AuditEntry {
         if let Some(guards) = &self.guards {
             absorb(&mut hasher, b"guards");
             absorb(&mut hasher, &serde_json::to_vec(guards).unwrap_or_default());
+        }
+
+        if let Some(label) = &self.label {
+            absorb(&mut hasher, b"label");
+            absorb(&mut hasher, &serde_json::to_vec(label).unwrap_or_default());
         }
 
         if let Some(outcome) = &self.outcome {

@@ -65,6 +65,7 @@ pub mod custom_handlers;
 pub mod error;
 pub mod guard;
 pub mod identity;
+pub mod ifc;
 #[cfg(feature = "reasoner")]
 pub mod neurosymbolic_pipeline;
 pub mod pdp;
@@ -105,6 +106,7 @@ pub use self::guard::{
     Assurance, FunctionGuard, GuardCheck, GuardChecks, GuardFn, GuardRequest, GuardVerdict,
 };
 pub use self::identity::{AgentRecord, AgentStatus, InMemoryAgentRegistry, RegistryError};
+pub use self::ifc::{Integrity, Label, LabelConfig, Labeled, Readers, Source, SourceLabel};
 #[cfg(feature = "cedar")]
 pub use self::pdp::CedarPolicy;
 pub use self::pdp::{ConfigPolicy, DenyAll, EnforcerPolicy};
@@ -120,6 +122,7 @@ use sha2::{Digest as _, Sha256};
 use tokio::sync::RwLock;
 use tracing::{info, instrument, warn};
 
+use self::ifc::Origin;
 use self::types::{
     AgentId, AuditEntry, AuditOutcome, AuditReceipt, KernelError, PolicyDecision, SessionId,
     ToolRequest, ToolResponse,
@@ -177,6 +180,11 @@ pub struct Kernel {
 
     /// Each session is bound to the first agent that uses it.
     sessions: Arc<RwLock<std::collections::HashMap<SessionId, AgentId>>>,
+
+    /// Each agent's context label: the join of every result returned to it
+    /// and every label it declared (Labels stage, docs/adr/0014). Empty
+    /// unless `policy.labels.enabled`.
+    contexts: Arc<RwLock<std::collections::HashMap<AgentId, Label>>>,
 
     /// Skill registry for WASM tools (Issue #6)
     /// WASM skills: the registry, the runtime and their limits.
@@ -499,6 +507,7 @@ impl KernelBuilder {
             agents,
             budget,
             sessions: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            contexts: Arc::new(RwLock::new(std::collections::HashMap::new())),
             #[cfg(feature = "wasm")]
             skills,
             policy,
@@ -657,7 +666,9 @@ impl Kernel {
     ///
     /// This is the Decide stage alone. It doesn't check the agent's status,
     /// session or own scope, doesn't charge a budget, runs no guards, and
-    /// records nothing; [`Kernel::execute`] does all of that.
+    /// records nothing; [`Kernel::execute`] does all of that. With
+    /// `policy.labels.enabled`, the policy sees the agent's current context
+    /// label, which this doesn't change.
     #[instrument(skip(self, request), fields(agent_id = %agent_id, tool = %request.tool_name))]
     pub async fn evaluate_policy(
         &self,
@@ -676,9 +687,30 @@ impl Kernel {
                 violated_policies: Some(vec!["security.require_registered_agents".to_string()]),
             };
         };
-        self.policy
-            .decide(&PolicyRequest::new(agent_id, request).with_principal(&principal))
-            .await
+        let label = self.context_label(agent_id).await;
+        let mut policy_request = PolicyRequest::new(agent_id, request).with_principal(&principal);
+        if let Some(label) = &label {
+            policy_request = policy_request.with_labels(label);
+        }
+        self.policy.decide(&policy_request).await
+    }
+
+    /// The agent's context label: the join of every result the kernel has
+    /// returned to it and every label it has declared (docs/adr/0014). The
+    /// lowest label if it has been given nothing yet, and `None` if
+    /// `policy.labels.enabled` is false.
+    pub async fn context_label(&self, agent_id: &AgentId) -> Option<Label> {
+        if !self.config.policy.labels.enabled {
+            return None;
+        }
+        Some(
+            self.contexts
+                .read()
+                .await
+                .get(agent_id)
+                .cloned()
+                .unwrap_or_default(),
+        )
     }
 
     /// Executes a tool request through the mediation pipeline.
@@ -687,7 +719,10 @@ impl Kernel {
     ///    `security.require_registered_agents`) and active, the session must
     ///    be its own, and the tool must be inside the agent's own scope.
     /// 2. **Budget**: the request is charged to the agent's budget.
-    /// 3. **Decide**: the policy decision point must allow it.
+    /// 3. **Decide**: the policy decision point must allow it. With
+    ///    `policy.labels.enabled`, it first labels the call's arguments with
+    ///    the agent's context label, and the policy can read the label. See
+    ///    `docs/adr/0014`.
     /// 4. **Guard**: each guard checks the call, in order. Any denial or
     ///    escalation refuses it, and if `policy.min_assurance` covers the
     ///    tool, a guard of that level must have passed it. See
@@ -695,11 +730,15 @@ impl Kernel {
     /// 5. **Record**: the decision is appended to the audit log, with each
     ///    guard's verdict. If that fails, the tool does not run.
     /// 6. **Execute** the tool.
-    /// 7. **Record the outcome**, linked to the decision.
+    /// 7. **Record the outcome**, linked to the decision. With labels on,
+    ///    the result's label joins the agent's context label first.
     /// 8. **Respond**, with an [`AuditReceipt`] naming both leaves.
     ///
     /// A request stopped at stages 1 to 4 is recorded as a denial before
     /// the error is returned. See `docs/adr/0003`.
+    ///
+    /// To declare the label of the arguments, and get the result's label
+    /// back, use [`Kernel::execute_labeled`].
     ///
     /// # Arguments
     ///
@@ -733,6 +772,90 @@ impl Kernel {
         session_id: &SessionId,
         request: ToolRequest,
     ) -> Result<ToolResponse, KernelError> {
+        self.mediate(agent_id, session_id, request, &Label::trusted())
+            .await
+            .map(|(response, _)| response)
+    }
+
+    /// Executes a tool request whose arguments carry a label, and returns
+    /// the result with its label (docs/adr/0014).
+    ///
+    /// The same pipeline as [`Kernel::execute`]. The declared label can only
+    /// raise what the kernel already holds: it is joined into the agent's
+    /// context label, and the call's arguments get the result. Declare data
+    /// the kernel never returned, such as a page an agent framework fetched
+    /// itself. Results the kernel returned are already in the context.
+    ///
+    /// The result's label is the tool's source label (`policy.labels.sources`)
+    /// joined with the arguments' label. Keep it with the value: pass both to
+    /// the next call with [`Labeled::map`].
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Kernel::execute`], and, before anything runs or is
+    /// recorded:
+    ///
+    /// - [`KernelError::InvalidConfiguration`] if `policy.labels.enabled` is
+    ///   false. Then the kernel tracks no labels, so it refuses the call
+    ///   rather than return a label it didn't compute.
+    /// - [`KernelError::ResourceLimitExceeded`] if the declared label names
+    ///   more than [`ifc::MAX_DECLARED`] sources or readers.
+    #[instrument(skip(self, request), fields(
+        agent_id = %agent_id,
+        session_id = %session_id,
+        tool = %request.value().tool_name
+    ))]
+    pub async fn execute_labeled(
+        &self,
+        agent_id: &AgentId,
+        session_id: &SessionId,
+        request: Labeled<ToolRequest>,
+    ) -> Result<Labeled<ToolResponse>, KernelError> {
+        if !self.config.policy.labels.enabled {
+            return Err(KernelError::InvalidConfiguration {
+                message: "information-flow labels are off; set policy.labels.enabled to execute \
+                          labelled calls"
+                    .to_string(),
+            });
+        }
+        let (request, declared) = request.into_parts();
+        // A declared label is recorded in the audit log and kept in the
+        // agent's context, so its size is bounded.
+        for (resource, size) in [
+            ("declared label sources", declared.sources.len()),
+            (
+                "declared label readers",
+                match &declared.readers {
+                    Readers::Public => 0,
+                    Readers::Only(readers) => readers.len(),
+                },
+            ),
+        ] {
+            if size > ifc::MAX_DECLARED {
+                return Err(KernelError::ResourceLimitExceeded {
+                    resource: resource.to_string(),
+                    limit: ifc::MAX_DECLARED as u64,
+                    requested: size as u64,
+                });
+            }
+        }
+        let (response, label) = self
+            .mediate(agent_id, session_id, request, &declared)
+            .await?;
+        Ok(Labeled::new(response, label))
+    }
+
+    /// The mediation pipeline behind [`Kernel::execute`] and
+    /// [`Kernel::execute_labeled`]. Returns the response and the result's
+    /// label. The label is tracked, shown to the policy and recorded only
+    /// with `policy.labels.enabled`.
+    async fn mediate(
+        &self,
+        agent_id: &AgentId,
+        session_id: &SessionId,
+        request: ToolRequest,
+        declared: &Label,
+    ) -> Result<(ToolResponse, Label), KernelError> {
         // Stage 1: Admit.
         let principal = match self.admit(agent_id, session_id, &request).await {
             Ok(principal) => principal,
@@ -760,10 +883,35 @@ impl Kernel {
             });
         }
 
-        // Stage 3: Decide.
-        let policy_request = PolicyRequest::new(agent_id, &request)
+        // Stage 3: Decide, first labelling the call's arguments
+        // (docs/adr/0014). The kernel can't tell which value an argument
+        // came from, so the arguments get the agent's whole context label,
+        // raised by anything the agent declared. A declared label joins the
+        // context whatever the decision: the agent holds that data either
+        // way.
+        let tracking = self.config.policy.labels.enabled;
+        let args_label = if tracking {
+            let mut contexts = self.contexts.write().await;
+            let context = contexts.entry(*agent_id).or_default();
+            context.raise(declared);
+            context.clone()
+        } else {
+            declared.clone()
+        };
+        let recorded = |entry: AuditEntry, label: &Label| {
+            if tracking {
+                entry.with_label(label.clone())
+            } else {
+                entry
+            }
+        };
+
+        let mut policy_request = PolicyRequest::new(agent_id, &request)
             .with_principal(&principal)
             .with_session(session_id);
+        if tracking {
+            policy_request = policy_request.with_labels(&args_label);
+        }
         let decision = self.policy.decide(&policy_request).await;
 
         // Anything but an allow is recorded and refused here. Denials are
@@ -780,8 +928,9 @@ impl Kernel {
                 } if !policies.is_empty() => policies.join(","),
                 _ => "default".to_string(),
             };
-            self.record_rejection(agent_id, session_id, &request, decision)
-                .await;
+            let entry =
+                AuditEntry::new(*agent_id, *session_id, request.tool_name.clone(), decision);
+            self.record_refusal(recorded(entry, &args_label)).await;
             return Err(KernelError::PolicyViolation { policy_id, reason });
         }
 
@@ -796,7 +945,7 @@ impl Kernel {
             if let Some(checks) = checks {
                 entry = entry.with_guards(checks);
             }
-            self.record_refusal(entry).await;
+            self.record_refusal(recorded(entry, &args_label)).await;
             return Err(KernelError::PolicyViolation { policy_id, reason });
         }
 
@@ -811,6 +960,7 @@ impl Kernel {
         if let Some(checks) = checks {
             decision_entry = decision_entry.with_guards(checks);
         }
+        let decision_entry = recorded(decision_entry, &args_label);
         let decision_leaf = self.audit.append(decision_entry).await.map_err(|e| {
             tracing::error!(error = %e, "Could not record decision - not executing");
             KernelError::AuditUnavailable {
@@ -823,8 +973,32 @@ impl Kernel {
         let Dispatched {
             result: execution_result,
             module_sha256,
+            origin,
         } = self.dispatch_tool(agent_id, &request).await;
         let execution_time_ms = start_time.elapsed().as_millis() as u64;
+
+        // The result's label: the tool's source label joined with its
+        // arguments', since its output can depend on its input. A failed
+        // tool's error reaches the agent too, so it is labelled the same. A
+        // tool that doesn't exist produced nothing. The label joins the
+        // agent's context before the agent sees the result.
+        let result_label = match &execution_result {
+            Err(KernelError::ToolNotFound { .. }) => args_label.clone(),
+            _ => self
+                .config
+                .policy
+                .labels
+                .source_label(&request.tool_name, origin)
+                .join(&args_label),
+        };
+        if tracking {
+            self.contexts
+                .write()
+                .await
+                .entry(*agent_id)
+                .or_default()
+                .raise(&result_label);
+        }
 
         // Stage 7: Record the outcome, linked to the decision. The tool has
         // already run, so a failure here must not turn into an error: the
@@ -838,9 +1012,11 @@ impl Kernel {
             execution_time_ms,
             module_sha256,
         };
-        let outcome_entry =
+        let outcome_entry = recorded(
             AuditEntry::new(*agent_id, *session_id, request.tool_name.clone(), decision)
-                .with_outcome(outcome);
+                .with_outcome(outcome),
+            &result_label,
+        );
         let receipt = match self.audit.append(outcome_entry).await {
             Ok(outcome_leaf) => Some(AuditReceipt {
                 decision_leaf,
@@ -880,7 +1056,7 @@ impl Kernel {
             },
         };
 
-        Ok(response)
+        Ok((response, result_label))
     }
 
     /// The Admit stage. On refusal, returns the decision to record and the
@@ -1105,6 +1281,7 @@ impl Kernel {
     /// - `data_processor`: Processes data arrays with various operations
     /// - `system_info`: Returns system information (kernel version, etc.)
     async fn dispatch_tool(&self, agent_id: &AgentId, request: &ToolRequest) -> Dispatched {
+        let mut origin = Origin::Builtin;
         let result = match request.tool_name.as_str() {
             "echo" => {
                 // Echo tool: returns the input parameters
@@ -1130,6 +1307,7 @@ impl Kernel {
             }
             name => {
                 if self.tools.has_handler(name).await {
+                    origin = Origin::Handler;
                     self.execute_registered_tool(agent_id, request).await
                 } else {
                     // Try to execute as WASM skill (Issue #6)
@@ -1140,6 +1318,7 @@ impl Kernel {
         Dispatched {
             result,
             module_sha256: None,
+            origin,
         }
     }
 
@@ -1223,6 +1402,7 @@ impl Kernel {
                 tool_name: request.tool_name.clone(),
             }),
             module_sha256: None,
+            origin: Origin::Skill,
         }
     }
 
@@ -1530,6 +1710,8 @@ struct Dispatched {
     result: Result<serde_json::Value, KernelError>,
     /// Hex SHA-256 of the skill's module: the one it was verified with.
     module_sha256: Option<String>,
+    /// Which kind of tool the name resolved to, for the result's source.
+    origin: Origin,
 }
 
 /// Hex SHA-256 of a tool result's JSON serialization.

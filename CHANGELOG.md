@@ -12,6 +12,35 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 `docs/adr/0003-admit-budget-record-outcome-pipeline-stages.md` for the decision records.
 
 ### Added
+- Information-flow labels (ADR 0014; slice 2d). Off unless `policy.labels.enabled`.
+  - **Labels.** `kernel::ifc`, in the core: `Label` with `Integrity` (`Trusted <
+    Untrusted`), `Readers` (`public` or a set) and `Source` (`user`, `tool:<name>`,
+    `skill:<name>`). `Label::join` combines two labels; it and the builders only
+    raise a label. `Labeled<T>` keeps a value with its label.
+  - **Context labels, per agent.** The kernel keeps one per agent: the join of every
+    result it returned to the agent and every label the agent declared. A call's
+    arguments get it. A new session doesn't clear it.
+  - **Results.** A result's label is its tool's source label joined with its
+    arguments'. The label joins the agent's context before the agent sees the
+    result, and a failed tool's error counts.
+  - **Source labels.** `policy.labels.sources` maps tool-name patterns to source
+    labels; overlaps join. An unlisted tool is untrusted, except the built-ins.
+    `policy.labels.external` lists the tools policies see as `resource.external`.
+  - **Declaring labels.** `Kernel::execute_labeled` takes a `Labeled<ToolRequest>`
+    and returns a `Labeled<ToolResponse>`. A declared label only raises the agent's
+    context. `Kernel::context_label` reads the context.
+  - **Who reads them.** `PolicyRequest::labels` and `GuardRequest::labels`.
+    `evaluate_policy` passes the current context label. YAML rules read
+    `context.args_integrity`, `args_public`, `args_readers`, `args_sources` and
+    `resource.external`. Without labels, a rule that reads them fails closed.
+    `ConfigPolicy` ignores labels, and Cedar doesn't get them yet.
+  - **The record.** `AuditEntry::label`: the arguments' label on decision and refusal
+    entries, the result's on outcome entries. It is hashed only when present, so
+    existing logs verify. The Python binding shows it in an entry's details.
+  - **Startup checks.** `sources` or `external` set while labels are off are refused,
+    as are malformed patterns.
+  - **Breaking:** `AuditEntry` gains the public field `label`, and `PolicyConfig` the
+    public field `labels`.
 - The Guard stage (ADR 0013; slice 2c).
   - **The port.** `kernel::guard`, in the core: the `Guard` port (`check`, `name`,
     `assurance`), `Assurance` (`Experimental < Heuristic < Checked < Enforced`),

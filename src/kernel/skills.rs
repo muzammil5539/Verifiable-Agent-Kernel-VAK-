@@ -18,6 +18,7 @@ use tokio::sync::{OnceCell, RwLock};
 use tracing::{info, warn};
 
 use super::config::KernelConfig;
+use super::ifc::Origin;
 use super::types::{KernelError, ToolRequest};
 use super::Dispatched;
 use crate::sandbox::{
@@ -169,6 +170,7 @@ impl Skills {
                     tool_name: request.tool_name.clone(),
                 }),
                 module_sha256: None,
+                origin: Origin::Skill,
             };
         };
         let module_sha256 = Some(hex::encode(pinned));
@@ -191,6 +193,7 @@ impl Skills {
                 return Dispatched {
                     result: Err(failed(format!("WASM runtime unavailable: {e}"))),
                     module_sha256,
+                    origin: Origin::Skill,
                 }
             }
         };
@@ -222,6 +225,7 @@ impl Skills {
         Dispatched {
             result,
             module_sha256,
+            origin: Origin::Skill,
         }
     }
 }

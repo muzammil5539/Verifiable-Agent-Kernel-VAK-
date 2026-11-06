@@ -183,6 +183,7 @@ The kernel orchestrates the full request lifecycle:
 | `budget.rs` | `Budget`, `AgentRateBudget`, `Unlimited` (Budget stage) |
 | `pdp.rs` | `ConfigPolicy`, `EnforcerPolicy` (Decide stage) |
 | `guard.rs` | `Guard`, `Assurance`, `GuardVerdict`, `GuardRequest`, `FunctionGuard`, `GuardChecks` (Guard stage, ADR 0013) |
+| `ifc.rs` | Information-flow labels: `Label` (`Integrity`, `Readers`, `Source`), `Labeled<T>`, `LabelConfig` (`policy.labels`; ADR 0014) |
 | `audit_log.rs` | `AuditLog`, `MemoryAuditLog`, `FileAuditLog`, `SqliteAuditLog` (Record stages; the one audit path, ADR 0007) |
 
 **Built-in tools:**
@@ -651,9 +652,11 @@ reasoning and `docs/architecture-v2.md` §5.1 for the target design.
 2. Budget       Budget: per-agent token bucket (security.max_requests_per_minute)
        │        ── over ────► Deny entry + RateLimited
        ▼
-3. Decide       PolicyDecisionPoint (EnforcerPolicy or ConfigPolicy), with the
-       │        agent's record as principal
-       │        ── deny ────► Deny entry + PolicyViolation
+3. Decide       with policy.labels.enabled, first label the arguments: the agent's
+       │        context label, raised by any declared label (ADR 0014); then
+       │        PolicyDecisionPoint (EnforcerPolicy or ConfigPolicy), with the
+       │        agent's record as principal and the label as context.args_*
+       │        ── deny ────► Deny entry (with the label) + PolicyViolation
        ▼
 4. Guard        each Guard in order (KernelBuilder::with_guard); then the level
        │        policy.min_assurance requires must have a guard Pass (ADR 0013)
@@ -661,13 +664,15 @@ reasoning and `docs/architecture-v2.md` §5.1 for the target design.
        │                      Deny entry with the verdicts + PolicyViolation
        │                      ("guard.<name>" / "policy.min_assurance")
        ▼
-5. Record       AuditLog::append(decision, guard verdicts)
+5. Record       AuditLog::append(decision, guard verdicts, arguments' label)
        │        ── fails ──► AuditUnavailable, nothing runs
        ▼
 6. Execute      built-in ──► host handler (panic boundary, timeout) ──► WASM skill
        │        (fuel, epoch deadline) ──► otherwise ToolNotFound
        ▼
-7. Outcome      AuditLog::append(outcome { decision_leaf, success, result_sha256 })
+7. Outcome      result label = source label ⊔ arguments' label, joined into the
+       │        agent's context; AuditLog::append(outcome { decision_leaf,
+       │        success, result_sha256 }, result label)
        ▼
 8. Respond      ToolResponse { ..., receipt: { decision_leaf, outcome_leaf,
                 signed tree head } }
