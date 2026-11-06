@@ -33,6 +33,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use super::guard::{validate_required_level, validate_tool_pattern, Assurance};
+use super::ifc::LabelConfig;
 use super::types::KernelError;
 
 /// Main kernel configuration structure.
@@ -136,6 +137,13 @@ impl KernelConfig {
                     message: format!("policy.min_assurance: {message}"),
                 })?;
         }
+
+        self.policy
+            .labels
+            .validate()
+            .map_err(|message| KernelError::InvalidConfiguration {
+                message: format!("policy.labels: {message}"),
+            })?;
 
         if self.policy.format == PolicyFormat::Cedar && !cfg!(feature = "cedar") {
             return Err(KernelError::InvalidConfiguration {
@@ -647,6 +655,12 @@ pub struct PolicyConfig {
     /// applies. This holds whatever `enabled` says. See `docs/adr/0013`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub min_assurance: BTreeMap<String, Assurance>,
+
+    /// Information-flow labels: whether the kernel tracks them, the label
+    /// on each tool's results, and which tools send data outside. Off by
+    /// default. This holds whatever `enabled` says. See `docs/adr/0014`.
+    #[serde(default, skip_serializing_if = "LabelConfig::is_default")]
+    pub labels: LabelConfig,
 }
 
 fn default_cache_ttl() -> u64 {
@@ -664,6 +678,7 @@ impl Default for PolicyConfig {
             enable_caching: true,
             cache_ttl_seconds: default_cache_ttl(),
             min_assurance: BTreeMap::new(),
+            labels: LabelConfig::default(),
         }
     }
 }

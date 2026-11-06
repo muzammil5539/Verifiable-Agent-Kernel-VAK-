@@ -483,6 +483,11 @@ impl PyKernel {
         if let (Some(guards), Some(map)) = (&entry.guards, details.as_object_mut()) {
             map.insert("guards".to_string(), serde_json::json!(guards));
         }
+        // The information-flow label (docs/adr/0014), when labels are on:
+        // of the arguments on a decision, of the result on an outcome.
+        if let (Some(label), Some(map)) = (&entry.label, details.as_object_mut()) {
+            map.insert("label".to_string(), serde_json::json!(label));
+        }
         serde_json::json!({
             "entry_id": entry.audit_id.to_string(),
             "timestamp": entry.timestamp.to_rfc3339(),
@@ -1237,6 +1242,57 @@ mod tests {
             assert!(
                 entries[2]["details"].get("guards").is_none(),
                 "outcome entries don't repeat the verdicts"
+            );
+        });
+    }
+
+    /// With `policy.labels.enabled`, `execute_tool` tracks the agent's
+    /// context label, and each entry's details show the recorded label
+    /// (docs/adr/0014).
+    #[test]
+    fn labels_reach_python() {
+        Python::initialize();
+        let runtime = Arc::new(
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .unwrap(),
+        );
+        let mut config = KernelConfig::default();
+        config.policy.labels.enabled = true;
+        let labelled = runtime.block_on(Kernel::new(config)).unwrap();
+        let mut kernel = PyKernel::from_kernel(runtime, Arc::new(labelled));
+
+        Python::attach(|py| {
+            kernel
+                .register_agent("agent-1", "Agent One", PyDict::new(py))
+                .unwrap();
+            kernel
+                .execute_tool(
+                    py,
+                    "echo",
+                    "agent-1",
+                    "say",
+                    PyDict::new(py),
+                    5_000,
+                    u64::MAX,
+                )
+                .unwrap();
+
+            let logs = kernel.get_audit_logs(py, PyDict::new(py)).unwrap();
+            let entries: Vec<_> = logs
+                .iter()
+                .map(|e| py_to_json(e.clone()).unwrap())
+                .collect();
+            assert_eq!(entries.len(), 2);
+            assert_eq!(
+                entries[0]["details"]["label"],
+                serde_json::json!({"integrity": "trusted", "readers": "public", "sources": []})
+            );
+            assert_eq!(
+                entries[1]["details"]["label"]["sources"],
+                serde_json::json!(["tool:echo"])
             );
         });
     }

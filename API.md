@@ -142,7 +142,9 @@ let config: &KernelConfig = kernel.config();
 |--------|-----------|-------------|
 | `new` | `async fn new(config: KernelConfig) -> Result<Self, KernelError>` | Creates a kernel instance. Validates config, loads skills, configures sandbox. |
 | `execute` | `async fn execute(&self, agent_id: &AgentId, session_id: &SessionId, request: ToolRequest) -> Result<ToolResponse, KernelError>` | Runs the mediation pipeline: admit, budget, decide, guard, record the decision, execute, record the outcome, respond with an `AuditReceipt`. Refusals at any stage are recorded. |
-| `evaluate_policy` | `async fn evaluate_policy(&self, agent_id: &AgentId, request: &ToolRequest) -> PolicyDecision` | The Decide stage alone, with the agent's record as principal. No admission, budget or audit. |
+| `execute_labeled` | `async fn execute_labeled(&self, agent_id: &AgentId, session_id: &SessionId, request: Labeled<ToolRequest>) -> Result<Labeled<ToolResponse>, KernelError>` | `execute` with a declared label on the arguments (it can only raise the agent's context label), returning the result's label. `InvalidConfiguration` if `policy.labels.enabled` is false (ADR 0014). |
+| `evaluate_policy` | `async fn evaluate_policy(&self, agent_id: &AgentId, request: &ToolRequest) -> PolicyDecision` | The Decide stage alone, with the agent's record as principal and, with labels on, its current context label. No admission, budget or audit. |
+| `context_label` | `async fn context_label(&self, agent_id: &AgentId) -> Option<Label>` | The agent's context label; `None` if labels are off. |
 | `register_agent` | `async fn register_agent(&self, record: AgentRecord) -> Result<(), KernelError>` | Adds or replaces an agent record: attributes, status, own tool scope. |
 | `end_session` | `async fn end_session(&self, session_id: &SessionId) -> bool` | Releases a session's binding to its agent. |
 | `get_audit_log` | `async fn get_audit_log(&self) -> Vec<AuditEntry>` | Returns all audit entries: decisions, and outcomes (`outcome` set). |
@@ -246,6 +248,86 @@ It is never set on admit, budget or policy-denial entries, even when a level cov
 the tool, so a missing field doesn't mean no level applied. It is also absent when no
 guard is registered and no level applies. `Kernel::evaluate_policy` runs no guards.
 
+### Information-flow labels
+
+**Module:** `vak::kernel::ifc` (`docs/adr/0014`)
+
+A `Label` says where a value came from. It has three parts:
+
+- **`integrity`.** `Trusted` or `Untrusted`.
+- **`readers`.** `Readers::Public`, or `Readers::Only(set)`.
+- **`sources`.** `Source::User`, `Source::Tool(name)` or `Source::Skill(name)`.
+
+`Label::join` combines two labels: untrusted wins, readers narrow to those both allow,
+and sources add up. `join` and the builders only raise a label, and the kernel never
+lowers an agent's.
+
+With `policy.labels.enabled`, the kernel keeps a context label per agent:
+
+- **What goes into it.** The join of every result returned to the agent and every
+  label it declared.
+- **What a call's arguments get.** The context label. The kernel can't tell which
+  value an argument came from.
+- **What a result gets.** Its tool's source label, joined with its arguments' label.
+  The result's label joins the context before the agent sees the result.
+- **What doesn't clear it.** A new session, or the end of one. A fresh agent ID starts
+  a clean context.
+
+```yaml
+policy:
+  labels:
+    enabled: true
+    sources:                       # tool pattern -> label of its results
+      "web_*": { integrity: untrusted }
+      crm: { integrity: trusted, readers: [sales] }
+    external: ["email:send"]       # resource.external
+```
+
+A tool no source pattern matches is untrusted, unless it is a built-in. Overlapping
+patterns join. Setting `sources` or `external` while `enabled` is false is refused.
+
+YAML rules read the arguments' label:
+
+| Attribute | Value |
+|-----------|-------|
+| `context.args_integrity` | `"trusted"` or `"untrusted"` |
+| `context.args_public` | whether anyone may read the arguments |
+| `context.args_readers` | the readers allowed, when not public |
+| `context.args_sources` | `["user", "tool:web_fetch", …]` |
+| `resource.external` | whether the tool is in `policy.labels.external` |
+
+```yaml
+- id: "no-untrusted-email"
+  effect: "forbid"
+  principal: "*"
+  action: "*"
+  resource: "Tool::\"email:send\""
+  conditions:
+    - "context.args_integrity == \"untrusted\""
+```
+
+Without labels these attributes aren't set, so a rule reading them can't be evaluated:
+a forbid fires, and a permit doesn't grant. `ConfigPolicy` ignores labels. Cedar
+policies can't read them yet. Guards see the label as `GuardRequest::labels`.
+
+To declare data the kernel never returned, wrap it in `Labeled<T>`:
+
+```rust
+use vak::kernel::{Label, Labeled, Source};
+
+let page = Labeled::new(body, Label::untrusted(Source::Tool("browser".into())));
+let response = kernel
+    .execute_labeled(&agent_id, &session_id, page.map(|args| ToolRequest::new("summarize", args)))
+    .await?;
+let (response, label) = response.into_parts(); // the result's label
+```
+
+A declared label is joined into the agent's context, never substituted for it, so
+declaring `trusted` changes nothing. The guarantee holds only as far as the framework
+declares outside data and gives each context its own agent ID. An agent able to pick a
+fresh ID sheds its label, as through the MCP gateway's `agent_id` argument unless
+`security.require_registered_agents` is set.
+
 ---
 
 ### KernelConfig
@@ -315,7 +397,7 @@ config.validate()?;
 |--------|------------|
 | `SecurityConfig` | `enable_sandboxing`, `require_signed_requests`, `allowed_tools`, `blocked_tools`, `enable_rate_limiting`, `max_requests_per_minute` |
 | `AuditConfig` | `enabled`, `log_level`, `log_path`, `format`, `include_bodies`, `max_log_size_bytes`, `retention_count` (the last two don't apply to the kernel's log, which is never rotated) |
-| `PolicyConfig` | `enabled`, `default_decision`, `policy_paths`, `format` (`yaml` or `cedar`), `cedar_schema`, `enable_caching`, `cache_ttl_seconds`, `min_assurance` (tool pattern to `Assurance`, ADR 0013) |
+| `PolicyConfig` | `enabled`, `default_decision`, `policy_paths`, `format` (`yaml` or `cedar`), `cedar_schema`, `enable_caching`, `cache_ttl_seconds`, `min_assurance` (tool pattern to `Assurance`, ADR 0013), `labels` (`LabelConfig`: `enabled`, `sources`, `external`; ADR 0014) |
 | `ResourceConfig` | `max_memory_mb`, `max_cpu_time_ms`, `max_connections`, `max_request_size_bytes`, `max_response_size_bytes` |
 
 **Defaults:**
@@ -770,6 +852,7 @@ assert!(entry.verify_integrity());
 | `previous_hash` | `Option<String>` | Link to previous entry |
 | `outcome` | `Option<AuditOutcome>` | On an outcome entry: what happened when the tool ran |
 | `guards` | `Option<GuardChecks>` | On an entry for a call that reached the Guard stage: the level `policy.min_assurance` required and each guard that ran, with its verdict (ADR 0013) |
+| `label` | `Option<Label>` | With labels on: the arguments' label on a decision, policy-refusal or guard-refusal entry; the result's label on an outcome entry. Hashed only when present (ADR 0014) |
 
 ### The kernel's audit log
 
