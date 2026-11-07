@@ -91,9 +91,9 @@ pub use self::rate_limiter::{LimitResult, RateLimitConfig, RateLimiter, Resource
 
 // Re-export Constitution Protocol types (FUT-002)
 pub use self::constitution::{
-    Constitution, ConstitutionConfig, ConstitutionError, ConstitutionResult, ConstitutionStats,
-    ConstitutionalDecision, ConstitutionalEngine, ConstitutionalRule, ConstraintOp,
-    EnforcementPoint, Principle, RuleViolation,
+    Constitution, ConstitutionConfig, ConstitutionError, ConstitutionGuard, ConstitutionResult,
+    ConstitutionStats, ConstitutionalDecision, ConstitutionalEngine, ConstitutionalRule,
+    ConstraintOp, EnforcementPoint, Principle, RuleViolation,
 };
 
 /// Tools handled directly by the kernel, without going through the WASM
@@ -429,10 +429,20 @@ impl KernelBuilder {
         let policy = pdp::Blocklist::wrap(config.security.blocked_tools.clone(), policy);
         info!(policy = policy.name(), "Policy decision point ready");
 
+        // With `policy.constitution`, the default safety constitution runs
+        // first, before any guard the embedder added (ADR 0018).
+        let mut added = self.guards;
+        if config.policy.constitution {
+            added.insert(
+                0,
+                Arc::new(ConstitutionGuard::default_safety()) as Arc<dyn Guard>,
+            );
+        }
+
         // Each guard's name and level are read once, here, so every verdict
         // is recorded under what the guard declared when it was added.
-        let mut guards: Vec<RegisteredGuard> = Vec::with_capacity(self.guards.len());
-        for guard in self.guards {
+        let mut guards: Vec<RegisteredGuard> = Vec::with_capacity(added.len());
+        for guard in added {
             let name = guard.name().to_string();
             if name.is_empty() || guards.iter().any(|g| g.name == name) {
                 return Err(KernelError::InvalidConfiguration {

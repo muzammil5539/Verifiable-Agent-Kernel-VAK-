@@ -571,29 +571,26 @@ impl Constitution {
         self.hash == self.compute_hash()
     }
 
-    /// Compute cryptographic hash of the constitution
+    /// The constitution's hash (version 2): SHA-256 over a domain tag and
+    /// the JSON of its name, version, description, every field of every
+    /// principle and rule, and the lock.
+    ///
+    /// Version 1 hashed only rules' IDs, descriptions and enforcement
+    /// points, run together: a rule's constraint, blocking and human-review
+    /// flags and priority, and a principle's `immutable` flag, could change
+    /// and the constitution still verified.
     fn compute_hash(&self) -> String {
+        let contents = serde_json::json!({
+            "name": self.name,
+            "version": self.version,
+            "description": self.description,
+            "principles": self.principles,
+            "rules": self.rules,
+            "locked": self.locked,
+        });
         let mut hasher = Sha256::new();
-        hasher.update(self.name.as_bytes());
-        hasher.update(self.version.as_bytes());
-        hasher.update(self.description.as_bytes());
-
-        for principle in &self.principles {
-            hasher.update(principle.id.as_bytes());
-            hasher.update(principle.name.as_bytes());
-            hasher.update(principle.description.as_bytes());
-            hasher.update(principle.priority.to_le_bytes());
-        }
-
-        for rule in &self.rules {
-            hasher.update(rule.id.as_bytes());
-            hasher.update(rule.principle_id.as_bytes());
-            hasher.update(rule.description.as_bytes());
-            hasher.update(rule.enforcement_point.to_string().as_bytes());
-        }
-
-        hasher.update([self.locked as u8]);
-
+        hasher.update(b"vak-constitution-v2\0");
+        hasher.update(contents.to_string().as_bytes());
         hex::encode(hasher.finalize())
     }
 
@@ -727,12 +724,49 @@ impl ConstitutionalEngine {
             all_rules.sort_by_key(|r| std::cmp::Reverse(r.priority));
             all_rules
         };
+        Ok(self.evaluate_rules(context, &rules, start))
+    }
 
+    /// Evaluates every rule that applies before a call runs: `PrePolicy`,
+    /// `PreExecution` and `All`, each once, highest priority first.
+    /// `PostExecution` rules are left out: they read outcomes, which don't
+    /// exist yet, so a blocking one would deny every call.
+    pub fn evaluate_before_execution(&self, context: &serde_json::Value) -> ConstitutionalDecision {
+        let start = std::time::Instant::now();
+        let mut rules: Vec<_> = self
+            .constitution
+            .rules
+            .iter()
+            .filter(|r| r.enforcement_point != EnforcementPoint::PostExecution)
+            .collect();
+        rules.sort_by_key(|r| std::cmp::Reverse(r.priority));
+        if !self.config.enabled {
+            return ConstitutionalDecision {
+                allowed: true,
+                violations: Vec::new(),
+                warnings: Vec::new(),
+                requires_human_review: false,
+                evaluation_time_us: start.elapsed().as_micros() as u64,
+                constitution_hash: self.constitution.hash.clone(),
+            };
+        }
+        self.evaluation_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.evaluate_rules(context, &rules, start)
+    }
+
+    /// Evaluates `rules` against `context`.
+    fn evaluate_rules(
+        &self,
+        context: &serde_json::Value,
+        rules: &[&ConstitutionalRule],
+        start: std::time::Instant,
+    ) -> ConstitutionalDecision {
         let mut violations = Vec::new();
         let mut warnings = Vec::new();
         let mut requires_human_review = false;
 
-        for rule in &rules {
+        for rule in rules {
             let result = self.evaluate_constraint(&rule.constraint, context);
 
             match result {
@@ -788,14 +822,14 @@ impl ConstitutionalEngine {
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
 
-        Ok(ConstitutionalDecision {
+        ConstitutionalDecision {
             allowed: violations.is_empty(),
             violations,
             warnings,
             requires_human_review,
             evaluation_time_us: start.elapsed().as_micros() as u64,
             constitution_hash: self.constitution.hash.clone(),
-        })
+        }
     }
 
     /// Evaluate a constraint against context
@@ -867,7 +901,9 @@ impl ConstitutionalEngine {
                         })?;
                 Ok(num > *value)
             }
-            ConstraintOp::Exists { field } => Ok(context.get(field).is_some()),
+            // Resolved like every other field: dotted paths (`agent.name`)
+            // used to be looked up as one key, so they never existed.
+            ConstraintOp::Exists { field } => Ok(self.get_field(context, field).is_ok()),
             ConstraintOp::All(constraints) => {
                 for c in constraints {
                     if !self.evaluate_constraint(c, context)? {
@@ -934,7 +970,7 @@ impl ConstitutionalEngine {
         if field.is_empty() {
             return None;
         }
-        context.get(field).cloned()
+        self.get_field(context, field).ok()
     }
 
     /// Get the underlying constitution
@@ -974,6 +1010,132 @@ pub struct ConstitutionStats {
 }
 
 // Tests
+
+// The constitution as a guard (docs/adr/0018)
+
+/// The constitution on the request path: a [`Guard`](super::guard::Guard)
+/// that refuses what its rules forbid (docs/adr/0018).
+///
+/// - **What it checks.** Every `PrePolicy`, `PreExecution` and `All` rule,
+///   against the context [`ConstitutionGuard::context`] builds from the call.
+/// - **Its verdicts.** A blocking violation denies, naming the rules. A
+///   violated rule that needs human review escalates, which the kernel
+///   refuses: there is no approval channel. Otherwise it abstains, never
+///   passes: its rules are a blocklist, so finding nothing wrong is not a
+///   check that the call is right, and it must not count toward
+///   `policy.min_assurance`.
+/// - **Its level.** `Enforced`: deterministic, and a rule it can't evaluate
+///   (a field the call lacks) denies.
+/// - **Its constitution.** Checked once, when the guard is made: one that
+///   fails its integrity check is refused.
+#[derive(Debug)]
+pub struct ConstitutionGuard {
+    engine: ConstitutionalEngine,
+}
+
+impl ConstitutionGuard {
+    /// The guard's name, recorded with each verdict as `guard.constitution`.
+    pub const NAME: &'static str = "constitution";
+
+    /// A guard over `engine`'s constitution.
+    ///
+    /// # Errors
+    ///
+    /// [`ConstitutionError::InvalidConstitution`] if the constitution fails
+    /// its integrity check.
+    pub fn new(engine: ConstitutionalEngine) -> ConstitutionResult<Self> {
+        if !engine.constitution().verify_integrity() {
+            return Err(ConstitutionError::InvalidConstitution(
+                "it fails its integrity check: its contents don't match its hash".to_string(),
+            ));
+        }
+        Ok(Self { engine })
+    }
+
+    /// A guard over the default safety constitution.
+    #[must_use]
+    pub fn default_safety() -> Self {
+        Self {
+            engine: ConstitutionalEngine::with_default_constitution(),
+        }
+    }
+
+    /// The constitution this guard enforces.
+    #[must_use]
+    pub fn constitution(&self) -> &Constitution {
+        self.engine.constitution()
+    }
+
+    /// What a rule's fields name, for a call:
+    ///
+    /// - `agent_id`, and `session_id` when the call has one;
+    /// - `action` and `tool`: the tool's name;
+    /// - `resource`: the call's arguments as compact JSON, so a rule such
+    ///   as R-003 (no `credentials`) sees every argument, and always has a
+    ///   value to read;
+    /// - `parameters`: the arguments themselves, for dotted paths;
+    /// - `agent`: the agent's `name`, `internal` and `attributes`, when it
+    ///   has a record.
+    #[must_use]
+    pub fn context(request: &super::guard::GuardRequest<'_>) -> serde_json::Value {
+        let tool = &request.request.tool_name;
+        let mut context = serde_json::Map::new();
+        context.insert("agent_id".into(), request.agent_id.to_string().into());
+        if let Some(session) = request.session_id {
+            context.insert("session_id".into(), session.to_string().into());
+        }
+        context.insert("action".into(), tool.clone().into());
+        context.insert("tool".into(), tool.clone().into());
+        context.insert(
+            "resource".into(),
+            request.request.parameters.to_string().into(),
+        );
+        context.insert("parameters".into(), request.request.parameters.clone());
+        if let Some(record) = request.principal {
+            context.insert(
+                "agent".into(),
+                serde_json::json!({
+                    "name": record.name,
+                    "internal": record.internal,
+                    "attributes": record.attributes,
+                }),
+            );
+        }
+        serde_json::Value::Object(context)
+    }
+}
+
+#[async_trait::async_trait]
+impl super::guard::Guard for ConstitutionGuard {
+    async fn check(&self, request: &super::guard::GuardRequest<'_>) -> super::guard::GuardVerdict {
+        use super::guard::GuardVerdict;
+        let decision = self
+            .engine
+            .evaluate_before_execution(&Self::context(request));
+        if !decision.violations.is_empty() {
+            let rules: Vec<String> = decision
+                .violations
+                .iter()
+                .map(|v| format!("{} ({})", v.rule_id, v.description))
+                .collect();
+            return GuardVerdict::deny(format!("constitution: {}", rules.join("; ")));
+        }
+        if decision.requires_human_review {
+            return GuardVerdict::Escalate {
+                reason: "a constitutional rule needs human review".to_string(),
+            };
+        }
+        GuardVerdict::Abstain
+    }
+
+    fn name(&self) -> &str {
+        Self::NAME
+    }
+
+    fn assurance(&self) -> super::guard::Assurance {
+        super::guard::Assurance::Enforced
+    }
+}
 
 #[cfg(test)]
 mod tests {

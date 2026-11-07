@@ -12,6 +12,15 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 `docs/adr/0003-admit-budget-record-outcome-pipeline-stages.md` for the decision records.
 
 ### Added
+- The constitution on the request path (docs/adr/0018, finding K5). With
+  `policy.constitution`, the default safety constitution runs as the first guard:
+  `ConstitutionGuard`, assurance `enforced`.
+  - **What it does.** It denies what its rules forbid, escalates rules needing
+    review, and otherwise abstains, so it never satisfies a `min_assurance`
+    floor.
+  - **What it checks.** It evaluates `PrePolicy`, `PreExecution` and `All`
+    rules, against a context that always has a `resource`.
+  - **For embedders.** They can add one over their own constitution.
 - Cedar policies read information-flow labels (ADR 0016).
   - **What Cedar sees.** With `policy.labels.enabled`, a call's label is
     `context.labels` (`integrity`, `public`, `readers`, `sources`), and the tool's
@@ -234,6 +243,9 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- The constitution's integrity hash covers every field of every rule and
+  principle. Before, a rule's constraint or flags could change unnoticed.
+  `ConstraintOp::Exists` resolves dotted paths; they never existed.
 - `security.blocked_tools` is a hard block (docs/adr/0017).
   - **The hole.** With YAML or Cedar policies, the list was only
     `resource.restricted`, an attribute rules could ignore. A decision point

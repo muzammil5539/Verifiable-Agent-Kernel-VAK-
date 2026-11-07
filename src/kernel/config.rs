@@ -663,6 +663,14 @@ pub struct PolicyConfig {
     /// default. This holds whatever `enabled` says. See `docs/adr/0014`.
     #[serde(default, skip_serializing_if = "LabelConfig::is_default")]
     pub labels: LabelConfig,
+
+    /// Run the default safety constitution as the first guard
+    /// (`ConstitutionGuard`, assurance `enforced`). It denies what its rules
+    /// forbid and otherwise abstains, so it never satisfies a
+    /// `min_assurance` floor. Off by default. This holds whatever `enabled`
+    /// says. See `docs/adr/0018`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub constitution: bool,
 }
 
 fn default_cache_ttl() -> u64 {
@@ -681,6 +689,7 @@ impl Default for PolicyConfig {
             cache_ttl_seconds: default_cache_ttl(),
             min_assurance: BTreeMap::new(),
             labels: LabelConfig::default(),
+            constitution: false,
         }
     }
 }

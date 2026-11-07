@@ -154,12 +154,11 @@ request path. In order of leverage:
 
 - [ ] **Guard adapters for the constitution and the reasoner.** The Guard port
       exists (ADR 0013), with no adapters. In order:
-      1. **`ConstitutionalEngine`, as an Enforced guard in the core.** It must
-         answer `Abstain`, not `Pass`, when no rule objects, because its rules
-         are a blocklist. It should evaluate its `PrePolicy` and `PreExecution`
-         rules, and always supply `resource`, or rule R-003 denies every call.
-         Fix `Exists` to resolve dotted paths, and make `constitution_hash`
-         cover each rule's constraint and flags.
+      1. [x] **`ConstitutionalEngine`, as an Enforced guard in the core**
+         (ADR 0018): `ConstitutionGuard`, turned on by `policy.constitution`.
+         It abstains, never passes; evaluates `PrePolicy`, `PreExecution` and
+         `All` rules; always supplies `resource`. `Exists` resolves dotted
+         paths, and the hash covers every rule field.
       2. **`PromptInjectionDetector`, as a Heuristic guard behind `reasoner`.**
          First fix its UTF-8 slicing panic (`prompt_injection.rs`
          `&input[..max_input_length]`), and drop the allowlist short-circuit,
