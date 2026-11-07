@@ -234,6 +234,11 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- `AuditLogger::verify_signatures` refuses an unsigned entry (finding V7).
+  - **The hole.** Signatures aren't hashed, so stripping them left a signed log's
+    chain intact, and the signature check passed.
+  - **What changes.** Failures now name the entry, rather than entry 0. A log
+    whose early entries predate signing can check its chain alone.
 - `FileAuditBackend::rotate` never overwrites a rotated file.
   - **The loss.** Rotated files were named by the second, so a second rotation in
     the same second renamed over the first and lost its entries. A taken name now

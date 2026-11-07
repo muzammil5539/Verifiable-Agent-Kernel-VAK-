@@ -1456,42 +1456,52 @@ impl AuditLogger {
         Ok(check)
     }
 
-    /// Verify all signatures in the chain (Issue #51)
+    /// Verifies every entry's signature against `public_key_hex`.
     ///
-    /// Requires the public key that was used for signing
+    /// An entry without a signature fails. The signature isn't part of an
+    /// entry's hash (it signs the hash), so removing one leaves the chain
+    /// intact; an unsigned entry used to pass, so stripping signatures
+    /// defeated the check. A log whose early entries predate signing can
+    /// still verify its chain with [`AuditLogger::verify_chain`].
+    ///
+    /// # Errors
+    ///
+    /// [`AuditVerificationError::InvalidSignature`] naming the first entry
+    /// that is unsigned, or whose signature doesn't verify. A read failure
+    /// is reported the same way, with entry 0.
     pub fn verify_signatures(&self, public_key_hex: &str) -> Result<(), AuditVerificationError> {
+        let mut failure: Option<(u64, String)> = None;
         let mut verify_fn = |entry: &AuditEntry| -> Result<(), AuditError> {
-            if let Some(ref signature) = entry.signature {
-                match AuditSigner::verify_with_public_key(public_key_hex, &entry.hash, signature) {
-                    Ok(true) => Ok(()),
-                    Ok(false) => Err(AuditError::ChainVerificationFailed(format!(
-                        "Signature verification failed for entry {}",
-                        entry.id
-                    ))),
-                    Err(e) => Err(AuditError::ChainVerificationFailed(format!(
-                        "Signature verification error for entry {}: {:?}",
-                        entry.id, e
-                    ))),
-                }
-            } else {
-                Ok(())
-            }
-        };
-
-        self.backend
-            .for_each_entry(&mut verify_fn)
-            .map_err(|e| match e {
-                AuditError::ChainVerificationFailed(msg) => {
-                    AuditVerificationError::InvalidSignature {
-                        entry_id: 0,
-                        reason: msg,
+            let reason = match &entry.signature {
+                None => "the entry is unsigned".to_string(),
+                Some(signature) => {
+                    match AuditSigner::verify_with_public_key(
+                        public_key_hex,
+                        &entry.hash,
+                        signature,
+                    ) {
+                        Ok(true) => return Ok(()),
+                        Ok(false) => "the signature doesn't verify".to_string(),
+                        Err(e) => format!("the signature can't be checked: {e:?}"),
                     }
                 }
-                e => AuditVerificationError::InvalidSignature {
+            };
+            failure = Some((entry.id, reason.clone()));
+            Err(AuditError::ChainVerificationFailed(reason))
+        };
+
+        match self.backend.for_each_entry(&mut verify_fn) {
+            Ok(()) => Ok(()),
+            Err(e) => Err(match failure {
+                Some((entry_id, reason)) => {
+                    AuditVerificationError::InvalidSignature { entry_id, reason }
+                }
+                None => AuditVerificationError::InvalidSignature {
                     entry_id: 0,
-                    reason: format!("Backend error: {:?}", e),
+                    reason: format!("Backend error: {e:?}"),
                 },
-            })
+            }),
+        }
     }
 
     /// Verify both chain integrity and signatures
@@ -1886,6 +1896,60 @@ mod tests {
         assert!(empty.load_all().unwrap().is_empty());
         assert!(empty.get_last().unwrap().is_none());
         assert!(empty.get_entry(1).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_a_stripped_signature_fails_signature_verification() {
+        // The signature isn't hashed, so removing one leaves the chain
+        // intact. An unsigned entry used to pass verify_signatures.
+        let signer = AuditSigner::new();
+        let public_key = signer.public_key_hex.clone();
+        let mut logger =
+            AuditLogger::with_backend_and_signer(Box::new(MemoryAuditBackend::new()), signer)
+                .unwrap();
+        for i in 0..3 {
+            logger
+                .log(format!("agent-{i}"), "read", "/r", AuditDecision::Allowed)
+                .unwrap();
+        }
+        logger.verify_all(Some(&public_key)).unwrap();
+
+        let mut entries = logger.load_all_entries().unwrap();
+        entries[1].signature = None;
+        let stripped = AuditLogger::with_backend(Box::new(backend_of(&entries))).unwrap();
+        stripped.verify_chain().unwrap();
+        match stripped.verify_signatures(&public_key) {
+            Err(AuditVerificationError::InvalidSignature { entry_id, reason }) => {
+                assert_eq!(entry_id, entries[1].id);
+                assert!(reason.contains("unsigned"), "{reason}");
+            }
+            other => panic!("a stripped signature must not verify: {other:?}"),
+        }
+
+        // A signature under another key names its entry too.
+        let other_key = AuditSigner::new().public_key_hex;
+        match logger.verify_signatures(&other_key) {
+            Err(AuditVerificationError::InvalidSignature { entry_id, reason }) => {
+                assert_eq!(entry_id, 1);
+                assert!(reason.contains("doesn't verify"), "{reason}");
+            }
+            other => panic!("expected a refusal: {other:?}"),
+        }
+        assert!(matches!(
+            logger.verify_signatures("not hex"),
+            Err(AuditVerificationError::InvalidSignature { entry_id: 1, .. })
+        ));
+        let shown = logger.verify_all(Some(&other_key)).unwrap_err().to_string();
+        assert!(shown.starts_with("Invalid signature at entry 1"), "{shown}");
+    }
+
+    /// A memory backend holding `entries` as they are.
+    fn backend_of(entries: &[AuditEntry]) -> MemoryAuditBackend {
+        let mut backend = MemoryAuditBackend::new();
+        for entry in entries {
+            backend.append(entry).unwrap();
+        }
+        backend
     }
 
     #[test]
