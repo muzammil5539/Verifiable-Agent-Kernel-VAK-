@@ -192,6 +192,16 @@ request path. In order of leverage:
       S3-compatible endpoint that CI can run (MinIO), or depend on an AWS SDK,
       then cross-region `check_consistency`. Until then, don't configure them as
       archives.
+- [ ] **Verified marketplace installs (finding K14).** With
+      `verify_signatures`, the default, `MarketplaceClient::install` refuses
+      every skill: it can't verify a signature, and a key the registry
+      supplies proves nothing against that registry. Have the registry deliver
+      the skill registry's own signed manifest (docs/adr/0005, signed with a
+      key in `security.trusted_skill_keys`) and write it as delivered, so the
+      kernel verifies it at load. Also resolve dependency version ranges (a
+      `version_req` is used as an exact version) and map
+      `required_permissions` to `SkillPermissions` (installed manifests grant
+      none).
 - [ ] **Gate high-risk actions on the neuro-symbolic reasoner.** PRM scoring,
       the Datalog safety engine (`src/reasoner/datalog.rs`), and the Z3
       verification gateway are implemented and unit-tested, but

@@ -234,6 +234,28 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- `MarketplaceClient::install` no longer trusts the registry (finding K14).
+  - **Paths.** Names and versions, including the dependencies a registry lists,
+    are checked before they reach a path or URL. A dependency named `../../x`
+    used to write outside the install directory.
+  - **Binaries.** Every binary must match its version's SHA-256, whether cached
+    or downloaded. A cached one used to go unchecked, and downloads were
+    checked against the latest version's hash. Downloads are capped by the new
+    `max_download_bytes` (64 MiB by default).
+  - **Manifest.** It is the skill registry's `SkillManifest`, serialized and
+    unsigned, with no permissions. A newline in the registry's description
+    used to add manifest keys.
+  - **Signatures and publishers.** With `verify_signatures`, the default,
+    `install` now refuses with `SignatureUnverifiable`; it used to install
+    unverified. A non-empty `trusted_publishers` list alone decides; the
+    registry's own `verified` flag used to override it.
+  - **Smaller fixes.**
+    - Dependency cycles end, and chains are capped at 16 deep.
+    - Prereleases need `allow_prerelease`, and yanked versions are refused.
+    - `uninstall` deletes only its own skill's files; its glob matched other
+      skills' (`calc-*` matches `calc-extra`).
+    - The API key goes with every request.
+    - Cache ages saturate.
 - Reasoning host functions in `sandbox::reasoning_host` fail closed (finding R5).
   - **Approving everything.** The functions `register_reasoning_functions`
     registers, which have no state, returned "allowed" for every plan and
