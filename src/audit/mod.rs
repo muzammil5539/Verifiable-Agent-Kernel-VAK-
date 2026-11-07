@@ -18,8 +18,9 @@
 //! - Ed25519 signing for non-repudiation (Issue #51)
 //! - Chain verification and integrity checks
 //! - SQLite backend for queryable storage (Issue #4)
-//! - S3 backend for cloud archival
-//! - Multi-region S3 replication for disaster recovery
+//! - S3 and multi-region backends: buffering, batching and failover only.
+//!   Uploads aren't implemented, so their flushes fail and keep the buffer
+//!   (finding K12)
 //! - Real-time streaming for live monitoring
 //! - Flight recorder for shadow mode (#43)
 //!
@@ -136,8 +137,8 @@ impl std::fmt::Display for AuditDecision {
 /// Allows pluggable persistence for audit logs:
 /// - Memory (default, for testing)
 /// - File (append-only log files)
-/// - Database (PostgreSQL/SQLite for queries)
-/// - S3/Cloud (for archival)
+/// - Database (SQLite for queries)
+/// - S3 (buffers only; uploads aren't implemented, finding K12)
 pub trait AuditBackend: Send + Sync + std::fmt::Debug {
     /// Append an entry to the audit log
     fn append(&mut self, entry: &AuditEntry) -> Result<(), AuditError>;

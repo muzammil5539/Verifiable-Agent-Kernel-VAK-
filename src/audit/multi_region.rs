@@ -407,8 +407,10 @@ pub struct MultiRegionS3Backend {
     active_primary: Arc<RwLock<String>>,
     /// Is in failover state
     is_failover: AtomicBool,
-    /// Entry counter
+    /// Entries appended
     entry_counter: AtomicU64,
+    /// Object keys generated, to keep keys unique
+    object_counter: AtomicU64,
     /// Local cache for queries
     local_cache: Arc<RwLock<Vec<AuditEntry>>>,
     /// Maximum cache size
@@ -447,6 +449,7 @@ impl MultiRegionS3Backend {
             active_primary: Arc::new(RwLock::new(primary_region)),
             is_failover: AtomicBool::new(false),
             entry_counter: AtomicU64::new(0),
+            object_counter: AtomicU64::new(0),
             local_cache: Arc::new(RwLock::new(Vec::new())),
             max_cache_size: 10000,
             last_flush: Arc::new(RwLock::new(SystemTime::now())),
@@ -489,7 +492,9 @@ impl MultiRegionS3Backend {
             region_health: health,
             replication_status: Vec::new(), // Would be populated by monitoring
             last_consistency_check: None,
-            consistency_ok: true,
+            // No consistency check has passed: none can run yet. This
+            // used to say `true`.
+            consistency_ok: false,
             total_entries: self.entry_counter.load(Ordering::SeqCst),
         }
     }
@@ -682,7 +687,8 @@ impl MultiRegionS3Backend {
         Ok(())
     }
 
-    /// Upload entries to a specific region
+    /// Upload entries to a specific region. Always an error for now:
+    /// uploads aren't implemented (finding K12).
     async fn upload_to_region(
         &self,
         region: &RegionConfig,
@@ -704,22 +710,12 @@ impl MultiRegionS3Backend {
             )
         };
 
-        // In production, use proper AWS SDK with SigV4 signing
-        tracing::info!(
-            "Uploading {} entries to s3://{}/{} (region: {})",
+        // The object is ready but can't be sent without AWS Signature V4.
+        // This used to log "upload simulated" and report it stored.
+        Err(super::s3_backend::not_uploaded(
             entries.len(),
-            region.bucket,
-            object_key,
-            region.region
-        );
-
-        // Simulate upload for now
-        tracing::debug!(
-            "S3 upload simulated for {} (use AWS SDK in production)",
-            region.region
-        );
-
-        Ok(object_key)
+            &format!("s3://{}/{object_key} ({})", region.bucket, region.region),
+        ))
     }
 
     /// Generate object key for a region
@@ -729,7 +725,7 @@ impl MultiRegionS3Backend {
             .unwrap_or_default()
             .as_secs();
 
-        let counter = self.entry_counter.fetch_add(1, Ordering::Relaxed);
+        let counter = self.object_counter.fetch_add(1, Ordering::Relaxed);
         let date = chrono::Utc::now().format("%Y/%m/%d");
         let extension = if self.config.compression {
             "jsonl.gz"
@@ -772,14 +768,24 @@ impl MultiRegionS3Backend {
         encoder.finish().map_err(AuditError::IoError)
     }
 
-    /// Flush buffer to all configured regions based on replication mode
+    /// Uploads the buffered entries to the regions the replication mode
+    /// requires (every region for active-active, the active primary
+    /// otherwise), and empties the buffer only once all of those have them.
+    /// With nothing buffered, `Ok` with no keys.
+    ///
+    /// # Errors
+    ///
+    /// The first required upload that fails. Uploads aren't implemented
+    /// (finding K12), so any buffered entries fail, and stay buffered.
+    /// Active-active used to return `Ok` even when every region failed,
+    /// having dropped the entries.
     pub async fn flush_async(&self) -> Result<Vec<String>, AuditError> {
         let entries: Vec<AuditEntry> = {
-            let mut buffer = self
+            let buffer = self
                 .buffer
-                .write()
+                .read()
                 .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
-            buffer.drain(..).collect()
+            buffer.clone()
         };
 
         if entries.is_empty() {
@@ -797,6 +803,7 @@ impl MultiRegionS3Backend {
             ReplicationMode::ActiveActive => {
                 // Upload to all regions simultaneously
                 let regions = self.config.all_regions();
+                let mut failure = None;
                 for region in regions {
                     match self.upload_to_region(region, &entries).await {
                         Ok(key) => {
@@ -806,14 +813,19 @@ impl MultiRegionS3Backend {
                         }
                         Err(e) => {
                             tracing::error!("Failed to upload to region {}: {}", region.region, e);
-                            // Update health status
                             if let Ok(mut health) = self.health.write() {
                                 if let Some(h) = health.get_mut(&region.region) {
                                     h.mark_unhealthy(e.to_string());
                                 }
                             }
+                            failure.get_or_insert(e);
                         }
                     }
+                }
+                // Every region must hold the entries before they leave the
+                // buffer.
+                if let Some(e) = failure {
+                    return Err(e);
                 }
             }
             ReplicationMode::ActivePassive => {
@@ -842,6 +854,10 @@ impl MultiRegionS3Backend {
                             return Err(e);
                         }
                     }
+                } else {
+                    return Err(AuditError::BackendNotAvailable(format!(
+                        "the active primary region {primary_region} isn't configured"
+                    )));
                 }
             }
             ReplicationMode::PrimaryOnly => {
@@ -857,10 +873,19 @@ impl MultiRegionS3Backend {
                     if !key.is_empty() {
                         uploaded_keys.push(format!("{}:{}", primary_region, key));
                     }
+                } else {
+                    return Err(AuditError::BackendNotAvailable(format!(
+                        "the active primary region {primary_region} isn't configured"
+                    )));
                 }
             }
         }
 
+        // Stored where required: drop exactly what was uploaded.
+        if let Ok(mut buffer) = self.buffer.write() {
+            let stored = entries.len().min(buffer.len());
+            buffer.drain(..stored);
+        }
         Ok(uploaded_keys)
     }
 
@@ -877,18 +902,19 @@ impl MultiRegionS3Backend {
         }
     }
 
-    /// Check consistency across regions
+    /// Checks that the regions hold the same entries.
+    ///
+    /// # Errors
+    ///
+    /// Always, for now: reading a region back needs signed requests, which
+    /// aren't implemented (finding K12). This used to return `Ok(true)`
+    /// without looking at any region.
     pub async fn check_consistency(&self) -> Result<bool, AuditError> {
-        // In production, this would:
-        // 1. Get latest entry hash from each region
-        // 2. Compare hashes to ensure consistency
-        // 3. Report any discrepancies
-
-        tracing::info!("Checking cross-region consistency...");
-
-        let _health = self.get_health_status();
-        // For now, assume consistent if all healthy regions reachable
-        Ok(true)
+        Err(AuditError::BackendNotAvailable(
+            "cross-region consistency checks aren't implemented: regions can't be read back \
+             without signed S3 requests"
+                .to_string(),
+        ))
     }
 }
 
@@ -916,6 +942,7 @@ impl AuditBackend for MultiRegionS3Backend {
 
         // Add to local cache
         self.add_to_cache(entry);
+        self.entry_counter.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
     }
@@ -957,12 +984,18 @@ impl AuditBackend for MultiRegionS3Backend {
         Ok(cache_count as u64)
     }
 
+    /// Fails while anything is buffered: buffered entries aren't stored.
+    /// This used to return `Ok` without uploading.
     fn flush(&mut self) -> Result<(), AuditError> {
-        // For sync interface, warn about async nature
-        tracing::warn!(
-            "MultiRegionS3Backend::flush() called synchronously. Use flush_async() for actual S3 upload."
-        );
-        Ok(())
+        let pending = self
+            .buffer
+            .read()
+            .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?
+            .len();
+        if pending == 0 {
+            return Ok(());
+        }
+        Err(super::s3_backend::not_uploaded(pending, "every region"))
     }
 
     fn get_by_agent(&self, agent_id: &str) -> Result<Vec<AuditEntry>, AuditError> {
@@ -1168,5 +1201,84 @@ mod tests {
 
         assert_ne!(active_active, active_passive);
         assert_ne!(active_passive, primary_only);
+    }
+
+    async fn buffered(mode: ReplicationMode, entries: u64) -> MultiRegionS3Backend {
+        let config = MultiRegionConfig::new()
+            .with_primary_region("us-east-1", "primary")
+            .with_replica_region("eu-west-1", "replica")
+            .with_replication_mode(mode);
+        let mut backend = MultiRegionS3Backend::new(config).await.unwrap();
+        for i in 0..entries {
+            backend.append(&create_test_entry(i, "agent")).unwrap();
+        }
+        backend
+    }
+
+    #[tokio::test]
+    async fn test_a_flush_fails_and_keeps_the_entries_in_every_mode() {
+        // Active-active used to report success even when every region
+        // failed, having dropped the entries; and every upload was
+        // simulated.
+        for mode in [
+            ReplicationMode::ActiveActive,
+            ReplicationMode::ActivePassive,
+            ReplicationMode::PrimaryOnly,
+        ] {
+            let backend = buffered(mode, 3).await;
+            let err = backend.flush_async().await.unwrap_err();
+            assert!(err.to_string().contains("not stored"), "{mode:?}: {err}");
+            assert_eq!(
+                backend.buffer.read().unwrap().len(),
+                3,
+                "{mode:?}: nothing was dropped"
+            );
+            assert!(buffered(mode, 0)
+                .await
+                .flush_async()
+                .await
+                .unwrap()
+                .is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_a_sync_flush_and_the_consistency_check_fail_closed() {
+        let mut backend = buffered(ReplicationMode::ActiveActive, 1).await;
+        assert!(backend.flush().is_err());
+        assert!(buffered(ReplicationMode::ActiveActive, 0)
+            .await
+            .flush()
+            .is_ok());
+        assert!(
+            backend.check_consistency().await.is_err(),
+            "it used to answer Ok(true) without reading any region"
+        );
+        let _ = backend.flush_async().await;
+        let status = backend.get_status();
+        assert_eq!(status.active_primary, "us-east-1");
+        assert!(!status.consistency_ok, "no check has passed");
+        assert_eq!(status.total_entries, 1, "entries, not object keys");
+        assert!(format!("{backend:?}").contains("us-east-1"));
+    }
+
+    #[tokio::test]
+    async fn test_an_unhealthy_region_moves_to_a_failover() {
+        let backend = buffered(ReplicationMode::ActivePassive, 0).await;
+        if let Ok(mut health) = backend.health.write() {
+            health.get_mut("us-east-1").unwrap().mark_unhealthy("down");
+        }
+        backend.evaluate_failover().await;
+        assert!(backend.is_in_failover());
+        assert_eq!(backend.active_primary_region(), "eu-west-1");
+
+        // Failback waits for the original primary.
+        assert!(backend.failback().await.is_err());
+        if let Ok(mut health) = backend.health.write() {
+            health.get_mut("us-east-1").unwrap().mark_healthy(1.0);
+        }
+        backend.failback().await.unwrap();
+        assert!(!backend.is_in_failover());
+        assert_eq!(backend.active_primary_region(), "us-east-1");
     }
 }

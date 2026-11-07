@@ -234,6 +234,21 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- The S3 and multi-region audit backends no longer report uploads they didn't make
+  (finding K12).
+  - **They never uploaded.** `S3AuditBackend` built an unsigned request, logged
+    "upload simulated" and returned its key. By then the buffer had been drained,
+    so the entries were gone.
+  - **Rotation lost entries.** The synchronous `flush()` returned `Ok`, so an
+    `AuditLogger` rotating into either backend evicted entries never stored.
+  - **Now they fail closed.** Every flush with entries buffered fails, saying
+    uploads aren't implemented (no AWS Signature V4), and the entries stay
+    buffered. Rotation keeps what it couldn't archive.
+  - **Active-active** returned `Ok` even when every region failed. It now fails
+    unless every region stores the entries.
+  - **Consistency.** `check_consistency` returned `Ok(true)` without reading a
+    region; it now fails. `get_status` reports `consistency_ok: false`, and
+    `total_entries` counts entries rather than object keys.
 - The flight recorder's hash chain (finding V6).
   - **Edits were missed.** Verification checked only that each event named the one
     before it, so an edited decision or output still verified. It now recomputes

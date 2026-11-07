@@ -186,6 +186,12 @@ request path. In order of leverage:
          itself. Bind it to the connection, or require registered agents.
       5. **Labels are never forgotten.** Each agent's label lives as long as the
          kernel; an embedder that mints an agent per task keeps one per task.
+- [ ] **Signed S3 uploads (finding K12).** `S3AuditBackend` and
+      `MultiRegionS3Backend` fail every flush: they can't sign requests (AWS
+      Signature V4), and used to pretend to upload. Implement SigV4 against an
+      S3-compatible endpoint that CI can run (MinIO), or depend on an AWS SDK,
+      then cross-region `check_consistency`. Until then, don't configure them as
+      archives.
 - [ ] **Gate high-risk actions on the neuro-symbolic reasoner.** PRM scoring,
       the Datalog safety engine (`src/reasoner/datalog.rs`), and the Z3
       verification gateway are implemented and unit-tested, but

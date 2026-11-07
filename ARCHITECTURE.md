@@ -280,8 +280,8 @@ AuditEntry[N]
 | `AuditQueryEngine` | `graphql.rs` | GraphQL-style query API |
 | `VakTracer` | `otel.rs` | OpenTelemetry integration |
 | `AuditStreaming` | `streaming.rs` | Live event streaming |
-| `S3Backend` | `s3_backend.rs` | Cloud archival storage |
-| `MultiRegionReplication` | `multi_region.rs` | Cross-region replication |
+| `S3AuditBackend` | `s3_backend.rs` | Buffers entries for S3; uploads aren't implemented, so flushes fail and keep the buffer (finding K12) |
+| `MultiRegionS3Backend` | `multi_region.rs` | Region health and failover; uploads fail as for `S3AuditBackend` (K12) |
 
 **Storage:** the kernel's log uses memory, JSONL or SQLite (`rusqlite`). `AuditLogger`'s
 backends are file, SQLite, S3 and memory.

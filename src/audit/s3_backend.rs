@@ -1,13 +1,19 @@
 //! S3 Backend for Cloud Audit Log Archival
 //!
-//! Provides cloud storage backend for long-term audit log archival to AWS S3.
+//! **Uploads are not implemented.** The backend buffers entries in memory
+//! and builds the objects it would write, but it can't sign a request (AWS
+//! Signature V4), so it sends nothing. Every flush fails, saying so, and
+//! keeps the entries buffered (finding K12). It used to report each upload
+//! as done and drop the entries.
 //!
-//! # Features
-//! - Append-only archival to S3 buckets
-//! - Automatic batching for efficient uploads
-//! - Compression support (gzip)
-//! - Lifecycle policy integration
-//! - Cross-region replication awareness
+//! An [`AuditLogger`](crate::audit::AuditLogger) rotating into this backend
+//! therefore keeps the entries it couldn't archive, rather than losing them.
+//!
+//! What works:
+//! - buffering, with a local cache that answers queries;
+//! - batching thresholds (`maybe_flush`);
+//! - object keys, JSONL and gzip bodies, storage-class and encryption
+//!   headers: the request a signer would send.
 //!
 //! # Example
 //!
@@ -134,8 +140,8 @@ impl S3Config {
 
 /// S3-based audit backend for cloud archival
 ///
-/// This backend batches audit entries and periodically uploads them to S3.
-/// It supports compression, encryption, and various storage classes.
+/// Buffers entries for upload to S3. Uploads aren't implemented, so every
+/// flush fails and keeps the buffer; see the module docs.
 pub struct S3AuditBackend {
     config: S3Config,
     /// Buffered entries waiting to be uploaded
@@ -221,8 +227,8 @@ impl S3AuditBackend {
         Ok(output)
     }
 
-    /// Upload batch to S3
-    async fn upload_batch(&self, entries: Vec<AuditEntry>) -> Result<String, AuditError> {
+    /// Upload batch to S3. Always an error for now: see the module docs.
+    async fn upload_batch(&self, entries: &[AuditEntry]) -> Result<String, AuditError> {
         if entries.is_empty() {
             return Ok(String::new());
         }
@@ -230,9 +236,9 @@ impl S3AuditBackend {
         let object_key = self.generate_object_key();
 
         let body = if self.config.compression {
-            self.compress_entries(&entries)?
+            self.compress_entries(entries)?
         } else {
-            self.serialize_entries(&entries)?
+            self.serialize_entries(entries)?
         };
 
         // Build S3 PUT URL
@@ -266,26 +272,14 @@ impl S3AuditBackend {
             };
         }
 
-        // Log the request for debugging (suppress unused warning)
-        let _request_debug = format!("{:?}", request);
-
-        // Note: In production, you would use proper AWS SDK or signing
-        // This is a simplified example that would need AWS Signature V4
-        tracing::info!(
-            "Uploading {} audit entries to s3://{}/{}",
+        // The request is complete but for its signature. Without AWS
+        // Signature V4, S3 would refuse it, so it isn't sent. This used to
+        // log "upload simulated" and report the entries as stored.
+        drop(request);
+        Err(not_uploaded(
             entries.len(),
-            self.config.bucket,
-            object_key
-        );
-
-        // For this implementation, we'll simulate success and log
-        // In production, use aws-sdk-s3 or rusoto
-        tracing::debug!(
-            "S3 upload simulated (use AWS SDK for production): {}",
-            object_key
-        );
-
-        Ok(object_key)
+            &format!("s3://{}/{object_key}", self.config.bucket),
+        ))
     }
 
     /// Check if flush is needed based on buffer size or time
@@ -308,7 +302,11 @@ impl S3AuditBackend {
         false
     }
 
-    /// Flush buffer to S3 if needed
+    /// Flush buffer to S3 if needed.
+    ///
+    /// # Errors
+    ///
+    /// As [`S3AuditBackend::flush_async`], whenever a flush is due.
     pub async fn maybe_flush(&self) -> Result<Option<String>, AuditError> {
         if !self.should_flush() {
             return Ok(None);
@@ -317,14 +315,20 @@ impl S3AuditBackend {
         self.flush_async().await.map(Some)
     }
 
-    /// Force flush buffer to S3
+    /// Uploads the buffered entries, and empties the buffer only if they
+    /// were stored. With nothing buffered, `Ok("")`.
+    ///
+    /// # Errors
+    ///
+    /// [`AuditError::BackendNotAvailable`] for any buffered entries: uploads
+    /// aren't implemented. The entries stay buffered.
     pub async fn flush_async(&self) -> Result<String, AuditError> {
         let entries: Vec<AuditEntry> = {
-            let mut buffer = self
+            let buffer = self
                 .buffer
                 .lock()
                 .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
-            buffer.drain(..).collect()
+            buffer.iter().cloned().collect()
         };
 
         if entries.is_empty() {
@@ -340,7 +344,14 @@ impl S3AuditBackend {
             *last_flush = SystemTime::now();
         }
 
-        self.upload_batch(entries).await
+        let key = self.upload_batch(&entries).await?;
+        // Stored: drop exactly what was uploaded. Entries appended meanwhile
+        // stay.
+        if let Ok(mut buffer) = self.buffer.lock() {
+            let stored = entries.len().min(buffer.len());
+            buffer.drain(..stored);
+        }
+        Ok(key)
     }
 
     /// Add entry to local cache
@@ -426,13 +437,22 @@ impl AuditBackend for S3AuditBackend {
         Ok(cache_count as u64)
     }
 
+    /// Fails while anything is buffered: buffered entries aren't stored.
+    /// This used to return `Ok` without uploading, so a caller (such as
+    /// `AuditLogger` rotation) took the entries for archived.
     fn flush(&mut self) -> Result<(), AuditError> {
-        // For sync interface, we can't call async flush
-        // Log a warning and return success
-        tracing::warn!(
-            "S3AuditBackend::flush() called synchronously. Use flush_async() for actual S3 upload."
-        );
-        Ok(())
+        let pending = self
+            .buffer
+            .lock()
+            .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?
+            .len();
+        if pending == 0 {
+            return Ok(());
+        }
+        Err(not_uploaded(
+            pending,
+            &format!("s3://{}", self.config.bucket),
+        ))
     }
 
     fn get_by_agent(&self, agent_id: &str) -> Result<Vec<AuditEntry>, AuditError> {
@@ -471,6 +491,14 @@ impl AuditBackend for S3AuditBackend {
 
         Ok(cache.iter().find(|e| e.id == id).cloned())
     }
+}
+
+/// The error for entries this backend can't upload.
+pub(crate) fn not_uploaded(count: usize, destination: &str) -> AuditError {
+    AuditError::BackendNotAvailable(format!(
+        "S3 uploads aren't implemented (requests can't be signed with AWS Signature V4), so \
+         {count} entries for {destination} were not stored; they stay buffered"
+    ))
 }
 
 // S3 Object Listing (for archive queries)
@@ -523,7 +551,7 @@ impl ArchiveQuery {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audit::AuditDecision;
+    use crate::audit::{AuditDecision, AuditLogger, RotationConfig};
 
     fn create_test_entry(id: u64, agent_id: &str) -> AuditEntry {
         AuditEntry {
@@ -659,5 +687,112 @@ mod tests {
         // Add to reach batch size
         backend.append(&create_test_entry(4, "agent")).unwrap();
         assert!(backend.should_flush());
+    }
+
+    fn buffered(entries: u64) -> S3AuditBackend {
+        let mut backend = tokio_test::block_on(S3AuditBackend::new(
+            S3Config::new("test-bucket", "us-east-1").with_batch_size(2),
+        ))
+        .unwrap();
+        for i in 0..entries {
+            backend.append(&create_test_entry(i, "agent")).unwrap();
+        }
+        backend
+    }
+
+    #[test]
+    fn test_a_flush_fails_and_keeps_the_entries() {
+        // Uploads were simulated: the entries were drained and reported
+        // stored, though nothing was sent.
+        let backend = buffered(3);
+        let err = tokio_test::block_on(backend.flush_async()).unwrap_err();
+        assert!(err.to_string().contains("not stored"), "{err}");
+        assert!(err.to_string().contains("3 entries"), "{err}");
+        assert_eq!(
+            backend.buffer.lock().unwrap().len(),
+            3,
+            "nothing was dropped"
+        );
+        assert!(
+            tokio_test::block_on(backend.maybe_flush()).is_err(),
+            "a due flush fails too"
+        );
+        assert_eq!(backend.get_last().unwrap().unwrap().id, 2);
+
+        let empty = buffered(0);
+        assert_eq!(tokio_test::block_on(empty.flush_async()).unwrap(), "");
+        assert_eq!(
+            tokio_test::block_on(empty.maybe_flush()).unwrap(),
+            None,
+            "nothing due"
+        );
+        assert!(format!("{empty:?}").contains("test-bucket"));
+    }
+
+    #[test]
+    fn test_a_sync_flush_fails_while_anything_is_buffered() {
+        let mut backend = buffered(1);
+        assert!(backend.flush().is_err());
+        assert!(buffered(0).flush().is_ok());
+    }
+
+    #[test]
+    fn test_rotating_into_s3_keeps_what_it_could_not_archive() {
+        // The failure that mattered: rotation appends to its archive, then
+        // flushes, and evicts only if the flush succeeds. A flush that
+        // claimed success evicted entries that were never stored anywhere.
+        let mut logger = AuditLogger::new();
+        logger.set_rotation(RotationConfig::with_archival(5, Box::new(buffered(0))));
+        for i in 0..12 {
+            logger
+                .log(format!("agent-{i}"), "read", "/r", AuditDecision::Allowed)
+                .unwrap();
+        }
+        assert_eq!(logger.count().unwrap(), 12, "nothing lost");
+        assert_eq!(logger.rotated_count(), 0);
+        logger.verify_chain().unwrap();
+    }
+
+    #[test]
+    fn test_queries_answer_from_the_cache() {
+        let backend = buffered(4);
+        assert_eq!(backend.get_entry(2).unwrap().unwrap().id, 2);
+        assert!(backend.get_entry(99).unwrap().is_none());
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert_eq!(backend.get_by_time_range(0, now + 1).unwrap().len(), 4);
+        assert!(backend.get_by_time_range(0, 1).unwrap().is_empty());
+        let mut seen = 0;
+        backend
+            .for_each_entry(&mut |_| {
+                seen += 1;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(seen, 4);
+
+        let query = ArchiveQuery::date_range(
+            chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+            chrono::NaiveDate::from_ymd_opt(2026, 1, 31).unwrap(),
+        )
+        .with_max_results(10);
+        assert_eq!(query.max_results, Some(10));
+    }
+
+    #[test]
+    fn test_an_endpoint_and_credentials_configure_the_backend() {
+        let config = S3Config::new("b", "eu-west-1")
+            .with_endpoint("http://localhost:9000")
+            .with_credentials("AKIA", "secret")
+            .without_compression();
+        assert_eq!(
+            config.endpoint_url.as_deref(),
+            Some("http://localhost:9000")
+        );
+        assert!(config.access_key_id.is_some() && !config.compression);
+        let backend = tokio_test::block_on(S3AuditBackend::new(config)).unwrap();
+        assert!(backend.generate_object_key().ends_with(".jsonl"));
     }
 }
