@@ -18,8 +18,8 @@
 //! let config = StreamConfig::default();
 //! let manager = AuditStreamManager::new(config);
 //!
-//! // Subscribe to audit events
-//! let subscriber_id = manager.subscribe(StreamFilter::all()).unwrap();
+//! // Subscribe to audit events: matching events arrive on the receiver.
+//! let (subscriber_id, mut events) = manager.subscribe(StreamFilter::all()).unwrap();
 //!
 //! // Get recent events matching a filter
 //! let events = manager.get_recent_events(&StreamFilter::all(), Some(10));
@@ -513,10 +513,11 @@ pub struct AuditStreamManager {
     subscribers: Arc<RwLock<HashMap<SubscriberId, Subscriber>>>,
     /// Broadcast channel for events
     broadcast_tx: broadcast::Sender<StreamEvent>,
-    /// Event sequence counter
-    sequence: AtomicU64,
-    /// Is streaming active
-    is_active: AtomicBool,
+    /// Event sequence counter, shared with the heartbeat task so every
+    /// event gets its own number.
+    sequence: Arc<AtomicU64>,
+    /// Is streaming active, shared with the heartbeat task.
+    is_active: Arc<AtomicBool>,
     /// Recent events buffer (for replay)
     recent_events: Arc<RwLock<Vec<StreamEvent>>>,
     /// Streaming statistics
@@ -556,25 +557,39 @@ impl AuditStreamManager {
             config,
             subscribers: Arc::new(RwLock::new(HashMap::new())),
             broadcast_tx,
-            sequence: AtomicU64::new(0),
-            is_active: AtomicBool::new(true),
+            sequence: Arc::new(AtomicU64::new(0)),
+            is_active: Arc::new(AtomicBool::new(true)),
             recent_events: Arc::new(RwLock::new(Vec::new())),
             stats: Arc::new(RwLock::new(StreamStats::default())),
             shutdown_tx,
         }
     }
 
-    /// Subscribe to the event stream
-    pub fn subscribe(&self, filter: StreamFilter) -> Result<SubscriberId, AuditError> {
+    /// Subscribes to the events `filter` matches. They arrive on the
+    /// returned receiver, up to `channel_buffer_size` unread; beyond that
+    /// they are dropped and counted. Dropping the receiver ends the
+    /// subscription at the next event published.
+    ///
+    /// # Errors
+    ///
+    /// [`AuditError::BackendNotAvailable`] if `max_subscribers` is reached.
+    pub fn subscribe(
+        &self,
+        filter: StreamFilter,
+    ) -> Result<(SubscriberId, mpsc::Receiver<StreamEvent>), AuditError> {
         self.subscribe_with_name(filter, None)
     }
 
-    /// Subscribe to the event stream with a name
+    /// [`AuditStreamManager::subscribe`], with a name for the subscriber.
+    ///
+    /// # Errors
+    ///
+    /// As [`AuditStreamManager::subscribe`].
     pub fn subscribe_with_name(
         &self,
         filter: StreamFilter,
         name: Option<String>,
-    ) -> Result<SubscriberId, AuditError> {
+    ) -> Result<(SubscriberId, mpsc::Receiver<StreamEvent>), AuditError> {
         let mut subscribers = self
             .subscribers
             .write()
@@ -588,7 +603,10 @@ impl AuditStreamManager {
         }
 
         let id = SubscriberId::new();
-        let (sender, _receiver) = mpsc::channel(self.config.channel_buffer_size);
+        // The receiver goes to the subscriber. It used to be dropped here,
+        // so every subscription was closed from the start and received
+        // nothing.
+        let (sender, receiver) = mpsc::channel(self.config.channel_buffer_size.max(1));
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -628,7 +646,7 @@ impl AuditStreamManager {
         let _ = self.broadcast_tx.send(event);
 
         tracing::info!("New subscriber: {}", id);
-        Ok(id)
+        Ok((id, receiver))
     }
 
     /// Unsubscribe from the event stream
@@ -710,36 +728,44 @@ impl AuditStreamManager {
         // Add to recent events buffer
         self.add_to_recent_events(&event);
 
-        // Get all subscribers
-        let subscribers = self
+        let mut subscribers = self
             .subscribers
-            .read()
+            .write()
             .map_err(|e| AuditError::BackendNotAvailable(format!("Lock error: {}", e)))?;
 
         let mut delivered = 0u64;
         let mut dropped = 0u64;
+        let mut closed = Vec::new();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
 
-        for (id, subscriber) in subscribers.iter() {
-            // Check if event matches subscriber's filter
+        for (id, subscriber) in subscribers.iter_mut() {
             if !subscriber.info.filter.matches(&event) {
                 continue;
             }
-
-            // Try to send to subscriber
             match subscriber.sender.try_send(event.clone()) {
-                Ok(_) => {
+                Ok(()) => {
                     delivered += 1;
+                    subscriber.info.events_received += 1;
+                    subscriber.info.last_activity = now;
                 }
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     dropped += 1;
+                    subscriber.info.events_dropped += 1;
                     tracing::warn!("Subscriber {} channel full, dropping event", id);
                 }
-                Err(mpsc::error::TrySendError::Closed(_)) => {
-                    // Subscriber disconnected
-                    tracing::debug!("Subscriber {} channel closed", id);
-                }
+                Err(mpsc::error::TrySendError::Closed(_)) => closed.push(*id),
             }
         }
+        // A subscriber whose receiver is gone has left.
+        for id in &closed {
+            subscribers.remove(id);
+            tracing::debug!("Subscriber {} channel closed; removed", id);
+        }
+        let current_subscribers = subscribers.len();
+        drop(subscribers);
 
         // Also broadcast to any broadcast receivers
         let _ = self.broadcast_tx.send(event);
@@ -749,6 +775,7 @@ impl AuditStreamManager {
             stats.events_published += 1;
             stats.events_delivered += delivered;
             stats.events_dropped += dropped;
+            stats.current_subscribers = current_subscribers;
             stats.last_event_time = Some(
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -771,8 +798,10 @@ impl AuditStreamManager {
                 .unwrap_or_default()
                 .as_millis() as u64;
 
-            let retention_ms = self.config.event_retention_secs * 1000;
-            recent.retain(|e| now - e.timestamp < retention_ms);
+            // Saturating: an event stamped in the future (a skewed clock,
+            // or a caller's own event) is kept, not an overflow.
+            let retention_ms = self.config.event_retention_secs.saturating_mul(1000);
+            recent.retain(|e| now.saturating_sub(e.timestamp) < retention_ms);
 
             // Trim by count
             if recent.len() > self.config.max_retained_events {
@@ -868,9 +897,11 @@ impl AuditStreamManager {
 
         let interval = Duration::from_secs(self.config.heartbeat_interval_secs);
         let broadcast_tx = self.broadcast_tx.clone();
-        let sequence = Arc::new(AtomicU64::new(self.sequence.load(Ordering::SeqCst)));
+        // The manager's own counter and flag, not copies: a copied counter
+        // gave heartbeats numbers that published events also got.
+        let sequence = Arc::clone(&self.sequence);
         let mut shutdown_rx = self.shutdown_tx.subscribe();
-        let is_active = Arc::new(AtomicBool::new(self.is_active.load(Ordering::SeqCst)));
+        let is_active = Arc::clone(&self.is_active);
 
         Some(tokio::spawn(async move {
             let mut interval_timer = tokio::time::interval(interval);
@@ -1115,6 +1146,183 @@ mod tests {
         }
     }
 
+    fn entry(agent: &str, decision: AuditDecision) -> AuditEntry {
+        AuditEntry {
+            id: 1,
+            timestamp: 0,
+            agent_id: agent.to_string(),
+            action: "read".to_string(),
+            resource: "/r".to_string(),
+            decision,
+            hash: String::new(),
+            prev_hash: String::new(),
+            signature: None,
+            metadata: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_a_subscriber_receives_what_its_filter_matches() {
+        // The receiver used to be dropped when subscribing, so no
+        // subscriber ever received an event.
+        let manager = AuditStreamManager::new(StreamConfig::default());
+        let (alice_id, mut alice) = manager
+            .subscribe(StreamFilter::for_agents(vec!["alice".into()]))
+            .unwrap();
+        let (_, mut denials) = manager
+            .subscribe_with_name(StreamFilter::denied_only(), Some("siem".into()))
+            .unwrap();
+
+        manager
+            .publish_entry(entry("alice", AuditDecision::Allowed))
+            .unwrap();
+        manager
+            .publish_entry(entry("bob", AuditDecision::Denied))
+            .unwrap();
+
+        let got = alice.try_recv().unwrap();
+        assert!(matches!(&got.payload, StreamPayload::AuditEntry(e) if e.agent_id == "alice"));
+        assert!(alice.try_recv().is_err(), "bob's entry isn't alice's");
+        let got = denials.try_recv().unwrap();
+        assert!(matches!(&got.payload, StreamPayload::AuditEntry(e) if e.agent_id == "bob"));
+
+        let info = manager.get_subscriber_info(&alice_id).unwrap();
+        assert_eq!((info.events_received, info.events_dropped), (1, 0));
+        assert!(manager
+            .list_subscribers()
+            .iter()
+            .any(|s| s.name.as_deref() == Some("siem")));
+        let stats = manager.get_stats();
+        assert_eq!((stats.events_published, stats.events_delivered), (2, 2));
+    }
+
+    #[test]
+    fn test_a_subscriber_that_left_is_removed() {
+        let manager = AuditStreamManager::new(StreamConfig::default());
+        let (id, events) = manager.subscribe(StreamFilter::all()).unwrap();
+        drop(events);
+        manager
+            .publish_entry(entry("alice", AuditDecision::Allowed))
+            .unwrap();
+        assert!(manager.get_subscriber_info(&id).is_none());
+        assert_eq!(manager.get_stats().current_subscribers, 0);
+        assert!(manager.unsubscribe(&id).is_err(), "already gone");
+    }
+
+    #[test]
+    fn test_a_full_subscriber_drops_and_counts() {
+        let manager = AuditStreamManager::new(StreamConfig {
+            channel_buffer_size: 1,
+            ..StreamConfig::default()
+        });
+        let (id, _events) = manager.subscribe(StreamFilter::all()).unwrap();
+        for _ in 0..3 {
+            manager
+                .publish_entry(entry("alice", AuditDecision::Allowed))
+                .unwrap();
+        }
+        let info = manager.get_subscriber_info(&id).unwrap();
+        assert_eq!((info.events_received, info.events_dropped), (1, 2));
+        assert_eq!(manager.get_stats().events_dropped, 2);
+    }
+
+    #[test]
+    fn test_an_event_stamped_in_the_future_is_kept() {
+        // `now - timestamp` on u64 overflowed for an event from the future:
+        // a panic in debug builds.
+        let manager = AuditStreamManager::new(StreamConfig::default());
+        let mut event = StreamEvent::error("from the future".into(), 7);
+        event.timestamp = u64::MAX;
+        manager.publish_event(event).unwrap();
+        let recent = manager.get_recent_events(&StreamFilter::all(), None);
+        assert_eq!(recent.len(), 1);
+        assert_eq!(manager.get_events_since(6, &StreamFilter::all()).len(), 1);
+        assert!(manager.get_events_since(7, &StreamFilter::all()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_heartbeats_share_the_sequence_and_stop_with_the_manager() {
+        let manager = AuditStreamManager::new(StreamConfig {
+            heartbeat_interval_secs: 1,
+            ..StreamConfig::default()
+        });
+        let mut all = manager.get_broadcast_receiver();
+        manager
+            .publish_entry(entry("alice", AuditDecision::Allowed))
+            .unwrap();
+        let task = manager.spawn_heartbeat_task().unwrap();
+
+        // The interval's first tick is immediate.
+        let mut sequences = Vec::new();
+        while sequences.len() < 2 {
+            let event = tokio::time::timeout(Duration::from_secs(5), all.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            sequences.push((event.event_type, event.sequence));
+        }
+        assert_eq!(sequences[0].0, StreamEventType::AuditEntry);
+        assert_eq!(sequences[1].0, StreamEventType::Heartbeat);
+        assert_ne!(
+            sequences[0].1, sequences[1].1,
+            "a heartbeat used to reuse the next event's number"
+        );
+        manager
+            .publish_entry(entry("alice", AuditDecision::Allowed))
+            .unwrap();
+        let next = all.recv().await.unwrap();
+        assert!(next.sequence > sequences[1].1);
+
+        manager.stop();
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(manager
+            .publish_entry(entry("alice", AuditDecision::Allowed))
+            .is_err());
+        assert!(AuditStreamManager::new(StreamConfig {
+            heartbeat_interval_secs: 0,
+            ..StreamConfig::default()
+        })
+        .spawn_heartbeat_task()
+        .is_none());
+    }
+
+    #[test]
+    fn test_alert_and_batch_filters() {
+        let critical = StreamFilter::alerts_only(AlertSeverity::Error);
+        let alert = |severity| {
+            StreamEvent::alert(
+                StreamAlert::new(severity, "t", "m", "test")
+                    .with_agent_id("alice")
+                    .with_entry_id(3),
+                0,
+            )
+        };
+        assert!(critical.matches(&alert(AlertSeverity::Critical)));
+        assert!(critical.matches(&alert(AlertSeverity::Error)));
+        assert!(!critical.matches(&alert(AlertSeverity::Warning)));
+        assert!(!StreamFilter::for_agents(vec!["bob".into()]).matches(&alert(AlertSeverity::Info)));
+
+        let batch = StreamEvent::audit_batch(
+            vec![
+                entry("bob", AuditDecision::Allowed),
+                entry("alice", AuditDecision::Denied),
+            ],
+            0,
+        );
+        assert!(
+            StreamFilter::denied_only().matches(&batch),
+            "any entry matching is enough"
+        );
+        assert!(!StreamFilter::for_agents(vec!["carol".into()]).matches(&batch));
+        assert!(StreamFilter::all().matches(&StreamEvent::heartbeat(0)));
+        assert!(!StreamFilter::denied_only().matches(&StreamEvent::heartbeat(0)));
+        let with_meta = StreamEvent::heartbeat(1).with_metadata("k", "v");
+        assert_eq!(with_meta.metadata.unwrap()["k"], "v");
+    }
+
     #[test]
     fn test_stream_config_presets() {
         let default = StreamConfig::default();
@@ -1215,7 +1423,7 @@ mod tests {
         let manager = AuditStreamManager::new(config);
 
         // Subscribe
-        let sub_id = manager.subscribe(StreamFilter::all()).unwrap();
+        let (sub_id, _events) = manager.subscribe(StreamFilter::all()).unwrap();
         assert_eq!(manager.list_subscribers().len(), 1);
 
         // Get info
@@ -1240,6 +1448,7 @@ mod tests {
         // Add subscribers up to limit
         let _sub1 = manager.subscribe(StreamFilter::all()).unwrap();
         let _sub2 = manager.subscribe(StreamFilter::all()).unwrap();
+        // (Each holds its receiver, so both stay subscribed.)
 
         // Third should fail
         let result = manager.subscribe(StreamFilter::all());

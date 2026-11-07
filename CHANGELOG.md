@@ -234,6 +234,19 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- Audit stream subscribers receive events (finding I5).
+  - **Subscriptions were closed from the start.** `AuditStreamManager::subscribe`
+    dropped each subscriber's receiver, so nobody received anything. It now returns
+    `(SubscriberId, Receiver)`.
+  - **Departures.** A subscriber whose receiver is gone is removed at the next
+    event.
+  - **Counts.** Per-subscriber received and dropped counts are kept.
+  - **Retention.** The retention window no longer overflows (a panic in debug
+    builds) on an event stamped in the future.
+  - **Heartbeats** share the manager's sequence counter, so their numbers no longer
+    collide with published events.
+  - **Breaking:** `subscribe` and `subscribe_with_name` return the receiver with
+    the ID.
 - The S3 and multi-region audit backends no longer report uploads they didn't make
   (finding K12).
   - **They never uploaded.** `S3AuditBackend` built an unsigned request, logged
