@@ -159,10 +159,15 @@ request path. In order of leverage:
          It abstains, never passes; evaluates `PrePolicy`, `PreExecution` and
          `All` rules; always supplies `resource`. `Exists` resolves dotted
          paths, and the hash covers every rule field.
-      2. **`PromptInjectionDetector`, as a Heuristic guard behind `reasoner`.**
-         First fix its UTF-8 slicing panic (`prompt_injection.rs`
-         `&input[..max_input_length]`), and drop the allowlist short-circuit,
-         which skips detection entirely.
+      2. [x] **`PromptInjectionDetector`, as a Heuristic guard behind
+         `reasoner`** (ADR 0019): `PromptInjectionGuard`, added with
+         `KernelBuilder::with_guard`. It denies at block level, escalates at
+         review level, abstains otherwise, and never passes. It reads the
+         decoded argument strings, keys included, and denies arguments too
+         long to read. Truncation cuts at a character boundary, and an
+         allowlisted span exempts only the matches it contains (finding R6).
+         Still to do: a `policy.prompt_injection` key, so `Kernel::new` users
+         can turn it on.
       3. **Datalog on Ascent (V3)**, as an Enforced guard. The canonical-path
          bypass is fixed in `reasoner::datalog`; what remains is the real
          fixpoint engine.

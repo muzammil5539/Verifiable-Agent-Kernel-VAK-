@@ -137,6 +137,8 @@ pub use verification_gateway::{
 // 1. Input validation: Use `PromptInjectionDetector::analyze()` before processing
 // 2. Context-aware: Use `analyze_with_context()` for multi-turn conversations
 // 3. Configuration: Use `DetectorConfig::strict()` for high-security scenarios
+// 4. On the kernel's request path: `PromptInjectionGuard`, a heuristic guard
+//    added with `KernelBuilder::with_guard` (docs/adr/0019)
 //
 // Example integration:
 // ```rust,ignore
@@ -148,7 +150,7 @@ pub use verification_gateway::{
 // ```
 pub use prompt_injection::{
     DetectionResult, DetectorConfig, DetectorStats, HeuristicFlag, InjectionError, InjectionResult,
-    InjectionType, PatternMatch, PromptInjectionDetector, RecommendedAction,
+    InjectionType, PatternMatch, PromptInjectionDetector, PromptInjectionGuard, RecommendedAction,
 };
 
 pub use constrained_decoding::{

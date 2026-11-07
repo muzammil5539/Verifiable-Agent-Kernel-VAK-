@@ -12,6 +12,18 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 `docs/adr/0003-admit-budget-record-outcome-pipeline-stages.md` for the decision records.
 
 ### Added
+- The prompt-injection detector on the request path (docs/adr/0019, finding R6).
+  `reasoner::PromptInjectionGuard`, assurance `heuristic`, added with
+  `KernelBuilder::with_guard`.
+  - **What it does.** It denies at block level and escalates at review level, which
+    the kernel refuses. Otherwise it abstains, so it never satisfies a
+    `min_assurance` floor.
+  - **What it reads.** Every string in the arguments, keys included, decoded rather
+    than as JSON text. Arguments longer than `max_input_length` are denied.
+  - **Detector fixes.** Truncation cuts at a character boundary; it used to panic
+    inside a multi-byte character. An allowlist match used to clear the whole
+    input; it now exempts only the matches it contains. `try_new` refuses invalid
+    patterns and thresholds, which `new` drops or accepts.
 - The constitution on the request path (docs/adr/0018, finding K5). With
   `policy.constitution`, the default safety constitution runs as the first guard:
   `ConstitutionGuard`, assurance `enforced`.
