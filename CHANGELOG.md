@@ -234,6 +234,26 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- Reasoning host functions in `sandbox::reasoning_host` fail closed (finding R5).
+  - **Approving everything.** The functions `register_reasoning_functions`
+    registers, which have no state, returned "allowed" for every plan and
+    ignored the rest. They now trap.
+  - **Denials read as approvals.** With state, `vak.verify_plan` returned the
+    violation count, so a plan denied for its risk alone returned 0, "allowed".
+    A denial is now at least 1.
+  - **Guest-controlled inputs.** A confidence above about 3.3 zeroed the risk
+    score; it is clamped to 0..=1. The plan's `agent_id` is replaced by the
+    store's agent. Rules now see that agent instead of `"unknown"`, so an agent's
+    risk score and capabilities apply.
+  - **Risk scores.** `vak.set_risk_score` set nothing. It now raises the
+    caller's score, never lowers it. `ReasoningHost::set_agent_risk` replaces an
+    agent's score instead of adding facts read in arbitrary order.
+    `set_agent_risk_score` takes `&mut self` and sets the score; it only logged.
+    The new `agent_risk` and `raise_agent_risk` read and raise a score.
+  - **Smaller fixes.** `get_violation_count` and `is_high_risk_agent` report
+    real counts and scores. Plans no longer pile up as unused facts. Guest
+    pointers are bounds-checked without overflow. `is_critical_file`
+    canonicalises the path.
 - WASM host functions in `sandbox::host_funcs` (finding K13).
   - **Host panic.** Guest pointers and lengths were sign-extended and added
     unchecked, outside the panic boundary, so a guest calling
