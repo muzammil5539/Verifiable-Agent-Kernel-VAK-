@@ -234,6 +234,20 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- `PublisherRegistry` no longer believes what publishers claim (finding K17).
+  - **Registration.** A registration earns nothing. It starts `Unverified`, at
+    reputation 0.5, with no verifications, skills, downloads or rating. It used
+    to keep whatever the profile claimed, `Official` included. The new
+    `mark_official` grants `Official`.
+  - **Verification.** A verification must be requested before it is
+    completed, once per method, and it expires.
+  - **Publishing.** A skill must name its publisher, and can't take an ID
+    another publisher owns. Either used to replace the owner's skill. A
+    republish keeps its suspension, reports, downloads and rating, and a new
+    skill starts with none.
+  - **Reports.** Each reporter counts once per skill. Repeated reports from one
+    reporter used to suspend the skill and its publisher.
+  - **Reputation.** A change must be a number. A NaN passed every minimum.
 - Pool capacity and execution limits hold (finding K16).
   - **Pool capacity.** `PoolManager::record_allocation` reserves capacity in one
     atomic step. Concurrent callers could overfill the pool.

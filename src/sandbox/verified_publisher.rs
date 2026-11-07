@@ -378,18 +378,22 @@ impl PublisherProfile {
         self
     }
 
-    /// Check if the publisher is verified (at least one verified method)
+    /// Check if the publisher is verified: at least one active
+    /// verification ([`active_verifications`](Self::active_verifications)).
     pub fn is_verified(&self) -> bool {
-        self.verifications
-            .iter()
-            .any(|v| v.status == VerificationStatus::Verified)
+        self.active_verifications() > 0
     }
 
-    /// Get active verifications count
+    /// Verifications that succeeded and haven't expired. An expired one
+    /// used to count for ever, though each records when it expires.
     pub fn active_verifications(&self) -> usize {
+        let now = now();
         self.verifications
             .iter()
-            .filter(|v| v.status == VerificationStatus::Verified)
+            .filter(|v| {
+                v.status == VerificationStatus::Verified
+                    && v.expires_at.is_none_or(|expires| expires > now)
+            })
             .count()
     }
 
@@ -547,7 +551,9 @@ pub struct PublisherRegistry {
     publishers: RwLock<HashMap<String, PublisherProfile>>,
     skills: RwLock<HashMap<String, PublishedSkill>>,
     reports: RwLock<Vec<SkillReport>>,
-    pending_verifications: RwLock<HashMap<String, VerificationRequest>>,
+    /// Pending requests by (publisher, method). The key used to be the two
+    /// joined by `:`.
+    pending_verifications: RwLock<HashMap<(String, String), VerificationRequest>>,
 }
 
 impl PublisherRegistry {
@@ -567,8 +573,13 @@ impl PublisherRegistry {
         Self::new(PublisherConfig::default())
     }
 
-    /// Register a new publisher
-    pub fn register(&self, profile: PublisherProfile) -> PublisherResult<String> {
+    /// Registers a new publisher. Only who they are comes from `profile`:
+    /// what a publisher earns starts afresh. Verifications, published
+    /// skills, downloads and rating are cleared, the reputation is 0.5, and
+    /// the trust level is `Unverified` until a verification completes. A profile
+    /// used to be stored as given, so a publisher could register as
+    /// verified, or `Official`. A suspension in `profile` is kept.
+    pub fn register(&self, mut profile: PublisherProfile) -> PublisherResult<String> {
         if profile.id.is_empty() {
             return Err(PublisherError::InvalidProfile(
                 "ID cannot be empty".to_string(),
@@ -589,6 +600,14 @@ impl PublisherRegistry {
             return Err(PublisherError::AlreadyExists(profile.id.clone()));
         }
 
+        profile.verifications.clear();
+        profile.published_skills.clear();
+        profile.reputation_score = 0.5;
+        profile.total_downloads = 0;
+        profile.average_rating = 0.0;
+        profile.registered_at = now();
+        profile.trust_level = TrustLevel::Unverified;
+
         let id = profile.id.clone();
         publishers.insert(id.clone(), profile);
         Ok(id)
@@ -607,7 +626,23 @@ impl PublisherRegistry {
             .ok_or_else(|| PublisherError::NotFound(id.to_string()))
     }
 
-    /// Request verification for a publisher
+    /// Makes a publisher `Official`, the one trust level nothing else
+    /// grants. It used to be whatever the registered profile claimed.
+    pub fn mark_official(&self, publisher_id: &str) -> PublisherResult<()> {
+        let mut publishers = self
+            .publishers
+            .write()
+            .map_err(|e| PublisherError::LockError(e.to_string()))?;
+        let publisher = publishers
+            .get_mut(publisher_id)
+            .ok_or_else(|| PublisherError::NotFound(publisher_id.to_string()))?;
+        publisher.trust_level = TrustLevel::Official;
+        Ok(())
+    }
+
+    /// Request verification for a publisher. A second request for the same
+    /// method while one is pending fails ([`PublisherError::VerificationPending`]);
+    /// it used to replace the first.
     pub fn request_verification(
         &self,
         publisher_id: &str,
@@ -625,17 +660,29 @@ impl PublisherRegistry {
         drop(publishers);
 
         let verification_id = format!("{}:{}", publisher_id, request.method);
+        let key = (publisher_id.to_string(), request.method.to_string());
 
         let mut pending = self
             .pending_verifications
             .write()
             .map_err(|e| PublisherError::LockError(e.to_string()))?;
 
-        pending.insert(verification_id.clone(), request);
+        if pending.contains_key(&key) {
+            return Err(PublisherError::VerificationPending(
+                publisher_id.to_string(),
+            ));
+        }
+        pending.insert(key, request);
         Ok(verification_id)
     }
 
-    /// Complete a verification
+    /// Completes a pending verification, recording whether it succeeded.
+    ///
+    /// # Errors
+    ///
+    /// [`PublisherError::VerificationFailed`] if no verification by
+    /// `method` was requested for the publisher: one used to be completed,
+    /// as verified, without ever being requested.
     pub fn complete_verification(
         &self,
         publisher_id: &str,
@@ -652,6 +699,19 @@ impl PublisherRegistry {
             .get_mut(publisher_id)
             .ok_or_else(|| PublisherError::NotFound(publisher_id.to_string()))?;
 
+        let key = (publisher_id.to_string(), method.to_string());
+        let requested = self
+            .pending_verifications
+            .write()
+            .map_err(|e| PublisherError::LockError(e.to_string()))?
+            .remove(&key)
+            .is_some();
+        if !requested {
+            return Err(PublisherError::VerificationFailed(format!(
+                "no {method} verification was requested for {publisher_id}"
+            )));
+        }
+
         let record = VerificationRecord {
             method,
             status: if success {
@@ -661,7 +721,7 @@ impl PublisherRegistry {
             },
             verified_at: if success { Some(now()) } else { None },
             expires_at: if success {
-                Some(now() + self.config.verification_expiry_secs)
+                Some(now().saturating_add(self.config.verification_expiry_secs))
             } else {
                 None
             },
@@ -671,21 +731,29 @@ impl PublisherRegistry {
         publisher.verifications.push(record.clone());
         publisher.update_trust_level();
 
-        // Clean up pending verification
-        let verification_id = format!("{}:{}", publisher_id, record.method);
-        if let Ok(mut pending) = self.pending_verifications.write() {
-            pending.remove(&verification_id);
-        }
-
         Ok(record)
     }
 
-    /// Publish a skill
+    /// Publishes a skill, or a new release of one the publisher already
+    /// owns.
+    ///
+    /// Refuses a skill whose `publisher_id` isn't `publisher_id`, and one
+    /// whose ID another publisher owns: either used to be stored, replacing
+    /// the owner's skill. A republished skill keeps its moderation state
+    /// and counts (suspension, reports, downloads, rating); a new one
+    /// starts with no reports, downloads or rating, whatever it claims. A
+    /// republish used to reset them, lifting a suspension.
     pub fn publish_skill(
         &self,
         publisher_id: &str,
-        skill: PublishedSkill,
+        mut skill: PublishedSkill,
     ) -> PublisherResult<String> {
+        if skill.publisher_id != publisher_id {
+            return Err(PublisherError::PublishFailed(format!(
+                "skill {} names publisher {:?}, not {publisher_id:?}",
+                skill.id, skill.publisher_id
+            )));
+        }
         let publishers = self
             .publishers
             .read()
@@ -720,19 +788,43 @@ impl PublisherRegistry {
             .skills
             .write()
             .map_err(|e| PublisherError::LockError(e.to_string()))?;
+        match skills.get(&skill_id) {
+            Some(existing) if existing.publisher_id != publisher_id => {
+                return Err(PublisherError::PublishFailed(format!(
+                    "skill {skill_id} belongs to another publisher"
+                )));
+            }
+            Some(existing) => {
+                skill.suspended |= existing.suspended;
+                skill.report_count = existing.report_count;
+                skill.download_count = existing.download_count;
+                skill.average_rating = existing.average_rating;
+            }
+            None => {
+                skill.report_count = 0;
+                skill.download_count = 0;
+                skill.average_rating = 0.0;
+            }
+        }
         skills.insert(skill_id.clone(), skill);
+        drop(skills);
 
-        // Add to publisher's published skills
+        // Add to publisher's published skills, once
         if let Ok(mut publishers) = self.publishers.write() {
             if let Some(publisher) = publishers.get_mut(publisher_id) {
-                publisher.published_skills.push(skill_id.clone());
+                if !publisher.published_skills.contains(&skill_id) {
+                    publisher.published_skills.push(skill_id.clone());
+                }
             }
         }
 
         Ok(skill_id)
     }
 
-    /// Report a malicious skill
+    /// Reports a skill. Each reporter counts once per skill: a second
+    /// report fails ([`PublisherError::ReportFailed`]). One reporter used
+    /// to be able to suspend any skill, and its publisher, by reporting it
+    /// again and again.
     pub fn report_skill(
         &self,
         skill_id: &str,
@@ -750,7 +842,19 @@ impl PublisherRegistry {
             .get_mut(skill_id)
             .ok_or_else(|| PublisherError::NotFound(skill_id.to_string()))?;
 
-        skill.report_count += 1;
+        let already = self
+            .reports
+            .read()
+            .map_err(|e| PublisherError::LockError(e.to_string()))?
+            .iter()
+            .any(|r| r.skill_id == skill_id && r.reporter == reporter);
+        if already {
+            return Err(PublisherError::ReportFailed(format!(
+                "{reporter} has already reported {skill_id}"
+            )));
+        }
+
+        skill.report_count = skill.report_count.saturating_add(1);
 
         // Auto-suspend if threshold reached
         if self.config.auto_suspension_enabled
@@ -895,6 +999,13 @@ impl PublisherRegistry {
             .get_mut(publisher_id)
             .ok_or_else(|| PublisherError::NotFound(publisher_id.to_string()))?;
 
+        // A NaN used to become the score, and NaN is below no minimum, so
+        // the publisher passed every reputation check.
+        if !delta.is_finite() {
+            return Err(PublisherError::InvalidProfile(format!(
+                "a reputation change must be a number, not {delta}"
+            )));
+        }
         publisher.reputation_score = (publisher.reputation_score + delta).clamp(0.0, 1.0);
         publisher.update_trust_level();
 
@@ -1196,9 +1307,21 @@ mod tests {
         let registry = PublisherRegistry::with_defaults();
         registry.register(sample_publisher()).unwrap();
 
+        // A profile that claims a trust level doesn't get it; a completed
+        // verification earns it.
         let mut profile2 = PublisherProfile::new("pub-2", "Publisher 2", "pub2@test.com");
         profile2.trust_level = TrustLevel::Verified;
         registry.register(profile2).unwrap();
+        assert!(registry
+            .list_publishers(Some(TrustLevel::Verified))
+            .unwrap()
+            .is_empty());
+        let request = VerificationRequest::domain("pub-2", "pub2.test");
+        let method = request.method.clone();
+        registry.request_verification("pub-2", request).unwrap();
+        registry
+            .complete_verification("pub-2", method, true, "TXT record found")
+            .unwrap();
 
         let all = registry.list_publishers(None).unwrap();
         assert_eq!(all.len(), 2);
@@ -1310,5 +1433,277 @@ mod tests {
             registry.register(empty_name),
             Err(PublisherError::InvalidProfile(_))
         ));
+    }
+
+    fn verified_record() -> VerificationRecord {
+        VerificationRecord {
+            method: VerificationMethod::GithubOrg {
+                org_name: "acme".into(),
+            },
+            status: VerificationStatus::Verified,
+            verified_at: Some(now()),
+            expires_at: None,
+            details: "self-declared".into(),
+        }
+    }
+
+    /// Requests and completes a domain verification for `id`.
+    fn verify(registry: &PublisherRegistry, id: &str) {
+        let request = VerificationRequest::domain(id, "example.com");
+        let method = request.method.clone();
+        registry.request_verification(id, request).unwrap();
+        registry
+            .complete_verification(id, method, true, "TXT record found")
+            .unwrap();
+    }
+
+    #[test]
+    fn test_a_registration_earns_nothing() {
+        // The profile was stored as given: verified, Official, the best
+        // reputation, whatever it claimed.
+        let registry = PublisherRegistry::new(PublisherConfig::strict());
+        let mut claimed = sample_publisher();
+        claimed.trust_level = TrustLevel::Official;
+        claimed.reputation_score = 1.0;
+        claimed.verifications = vec![verified_record(), verified_record()];
+        claimed.published_skills = vec!["someone-elses".into()];
+        claimed.total_downloads = 1_000_000;
+        claimed.average_rating = 5.0;
+        claimed.registered_at = 1;
+        registry.register(claimed).unwrap();
+
+        let stored = registry.get_publisher("test-pub").unwrap();
+        assert_eq!(stored.trust_level, TrustLevel::Unverified);
+        assert_eq!(stored.reputation_score, 0.5);
+        assert!(stored.verifications.is_empty() && !stored.is_verified());
+        assert!(stored.published_skills.is_empty());
+        assert_eq!((stored.total_downloads, stored.average_rating), (0, 0.0));
+        assert!(stored.registered_at > 1);
+        assert!(matches!(
+            registry.publish_skill("test-pub", sample_skill("test-pub")),
+            Err(PublisherError::PublishFailed(_))
+        ));
+
+        // A suspension it claims is kept; Official is granted, not claimed.
+        let mut suspended = PublisherProfile::new("bad", "Bad", "bad@example.com");
+        suspended.suspended = true;
+        registry.register(suspended).unwrap();
+        assert!(registry.get_publisher("bad").unwrap().suspended);
+        registry.mark_official("test-pub").unwrap();
+        registry.update_reputation("test-pub", -0.4).unwrap();
+        assert_eq!(
+            registry.get_publisher("test-pub").unwrap().trust_level,
+            TrustLevel::Official
+        );
+        assert!(registry.mark_official("nobody").is_err());
+    }
+
+    #[test]
+    fn test_a_verification_must_be_requested() {
+        // complete_verification recorded a success that was never requested.
+        let registry = PublisherRegistry::with_defaults();
+        registry.register(sample_publisher()).unwrap();
+        let method = VerificationMethod::DomainOwnership {
+            domain: "example.com".into(),
+            txt_record: None,
+        };
+        let err = registry
+            .complete_verification("test-pub", method.clone(), true, "forged")
+            .unwrap_err();
+        assert!(
+            matches!(err, PublisherError::VerificationFailed(_)),
+            "{err}"
+        );
+        assert!(!registry.get_publisher("test-pub").unwrap().is_verified());
+
+        // One pending request per method; completing it clears it.
+        let request = VerificationRequest::domain("test-pub", "example.com");
+        let method = request.method.clone();
+        registry
+            .request_verification("test-pub", request.clone())
+            .unwrap();
+        assert!(matches!(
+            registry.request_verification("test-pub", request.clone()),
+            Err(PublisherError::VerificationPending(_))
+        ));
+        let record = registry
+            .complete_verification("test-pub", method.clone(), false, "no TXT record")
+            .unwrap();
+        assert_eq!(record.status, VerificationStatus::Failed);
+        assert!(!registry.get_publisher("test-pub").unwrap().is_verified());
+        assert!(registry
+            .complete_verification("test-pub", method, true, "again")
+            .is_err());
+        registry.request_verification("test-pub", request).unwrap();
+        assert!(registry
+            .request_verification("nobody", VerificationRequest::email("nobody", "n@x"))
+            .is_err());
+    }
+
+    #[test]
+    fn test_an_expired_verification_does_not_count() {
+        // Expiry was recorded and never read.
+        let registry = PublisherRegistry::new(PublisherConfig {
+            verification_expiry_secs: 0,
+            require_verification_to_publish: true,
+            ..PublisherConfig::default()
+        });
+        registry.register(sample_publisher()).unwrap();
+        verify(&registry, "test-pub");
+        let publisher = registry.get_publisher("test-pub").unwrap();
+        assert_eq!(publisher.verifications.len(), 1);
+        assert!(!publisher.is_verified(), "it expired at once");
+        assert!(registry
+            .publish_skill("test-pub", sample_skill("test-pub"))
+            .is_err());
+
+        let mut profile = sample_publisher();
+        profile.verifications.push(VerificationRecord {
+            expires_at: Some(now() - 1),
+            ..verified_record()
+        });
+        profile.verifications.push(VerificationRecord {
+            expires_at: Some(now() + 3600),
+            ..verified_record()
+        });
+        assert_eq!(profile.active_verifications(), 1);
+    }
+
+    #[test]
+    fn test_a_publisher_cannot_take_over_a_skill() {
+        // Any publisher could store a skill under another's ID or name, and
+        // replace the owner's.
+        let registry = PublisherRegistry::with_defaults();
+        registry.register(sample_publisher()).unwrap();
+        registry
+            .register(PublisherProfile::new("mallory", "Mallory", "m@example.com"))
+            .unwrap();
+        registry
+            .publish_skill("test-pub", sample_skill("test-pub"))
+            .unwrap();
+
+        let err = registry
+            .publish_skill("mallory", sample_skill("test-pub"))
+            .unwrap_err();
+        assert!(err.to_string().contains("names publisher"), "{err}");
+        let err = registry
+            .publish_skill("mallory", sample_skill("mallory"))
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("belongs to another publisher"),
+            "{err}"
+        );
+        assert_eq!(registry.get_reputation("test-pub").unwrap().skill_count, 1);
+        assert_eq!(registry.get_reputation("mallory").unwrap().skill_count, 0);
+        assert!(registry
+            .get_publisher("mallory")
+            .unwrap()
+            .published_skills
+            .is_empty());
+    }
+
+    #[test]
+    fn test_republishing_keeps_moderation_state() {
+        // A republish replaced the record, lifting a suspension and clearing
+        // reports; a new skill kept whatever counts it claimed.
+        let registry = PublisherRegistry::with_defaults();
+        registry.register(sample_publisher()).unwrap();
+        let mut inflated = sample_skill("test-pub");
+        inflated.download_count = 1_000_000_000;
+        inflated.average_rating = 5.0;
+        inflated.report_count = 0;
+        registry.publish_skill("test-pub", inflated).unwrap();
+        let reputation = registry.get_reputation("test-pub").unwrap();
+        assert_eq!(
+            (reputation.total_downloads, reputation.average_rating),
+            (0, 0.0)
+        );
+
+        for reporter in ["r1", "r2", "r3"] {
+            registry
+                .report_skill("skill-001", reporter, ReportReason::Malicious, "bad")
+                .unwrap();
+        }
+        let mut fresh = sample_skill("test-pub");
+        fresh.version = "1.0.1".into();
+        registry.publish_skill("test-pub", fresh).unwrap();
+        let skills = registry.skills.read().unwrap();
+        let stored = &skills["skill-001"];
+        assert_eq!(stored.version, "1.0.1");
+        assert!(stored.suspended, "still suspended");
+        assert_eq!(stored.report_count, 3);
+        drop(skills);
+        assert_eq!(
+            registry.get_publisher("test-pub").unwrap().published_skills,
+            ["skill-001"],
+            "listed once"
+        );
+    }
+
+    #[test]
+    fn test_each_reporter_counts_once() {
+        // One reporter could suspend any skill by reporting it repeatedly.
+        let registry = PublisherRegistry::with_defaults();
+        registry.register(sample_publisher()).unwrap();
+        registry
+            .publish_skill("test-pub", sample_skill("test-pub"))
+            .unwrap();
+        registry
+            .report_skill("skill-001", "rival", ReportReason::Misleading, "1")
+            .unwrap();
+        for _ in 0..5 {
+            let err = registry
+                .report_skill("skill-001", "rival", ReportReason::Malicious, "again")
+                .unwrap_err();
+            assert!(matches!(err, PublisherError::ReportFailed(_)), "{err}");
+        }
+        assert_eq!(registry.get_reports("skill-001").unwrap().len(), 1);
+        let reputation = registry.get_reputation("test-pub").unwrap();
+        assert_eq!(reputation.total_reports, 1);
+        assert!(!reputation.is_suspended);
+        assert!(registry
+            .report_skill("missing", "r", ReportReason::Other("x".into()), "")
+            .is_err());
+    }
+
+    #[test]
+    fn test_a_reputation_change_must_be_a_number() {
+        // NaN became the score, and NaN is below no minimum.
+        let registry = PublisherRegistry::new(PublisherConfig {
+            min_publish_reputation: 0.6,
+            ..PublisherConfig::default()
+        });
+        registry.register(sample_publisher()).unwrap();
+        for delta in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(matches!(
+                registry.update_reputation("test-pub", delta),
+                Err(PublisherError::InvalidProfile(_))
+            ));
+        }
+        assert_eq!(
+            registry.get_publisher("test-pub").unwrap().reputation_score,
+            0.5
+        );
+        assert!(registry
+            .publish_skill("test-pub", sample_skill("test-pub"))
+            .is_err());
+        assert!(registry.update_reputation("nobody", 0.1).is_err());
+    }
+
+    #[test]
+    fn test_scans_and_counts() {
+        let registry = PublisherRegistry::with_defaults();
+        let mut big = b"\0asm\x01\0\0\0".to_vec();
+        big.resize(10 * 1024 * 1024 + 1, 0);
+        let scan = registry.scan_skill(&big);
+        assert!(scan.passed, "large is a warning");
+        assert_eq!(scan.issues.len(), 1);
+        assert_eq!(registry.publisher_count(), 0);
+        assert_eq!(registry.skill_count(), 0);
+        assert!(registry.get_reputation("nobody").is_err());
+        assert!(registry.get_publisher("nobody").is_err());
+        for level in [TrustLevel::Basic, TrustLevel::Trusted, TrustLevel::Official] {
+            assert!(!level.to_string().is_empty());
+        }
     }
 }
