@@ -55,6 +55,10 @@ pub enum EpochConfigError {
     /// Engine not configured for epochs
     #[error("Engine not configured for epoch interruption")]
     EpochsNotEnabled,
+
+    /// A limit that couldn't be applied to the store
+    #[error("Execution limit not applied: {0}")]
+    NotApplied(String),
 }
 
 /// Configuration for epoch-based time slicing
@@ -109,9 +113,10 @@ impl EpochConfig {
         config
     }
 
-    /// Calculate total budget in milliseconds
+    /// Calculate total budget in milliseconds, saturating at `u64::MAX`.
+    /// The product used to be unchecked, a panic in debug builds.
     pub fn budget_ms(&self) -> u64 {
-        self.epoch_budget * self.tick_interval_ms
+        self.epoch_budget.saturating_mul(self.tick_interval_ms)
     }
 
     /// Validate the configuration
@@ -164,20 +169,21 @@ impl EpochDeadlineManager {
         );
     }
 
-    /// Extend the deadline by additional epochs
-    pub fn extend_deadline<T>(store: &mut Store<T>, additional_epochs: u64) {
-        // Get current deadline and add more
-        // Note: In practice we'd track the current deadline
-        store.set_epoch_deadline(additional_epochs);
-        debug!(additional = additional_epochs, "Extended epoch deadline");
+    /// Sets the deadline to `epochs` from the engine's current epoch.
+    ///
+    /// This replaces the deadline rather than adding to it: Wasmtime can't
+    /// report a store's deadline, so there is nothing to add to. A deadline
+    /// further off than `epochs` comes nearer. (It used to say it extended
+    /// the deadline.)
+    pub fn extend_deadline<T>(store: &mut Store<T>, epochs: u64) {
+        store.set_epoch_deadline(epochs);
+        debug!(epochs, "Reset epoch deadline");
     }
 
-    /// Check remaining epochs before deadline
-    ///
-    /// Returns None if epochs are not enabled on the engine.
+    /// Always `None`: Wasmtime doesn't expose a store's deadline, and this
+    /// doesn't track it. (It used to say it returned `None` only without
+    /// epochs enabled.) Use [`PreemptionBudget`] to track a budget.
     pub fn remaining_epochs<T>(_store: &Store<T>) -> Option<u64> {
-        // Note: Wasmtime doesn't expose a direct way to check remaining epochs
-        // This would require tracking state ourselves
         None
     }
 }
@@ -208,9 +214,17 @@ impl PreemptionBudget {
         }
     }
 
-    /// Record epoch consumption
+    /// Record epoch consumption, saturating at `u64::MAX`. The sum used to
+    /// be unchecked: a panic in debug builds, and in release a wrap back to
+    /// a small count that un-exhausted the budget.
     pub fn record_consumption(&self, epochs: u64) {
-        let new_consumed = self.consumed.fetch_add(epochs, Ordering::SeqCst) + epochs;
+        let previous = self
+            .consumed
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+                Some(n.saturating_add(epochs))
+            })
+            .unwrap_or_default();
+        let new_consumed = previous.saturating_add(epochs);
         let budget = self.total_budget.load(Ordering::SeqCst);
 
         if new_consumed >= budget {
@@ -241,9 +255,14 @@ impl PreemptionBudget {
         self.exhausted.store(false, Ordering::SeqCst);
     }
 
-    /// Add more budget
+    /// Add more budget, saturating at `u64::MAX`. The sum used to wrap,
+    /// shrinking the budget.
     pub fn add_budget(&self, epochs: u64) {
-        self.total_budget.fetch_add(epochs, Ordering::SeqCst);
+        let _ = self
+            .total_budget
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+                Some(n.saturating_add(epochs))
+            });
         // May un-exhaust if we were exhausted
         if self.remaining() > 0 {
             self.exhausted.store(false, Ordering::SeqCst);
@@ -356,14 +375,42 @@ pub struct ExecutionLimits {
 }
 
 impl ExecutionLimits {
-    /// Apply limits to a store
-    pub fn apply<T>(&self, store: &mut Store<T>) {
+    /// Applies the limits to a store: the epoch deadline, trapping or, with
+    /// `async_yield`, yielding; and the fuel limit.
+    ///
+    /// # Errors
+    ///
+    /// [`EpochConfigError::NotApplied`], having applied nothing, if a limit
+    /// can't be applied: a memory limit, which needs a `ResourceLimiter`
+    /// in the store's data, or fuel on an engine without fuel metering.
+    /// Each used to be skipped silently, leaving the store unlimited, and
+    /// `async_yield` was ignored.
+    pub fn apply<T>(&self, store: &mut Store<T>) -> Result<(), EpochConfigError> {
+        if let Some(bytes) = self.memory_limit {
+            return Err(EpochConfigError::NotApplied(format!(
+                "a {bytes}-byte memory limit needs a ResourceLimiter in the store's data \
+                 (wasmtime::StoreLimits); apply can't install one"
+            )));
+        }
+        // get_fuel fails exactly when the engine doesn't meter fuel.
+        if self.fuel_limit.is_some() && store.get_fuel().is_err() {
+            return Err(EpochConfigError::NotApplied(
+                "the engine doesn't meter fuel, so a fuel limit can't apply".into(),
+            ));
+        }
+
         // Set epoch deadline
-        EpochDeadlineManager::set_deadline(store, &self.epoch_config);
+        if self.epoch_config.async_yield {
+            EpochDeadlineManager::set_deadline_async_yield(store, &self.epoch_config);
+        } else {
+            EpochDeadlineManager::set_deadline(store, &self.epoch_config);
+        }
 
         // Set fuel if configured
         if let Some(fuel) = self.fuel_limit {
-            let _ = store.set_fuel(fuel);
+            store
+                .set_fuel(fuel)
+                .map_err(|e| EpochConfigError::NotApplied(e.to_string()))?;
         }
 
         debug!(
@@ -372,6 +419,7 @@ impl ExecutionLimits {
             memory_limit = ?self.memory_limit,
             "Applied execution limits to store"
         );
+        Ok(())
     }
 }
 
@@ -446,5 +494,127 @@ mod tests {
         assert_eq!(limits.epoch_config.budget_ms(), 200);
         assert_eq!(limits.fuel_limit, Some(1_000_000));
         assert_eq!(limits.memory_limit, Some(16 * 1024 * 1024));
+    }
+
+    #[test]
+    fn test_budget_arithmetic_saturates() {
+        // Each sum or product was unchecked: a panic in debug builds, and
+        // in release a wrap that un-exhausted or shrank the budget.
+        let huge = EpochConfig {
+            epoch_budget: u64::MAX,
+            ..EpochConfig::default()
+        };
+        assert_eq!(huge.budget_ms(), u64::MAX);
+
+        let budget = PreemptionBudget::new(10);
+        budget.record_consumption(u64::MAX);
+        budget.record_consumption(5);
+        assert!(budget.is_exhausted());
+        assert_eq!(budget.stats().consumed, u64::MAX);
+        assert_eq!(budget.remaining(), 0);
+
+        let budget = PreemptionBudget::new(u64::MAX - 1);
+        budget.add_budget(5);
+        assert_eq!(budget.stats().total, u64::MAX);
+        budget.record_consumption(u64::MAX);
+        assert!(budget.is_exhausted());
+        budget.add_budget(1);
+        assert!(budget.is_exhausted(), "nothing remains");
+    }
+
+    const SPIN_WAT: &str = r#"
+        (module
+          (func (export "answer") (result i32) (i32.const 42)))
+    "#;
+
+    fn epoch_store(fuel: bool) -> (wasmtime::Engine, Store<()>, wasmtime::Instance) {
+        let mut config = wasmtime::Config::new();
+        config.epoch_interruption(true).consume_fuel(fuel);
+        let engine = wasmtime::Engine::new(&config).unwrap();
+        let module = wasmtime::Module::new(&engine, SPIN_WAT).unwrap();
+        let mut store = Store::new(&engine, ());
+        if fuel {
+            store.set_fuel(1_000).unwrap();
+        }
+        store.set_epoch_deadline(1_000);
+        let instance = wasmtime::Instance::new(&mut store, &module, &[]).unwrap();
+        (engine, store, instance)
+    }
+
+    fn answer(store: &mut Store<()>, instance: &wasmtime::Instance) -> wasmtime::Result<i32> {
+        instance
+            .get_typed_func::<(), i32>(&mut *store, "answer")
+            .unwrap()
+            .call(&mut *store, ())
+    }
+
+    #[test]
+    fn test_limits_apply_or_say_why_not() {
+        // A memory limit, and fuel on an engine without fuel metering, were
+        // skipped silently; async_yield was ignored.
+        let (engine, mut store, instance) = epoch_store(false);
+        let limits = EpochExecutionBuilder::new()
+            .budget_epochs(1)
+            .with_memory(1 << 20)
+            .build()
+            .unwrap();
+        let err = limits.apply(&mut store).unwrap_err();
+        assert!(err.to_string().contains("ResourceLimiter"), "{err}");
+        let fueled = EpochExecutionBuilder::new()
+            .budget_epochs(1)
+            .with_fuel(100)
+            .build()
+            .unwrap();
+        let err = fueled.apply(&mut store).unwrap_err();
+        assert!(err.to_string().contains("doesn't meter fuel"), "{err}");
+        assert_eq!(
+            answer(&mut store, &instance).unwrap(),
+            42,
+            "nothing applied"
+        );
+
+        // The epoch deadline applies: one tick past it, the call traps.
+        let plain = EpochExecutionBuilder::new()
+            .budget_epochs(1)
+            .build()
+            .unwrap();
+        plain.apply(&mut store).unwrap();
+        engine.increment_epoch();
+        assert!(answer(&mut store, &instance).is_err(), "past the deadline");
+        EpochDeadlineManager::extend_deadline(&mut store, 5);
+        assert_eq!(answer(&mut store, &instance).unwrap(), 42, "a new deadline");
+        assert_eq!(EpochDeadlineManager::remaining_epochs(&store), None);
+
+        let (_engine, mut store, instance) = epoch_store(true);
+        fueled.apply(&mut store).unwrap();
+        assert_eq!(store.get_fuel().unwrap(), 100);
+        assert_eq!(answer(&mut store, &instance).unwrap(), 42);
+
+        // async_yield chooses the yielding deadline.
+        let yielding = EpochExecutionBuilder::default()
+            .budget_ms(50)
+            .async_yield()
+            .yield_increment(3)
+            .build()
+            .unwrap();
+        assert!(yielding.epoch_config.async_yield);
+        assert_eq!(yielding.epoch_config.yield_increment, 3);
+        let (_engine, mut store, instance) = epoch_store(false);
+        yielding.apply(&mut store).unwrap();
+        // A yielding store needs the async call APIs; a trapping one doesn't.
+        let err = answer(&mut store, &instance).unwrap_err();
+        assert!(format!("{err:#}").contains("_async"), "{err:#}");
+        EpochDeadlineManager::set_deadline_async_yield(
+            &mut store,
+            &EpochConfig::async_with_budget_ms(20),
+        );
+
+        assert!(EpochExecutionBuilder::new()
+            .budget_epochs(0)
+            .build()
+            .is_err());
+        assert!(EpochConfigError::NotApplied("x".into())
+            .to_string()
+            .contains("not applied"));
     }
 }

@@ -234,6 +234,20 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- Pool capacity and execution limits hold (finding K16).
+  - **Pool capacity.** `PoolManager::record_allocation` reserves capacity in one
+    atomic step. Concurrent callers could overfill the pool.
+  - **Spare deallocations.** One with nothing allocated is ignored. It wrapped
+    the count to `u64::MAX`, leaving the pool full for good.
+  - **Pool totals.** Products of the pool limits are checked.
+  - **`ExecutionLimits::apply`.** It now returns `Result`. It refuses, having
+    applied nothing, a memory limit (which needs a `ResourceLimiter`) and fuel
+    on an engine without fuel metering; both used to be skipped silently. It
+    also honours `async_yield`, which it ignored.
+  - **Budgets.** `PreemptionBudget` and `EpochConfig::budget_ms` arithmetic
+    saturates.
+  - **Deadline docs.** `extend_deadline` resets the deadline, and
+    `remaining_epochs` always returns `None`; both now say so.
 - Async host operations (`sandbox::async_host`) run only what their policy
   allows (finding K15).
   - **Canonical before checked.** The enforcer matches resources by prefix and

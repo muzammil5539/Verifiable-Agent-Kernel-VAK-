@@ -78,7 +78,8 @@ pub struct PoolingConfig {
     pub max_tables: u32,
     /// Maximum memories per instance (default: 1)
     pub max_memories: u32,
-    /// Memory pages to pre-reserve (default: 1000 = ~64MB)
+    /// Memory pages to pre-reserve (default: 1000 = ~64MB). Not applied:
+    /// the pooling allocator sizes slots from `max_memory_per_instance`.
     pub memory_pages: u64,
     /// Enable epoch interruption (default: true)
     pub epoch_interruption: bool,
@@ -175,7 +176,34 @@ impl PoolingConfig {
                 "max_table_elements must be greater than 0".to_string(),
             ));
         }
+        self.total_memories()?;
+        self.total_tables()?;
         Ok(())
+    }
+
+    /// Memories across the pool: `max_instances * max_memories`. The
+    /// product used to be unchecked, a panic in debug builds.
+    fn total_memories(&self) -> Result<u32, PoolingError> {
+        self.max_instances
+            .checked_mul(self.max_memories)
+            .ok_or_else(|| {
+                PoolingError::ConfigError(format!(
+                    "max_instances * max_memories ({} * {}) overflows",
+                    self.max_instances, self.max_memories
+                ))
+            })
+    }
+
+    /// Tables across the pool: `max_instances * max_tables`, checked.
+    fn total_tables(&self) -> Result<u32, PoolingError> {
+        self.max_instances
+            .checked_mul(self.max_tables)
+            .ok_or_else(|| {
+                PoolingError::ConfigError(format!(
+                    "max_instances * max_tables ({} * {}) overflows",
+                    self.max_instances, self.max_tables
+                ))
+            })
     }
 }
 
@@ -213,10 +241,38 @@ impl PoolingStats {
         }
     }
 
-    /// Record a deallocation
+    /// Records a deallocation. One with nothing allocated is ignored: it
+    /// used to wrap the count to `u64::MAX`, after which the pool reported
+    /// itself full for good.
     pub fn record_deallocation(&self) {
-        self.instances_allocated.fetch_sub(1, Ordering::Relaxed);
-        self.total_deallocations.fetch_add(1, Ordering::Relaxed);
+        if self
+            .instances_allocated
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+            .is_ok()
+        {
+            self.total_deallocations.fetch_add(1, Ordering::Relaxed);
+        } else {
+            tracing::warn!("a deallocation with no instance allocated was ignored");
+        }
+    }
+
+    /// Records an allocation if fewer than `max` are allocated, in one
+    /// step, and says whether it did.
+    fn try_record_allocation(&self, max: u64) -> bool {
+        let reserved =
+            self.instances_allocated
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+                    (n < max).then_some(n + 1)
+                });
+        match reserved {
+            Ok(previous) => {
+                self.total_allocations.fetch_add(1, Ordering::Relaxed);
+                self.peak_instances
+                    .fetch_max(previous + 1, Ordering::SeqCst);
+                true
+            }
+            Err(_) => false,
+        }
     }
 
     /// Get current instance count
@@ -255,8 +311,8 @@ pub fn create_pooling_engine(config: &PoolingConfig) -> Result<Engine, PoolingEr
     // instances, which VAK never creates, and left `max_instances` with no
     // effect (docs/adr/0010).
     pooling_config.total_core_instances(config.max_instances);
-    pooling_config.total_memories(config.max_instances * config.max_memories);
-    pooling_config.total_tables(config.max_instances * config.max_tables);
+    pooling_config.total_memories(config.total_memories()?);
+    pooling_config.total_tables(config.total_tables()?);
 
     // Set per-instance limits
     pooling_config.max_memories_per_module(config.max_memories);
@@ -352,12 +408,17 @@ impl PoolManager {
         max.saturating_sub(current)
     }
 
-    /// Record that an instance was allocated from the pool
+    /// Records that an instance was allocated from the pool, or fails if
+    /// it's full. The check and the count are one atomic step: they used to
+    /// be two, so concurrent callers could all pass the check and overfill
+    /// the pool.
     pub fn record_allocation(&self) -> Result<(), PoolingError> {
-        if !self.has_capacity() {
+        if !self
+            .stats
+            .try_record_allocation(u64::from(self.config.max_instances))
+        {
             return Err(PoolingError::PoolExhausted(self.config.max_instances));
         }
-        self.stats.record_allocation();
         debug!(
             current = self.stats.current_instances(),
             max = self.config.max_instances,
@@ -456,5 +517,93 @@ mod tests {
         manager.record_deallocation();
         assert_eq!(manager.stats().current_instances(), 0);
         assert_eq!(manager.remaining_capacity(), 10);
+    }
+
+    #[test]
+    fn test_concurrent_allocations_never_overfill_the_pool() {
+        // The capacity check and the count were two steps, so concurrent
+        // callers could all pass the check.
+        let manager = PoolManager::new(PoolingConfig::minimal()).unwrap();
+        let barrier = std::sync::Barrier::new(16);
+        let granted = std::sync::atomic::AtomicU64::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..16 {
+                scope.spawn(|| {
+                    barrier.wait();
+                    for _ in 0..10 {
+                        if manager.record_allocation().is_ok() {
+                            granted.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                });
+            }
+        });
+        assert_eq!(granted.load(Ordering::SeqCst), 10);
+        assert_eq!(manager.stats().current_instances(), 10);
+        assert_eq!(manager.stats().peak(), 10);
+        assert_eq!(manager.remaining_capacity(), 0);
+        assert!(matches!(
+            manager.record_allocation(),
+            Err(PoolingError::PoolExhausted(10))
+        ));
+        manager.record_deallocation();
+        assert!(manager.has_capacity());
+        manager.record_allocation().unwrap();
+        assert_eq!(manager.stats().total_allocations.load(Ordering::SeqCst), 11);
+    }
+
+    #[test]
+    fn test_a_spare_deallocation_does_not_brick_the_pool() {
+        // It wrapped the count to u64::MAX: the pool was full for good.
+        let manager = PoolManager::new(PoolingConfig::minimal()).unwrap();
+        manager.record_deallocation();
+        assert_eq!(manager.stats().current_instances(), 0);
+        assert_eq!(
+            manager.stats().total_deallocations.load(Ordering::SeqCst),
+            0
+        );
+        assert!(manager.has_capacity());
+        assert_eq!(manager.remaining_capacity(), 10);
+        manager.record_allocation().unwrap();
+        assert!(format!("{manager:?}").contains("PoolManager"));
+        assert_eq!(manager.config().max_instances, 10);
+        let _ = manager.engine();
+    }
+
+    #[test]
+    fn test_pool_totals_are_checked() {
+        // max_instances * max_memories was unchecked: a panic in debug.
+        for config in [
+            PoolingConfig {
+                max_memories: 2,
+                ..PoolingConfig::minimal().with_max_instances(u32::MAX)
+            },
+            PoolingConfig {
+                max_tables: 3,
+                ..PoolingConfig::minimal().with_max_instances(u32::MAX / 2)
+            },
+        ] {
+            let err = config.validate().unwrap_err();
+            assert!(err.to_string().contains("overflows"), "{err}");
+            assert!(create_pooling_engine(&config).is_err());
+        }
+        assert!(PoolingConfig::minimal()
+            .with_max_memory(0)
+            .validate()
+            .is_err());
+        let no_tables = PoolingConfig {
+            max_table_elements: 0,
+            ..PoolingConfig::minimal()
+        };
+        assert!(no_tables.validate().is_err());
+        assert_eq!(PoolingConfig::high_density().max_instances, 1000);
+        assert_eq!(PoolingConfig::resource_intensive().max_tables, 4);
+        assert!(create_standard_engine(false, false).is_ok());
+        let quiet = PoolingConfig {
+            epoch_interruption: false,
+            consume_fuel: false,
+            ..PoolingConfig::minimal()
+        };
+        assert!(create_pooling_engine(&quiet).is_ok());
     }
 }
