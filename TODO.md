@@ -297,31 +297,33 @@ request path. In order of leverage:
       status updates because nothing ran it. If CI already exists
       (`.github/workflows/ci.yml` is referenced in prior notes), verify it
       is *required* for merge, not merely present.
-- [ ] **Coverage slice: reach the 80% line floor.** Line coverage is 75.09%
-      (34,402 of 45,813 lines). The Code Coverage job runs under cargo-llvm-cov
-      (ADR 0012) and fails on the floor, which stays at 80%. The red job is a
-      signal, not a blocker: other slices go ahead. This slice starts after
-      item 5 (the Guard port, information-flow labels, the sparse Merkle tree
-      fix), one module per commit, in this order:
-      1. **`audit`**, TCB-critical. 71.1%, 1,704 lines missed; 527 more
-         covered lines reach 80%. Most missed: `multi_region.rs` 329,
-         `mod.rs` 296, `flight_recorder.rs` 272, `streaming.rs` 222,
-         `otel.rs` 221, `s3_backend.rs` 149.
+- [ ] **Coverage slice: reach the 80% line floor.** Line coverage is 78.13%
+      (37,726 of 48,286 lines, measured at `7de735b`). The Code Coverage job
+      runs under cargo-llvm-cov (ADR 0012) and fails on the floor, which stays
+      at 80%. The red job is a signal, not a blocker: other slices go ahead.
+      One module per commit, in this order:
+      1. [x] **`audit`**, TCB-critical: 71.1% to 86.3%. Writing its tests
+         found seven bugs, each fixed in its own commit:
+         - V6: the flight recorder never recomputed hashes, and failed every
+           trace after the first;
+         - K12: the S3 and multi-region backends simulated uploads and
+           dropped entries;
+         - I5: stream subscribers never received anything;
+         - I6: traceparent wasn't validated, a refused OTLP export counted as
+           sent, and the exported macros didn't compile;
+         - file rotation overwrote a rotated file;
+         - V7: verify_signatures passed unsigned entries.
       2. **`sandbox`**, security-critical. 71.2%, 1,535 missed; 470 more.
          `marketplace.rs` 485, `host_funcs.rs` 284, `reasoning_host.rs` 209,
          `async_host.rs` 205, `pooling.rs` 104.
-      3. **`memory`**. 78.8%, 1,818 missed; 106 more. `time_travel.rs` 504,
-         `mod.rs` 200, `content_addressable.rs` 187.
-      4. **`reasoner`**, last: outside the TCB. 78.8%, 1,475 missed; 81 more.
-         `z3_verifier.rs` 322, `datalog.rs` 221, `prm.rs` 141.
+      3. **`memory`**. 79.5%, 1,812 missed; 48 more.
+      4. **`reasoner`**, last: outside the TCB. 79.4%, 1,466 missed; 44 more.
 
-      These four at 80% each add about 1,184 covered lines. The floor needs
-      about 2,249. The rest has to come from taking them past 80%, or from
-      modules this order doesn't rank: `integrations` 52.5% (664 more to
-      80%), `llm` 64.2% (269), `tools` 28.5% (206), and `policy` 78.8% (51),
-      which is in the TCB. `kernel` (82.5%) and `swarm` (81.1%) are above
-      80%. Tests follow the Definition of done below. `make coverage` writes
-      the per-file report to `coverage/`.
+      With audit done, the floor needs about 900 more covered lines. These
+      three at 80% each add about 560. The rest has to come from taking them
+      past 80%, or from modules this order doesn't rank: `integrations`, `llm`,
+      `tools`, and `policy`, which is in the TCB. Tests follow the Definition
+      of done below. `make coverage` writes the per-file report to `coverage/`.
 - [ ] **Do not restore aggregate "N% complete" framing** in this file, the
       README, or CHANGELOG until every P0/P1 item above is closed and verified
       by a test that exercises `Kernel::execute`. Track items as done/open;
