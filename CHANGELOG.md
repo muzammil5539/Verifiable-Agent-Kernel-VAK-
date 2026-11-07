@@ -234,6 +234,16 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- The content-addressable store (`memory::content_addressable`) is durable and
+  tamper-evident (finding M4).
+  - **Reopened stores.** A reopened file store reads its compressed blobs. They
+    were all hash mismatches, because only in-memory metadata recorded which
+    blobs were gzipped.
+  - **Repair.** `put` rewrites a blob that doesn't hold its content. It used to
+    deduplicate against a corrupted or partial file, leaving the content
+    unreadable for good.
+  - **Writes.** Blobs are written aside and renamed into place.
+  - **Decompression** is capped.
 - Time-travel checkpoints (`memory::time_travel`) are tamper-evident (finding M3).
   - **Hash.** The version 2 hash separates its fields, covers the creation
     time, and commits to the parent's hash. A renamed key, shifted metadata or

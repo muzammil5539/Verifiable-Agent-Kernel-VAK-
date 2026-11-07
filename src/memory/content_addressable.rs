@@ -32,6 +32,18 @@
 //! assert_eq!(cid, cid2);
 //! ```
 //!
+//! # Stored blobs
+//!
+//! A blob is stored raw or gzipped. Reading takes whichever decoding
+//! matches its CID, so a reopened file store, which has lost the in-memory
+//! metadata saying which it is, still reads its blobs. Decompression is
+//! capped, at the content's recorded size when known. Blobs are written to
+//! a temporary file and renamed into place, and `put` rewrites a blob that
+//! doesn't match its CID instead of deduplicating against it.
+//!
+//! Metadata and statistics live in memory: a reopened file store serves
+//! its blobs, but lists and counts only what it has stored since.
+//!
 //! # References
 //!
 //! - Blue Ocean MVP Section 4.1: Immutable Memory Log
@@ -45,7 +57,7 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use thiserror::Error;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 // Error Types
 
@@ -380,13 +392,19 @@ impl ContentAddressableStore {
         let cid = ContentId::from_data(data);
         let hex_key = cid.to_hex();
 
-        // Check if already exists (deduplication)
+        // Check if already exists (deduplication). A file at the CID's path
+        // that doesn't hold this content (partly written, corrupted, or
+        // replaced) is rewritten: deduplicating against it used to leave
+        // the content unreadable for good.
         if self.exists(&cid)? {
-            debug!(cid = %cid.short(), "Content already exists, deduplicated");
-            if let Ok(mut stats) = self.stats.write() {
-                stats.deduplications += 1;
+            if self.holds(&cid) {
+                debug!(cid = %cid.short(), "Content already exists, deduplicated");
+                if let Ok(mut stats) = self.stats.write() {
+                    stats.deduplications += 1;
+                }
+                return Ok(cid);
             }
-            return Ok(cid);
+            warn!(cid = %cid.short(), "Stored blob doesn't match its CID; rewriting it");
         }
 
         // Check storage limits
@@ -432,9 +450,18 @@ impl ContentAddressableStore {
                 if let Some(parent) = path.parent() {
                     fs::create_dir_all(parent)?;
                 }
-                let mut file = File::create(&path)?;
+                // Written aside and renamed into place, so a crash leaves no
+                // partial blob under the CID.
+                let partial = path.with_extension("blob.partial");
+                let mut file = File::create(&partial)?;
                 file.write_all(&stored_data)?;
                 file.sync_all()?;
+                drop(file);
+                fs::rename(&partial, &path)?;
+                // A cached copy of what was there before is stale.
+                if let Ok(mut mem) = self.memory.write() {
+                    mem.remove(&hex_key);
+                }
             }
         }
 
@@ -447,10 +474,16 @@ impl ContentAddressableStore {
             .metadata
             .write()
             .map_err(|e| CASError::LockError(e.to_string()))?;
-        meta_store.insert(hex_key, meta);
+        let replaced = meta_store.insert(hex_key, meta);
+        drop(meta_store);
 
-        // Update stats
+        // Update stats; a rewritten blob replaces its old entry's counts.
         if let Ok(mut stats) = self.stats.write() {
+            if let Some(old) = replaced {
+                stats.item_count = stats.item_count.saturating_sub(1);
+                stats.total_size = stats.total_size.saturating_sub(old.size);
+                stats.stored_size = stats.stored_size.saturating_sub(old.stored_size);
+            }
             stats.item_count += 1;
             stats.total_size += data.len() as u64;
             stats.stored_size += stored_size;
@@ -670,14 +703,93 @@ impl ContentAddressableStore {
         Ok(encoder.finish()?)
     }
 
-    /// Decompress data using flate2
-    fn decompress(data: &[u8]) -> CASResult<Vec<u8>> {
+    /// Decompresses gzip data, refusing more than `limit` bytes of
+    /// output. It used to decompress without limit, so a small blob could
+    /// expand without bound.
+    fn decompress(data: &[u8], limit: u64) -> CASResult<Vec<u8>> {
         use flate2::read::GzDecoder;
 
-        let mut decoder = GzDecoder::new(data);
         let mut decompressed = Vec::new();
-        decoder.read_to_end(&mut decompressed)?;
+        GzDecoder::new(data)
+            .take(limit.saturating_add(1))
+            .read_to_end(&mut decompressed)?;
+        if decompressed.len() as u64 > limit {
+            return Err(CASError::StorageFull(format!(
+                "a blob decompresses to more than {limit} bytes"
+            )));
+        }
         Ok(decompressed)
+    }
+
+    /// The most a blob of `stored_len` bytes may decompress to: the
+    /// content's recorded size if known, otherwise DEFLATE's largest
+    /// expansion (about 1032:1), and never more than `max_size` if set.
+    fn decompression_limit(&self, known_size: Option<u64>, stored_len: usize) -> u64 {
+        let limit = known_size.unwrap_or_else(|| (stored_len as u64).saturating_mul(1032));
+        match self.config.max_size {
+            0 => limit,
+            max => limit.min(max),
+        }
+    }
+
+    /// Whether the blob stored under `cid` holds its content.
+    fn holds(&self, cid: &ContentId) -> bool {
+        let stored = match self.config.backend {
+            CASBackendType::Memory => self
+                .memory
+                .read()
+                .ok()
+                .and_then(|mem| mem.get(&cid.to_hex()).cloned()),
+            CASBackendType::File => self
+                .get_file_path(&cid.to_hex())
+                .ok()
+                .and_then(|path| fs::read(path).ok()),
+        };
+        stored.is_some_and(|stored| self.decode(cid, stored).is_ok_and(|data| cid.verify(&data)))
+    }
+
+    /// The content a stored blob holds: whichever of its raw bytes and its
+    /// decompression matches the CID, trying the recorded encoding first.
+    /// With neither matching, an error under `verify_on_read`, otherwise the
+    /// recorded encoding's bytes.
+    fn decode(&self, cid: &ContentId, stored_data: Vec<u8>) -> CASResult<Vec<u8>> {
+        let (compressed, known_size) = {
+            let meta_store = self
+                .metadata
+                .read()
+                .map_err(|e| CASError::LockError(e.to_string()))?;
+            match meta_store.get(&cid.to_hex()) {
+                Some(m) => (Some(m.compressed), Some(m.size)),
+                None => (None, None),
+            }
+        };
+        if compressed != Some(true) && cid.verify(&stored_data) {
+            return Ok(stored_data);
+        }
+        let limit = self.decompression_limit(known_size, stored_data.len());
+        let decompressed = if stored_data.starts_with(&[0x1f, 0x8b]) {
+            Self::decompress(&stored_data, limit).ok()
+        } else {
+            None
+        };
+        if let Some(data) = decompressed.as_ref().filter(|data| cid.verify(data)) {
+            return Ok(data.clone());
+        }
+        if compressed == Some(true) && cid.verify(&stored_data) {
+            return Ok(stored_data);
+        }
+        if self.config.verify_on_read {
+            let actual = ContentId::from_data(decompressed.as_deref().unwrap_or(&stored_data));
+            return Err(CASError::HashMismatch {
+                expected: cid.to_hex(),
+                actual: actual.to_hex(),
+            });
+        }
+        // Unverified reads keep the recorded encoding, as before.
+        match (compressed, decompressed) {
+            (Some(true), Some(data)) => Ok(data),
+            _ => Ok(stored_data),
+        }
     }
 
     /// Decompress if needed and verify hash
@@ -686,36 +798,7 @@ impl ContentAddressableStore {
         cid: &ContentId,
         stored_data: Vec<u8>,
     ) -> CASResult<Vec<u8>> {
-        let hex_key = cid.to_hex();
-
-        // Check if compressed
-        let compressed = {
-            let meta_store = self
-                .metadata
-                .read()
-                .map_err(|e| CASError::LockError(e.to_string()))?;
-            meta_store
-                .get(&hex_key)
-                .map(|m| m.compressed)
-                .unwrap_or(false)
-        };
-
-        let data = if compressed {
-            Self::decompress(&stored_data)?
-        } else {
-            stored_data
-        };
-
-        // Verify if enabled
-        if self.config.verify_on_read && !cid.verify(&data) {
-            let actual = ContentId::from_data(&data);
-            return Err(CASError::HashMismatch {
-                expected: cid.to_hex(),
-                actual: actual.to_hex(),
-            });
-        }
-
-        Ok(data)
+        self.decode(cid, stored_data)
     }
 }
 
@@ -790,5 +873,192 @@ mod tests {
         let cid = ContentId::from_data(b"Original");
         assert!(cid.verify(b"Original"));
         assert!(!cid.verify(b"Modified"));
+    }
+
+    fn file_store(dir: &std::path::Path) -> ContentAddressableStore {
+        ContentAddressableStore::new(CASConfig::file_based(dir)).unwrap()
+    }
+
+    /// Compressible content over the compression threshold.
+    fn big() -> Vec<u8> {
+        b"abcdefgh".repeat(512)
+    }
+
+    #[test]
+    fn test_a_reopened_store_reads_compressed_blobs() {
+        // Whether a blob was compressed was known only from in-memory
+        // metadata, so a reopened store returned gzip bytes, a mismatch.
+        let dir = tempfile::tempdir().unwrap();
+        let cid = file_store(dir.path()).put(&big()).unwrap();
+        let small = file_store(dir.path()).put(b"tiny").unwrap();
+        let reopened = file_store(dir.path());
+        assert_eq!(reopened.get(&cid).unwrap(), big());
+        assert_eq!(reopened.get(&small).unwrap(), b"tiny");
+        assert!(
+            reopened.list().unwrap().is_empty(),
+            "metadata isn't persisted"
+        );
+        assert!(reopened.get_metadata(&cid).is_err());
+    }
+
+    #[test]
+    fn test_put_repairs_a_blob_that_does_not_match() {
+        // put deduplicated against whatever file was at the CID's path, so
+        // a corrupt or partial blob was never rewritten.
+        let dir = tempfile::tempdir().unwrap();
+        let store = file_store(dir.path());
+        let cid = store.put(b"original content").unwrap();
+        let path = store.get_file_path(&cid.to_hex()).unwrap();
+        for damage in [&b"tampered"[..], &b"orig"[..], &b"\x1f\x8bnot gzip"[..]] {
+            std::fs::write(&path, damage).unwrap();
+            let reopened = file_store(dir.path());
+            assert!(matches!(
+                reopened.get(&cid),
+                Err(CASError::HashMismatch { .. })
+            ));
+            assert_eq!(reopened.put(b"original content").unwrap(), cid);
+            assert_eq!(reopened.get(&cid).unwrap(), b"original content");
+            assert_eq!(reopened.stats().unwrap().deduplications, 0);
+        }
+        // The same store repairs it too, without counting it twice.
+        std::fs::write(&path, b"tampered").unwrap();
+        assert_eq!(store.put(b"original content").unwrap(), cid);
+        let stats = store.stats().unwrap();
+        assert_eq!((stats.item_count, stats.total_size), (1, 16));
+
+        // A good blob is deduplicated, not rewritten.
+        assert_eq!(store.put(b"original content").unwrap(), cid);
+        assert_eq!(store.stats().unwrap().deduplications, 1);
+        assert_eq!(store.stats().unwrap().item_count, 1);
+        let blobs: Vec<_> = walk(dir.path());
+        assert!(blobs.iter().all(|p| !p.ends_with(".partial")), "{blobs:?}");
+
+        // In memory, a stored entry can't be damaged from outside; a cached
+        // copy of a rewritten blob isn't served.
+        let cached = file_store(dir.path());
+        assert_eq!(cached.get(&cid).unwrap(), b"original content");
+        std::fs::write(&path, b"tampered").unwrap();
+        cached.put(b"original content").unwrap();
+        assert_eq!(cached.get(&cid).unwrap(), b"original content");
+    }
+
+    fn walk(dir: &std::path::Path) -> Vec<String> {
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                found.extend(walk(&path));
+            } else {
+                found.push(path.display().to_string());
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn test_decompression_is_capped() {
+        // Decompression had no limit: a small blob could expand without
+        // bound.
+        let bomb = ContentAddressableStore::compress(&vec![0u8; 1 << 20]).unwrap();
+        assert!(bomb.len() < 4096);
+        assert_eq!(
+            ContentAddressableStore::decompress(&bomb, 1 << 20)
+                .unwrap()
+                .len(),
+            1 << 20
+        );
+        assert!(ContentAddressableStore::decompress(&bomb, (1 << 20) - 1).is_err());
+
+        let store = ContentAddressableStore::new(CASConfig::memory()).unwrap();
+        assert_eq!(store.decompression_limit(Some(10), 5), 10);
+        assert_eq!(store.decompression_limit(None, 5), 5 * 1032);
+        let capped = ContentAddressableStore::new(CASConfig::memory().with_max_size(100)).unwrap();
+        assert_eq!(capped.decompression_limit(None, 5), 100);
+
+        // A blob swapped for a bomb fails at its recorded size.
+        let dir = tempfile::tempdir().unwrap();
+        let files = file_store(dir.path());
+        let cid = files.put(b"short").unwrap();
+        std::fs::write(files.get_file_path(&cid.to_hex()).unwrap(), &bomb).unwrap();
+        assert!(files.get(&cid).is_err());
+    }
+
+    #[test]
+    fn test_unverified_reads_keep_the_recorded_encoding() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = CASConfig {
+            verify_on_read: false,
+            ..CASConfig::file_based(dir.path())
+        };
+        let store = ContentAddressableStore::new(config).unwrap();
+        let cid = store.put(&big()).unwrap();
+        assert!(store.get_metadata(&cid).unwrap().compressed);
+        assert_eq!(store.get(&cid).unwrap(), big());
+        let path = store.get_file_path(&cid.to_hex()).unwrap();
+        std::fs::write(&path, ContentAddressableStore::compress(b"other").unwrap()).unwrap();
+        assert_eq!(store.get(&cid).unwrap(), big(), "the cached copy");
+        store.memory.write().unwrap().clear();
+        assert_eq!(
+            store.get(&cid).unwrap(),
+            b"other",
+            "unverified: the recorded encoding, decompressed"
+        );
+        let fresh = ContentAddressableStore::new(CASConfig {
+            verify_on_read: false,
+            ..CASConfig::file_based(dir.path())
+        })
+        .unwrap();
+        assert!(fresh.get(&cid).is_ok(), "unverified, as configured");
+    }
+
+    #[test]
+    fn test_store_operations() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = file_store(dir.path());
+        let cid = store
+            .put_with_metadata(
+                &big(),
+                Some("text/plain"),
+                HashMap::from([("k".to_string(), "v".to_string())]),
+            )
+            .unwrap();
+        let meta = store.get_metadata(&cid).unwrap();
+        assert_eq!(meta.content_type.as_deref(), Some("text/plain"));
+        assert!(meta.compressed && meta.stored_size < meta.size);
+        assert_eq!(store.list().unwrap(), std::slice::from_ref(&cid));
+        let stats = store.stats().unwrap();
+        assert!(stats.compression_ratio < 1.0);
+        assert_eq!(store.get(&cid).unwrap(), big());
+        assert!(store.stats().unwrap().cache_hits + store.stats().unwrap().cache_misses > 0);
+        store.delete(&cid).unwrap();
+        assert!(!store.exists(&cid).unwrap());
+        assert!(matches!(store.get(&cid), Err(CASError::NotFound(_))));
+        assert_eq!(store.stats().unwrap().item_count, 0);
+
+        let full = ContentAddressableStore::new(CASConfig::memory().with_max_size(4)).unwrap();
+        assert!(matches!(
+            full.put(b"too big"),
+            Err(CASError::StorageFull(_))
+        ));
+        assert!(ContentAddressableStore::new(CASConfig {
+            backend: CASBackendType::File,
+            base_path: None,
+            ..CASConfig::default()
+        })
+        .is_err());
+        assert!(ContentId::from_hex("zz").is_err());
+        let id = ContentId::from_data(b"x");
+        assert_eq!(id.short().len(), 8);
+        assert!(id.to_string().contains(&id.short()));
+        assert!(!id.verify(b"y"));
+        let memory = ContentAddressableStore::new(
+            CASConfig::memory()
+                .with_compression(false)
+                .with_cache_size(1),
+        )
+        .unwrap();
+        let plain = memory.put(&big()).unwrap();
+        assert!(!memory.get_metadata(&plain).unwrap().compressed);
+        assert!(format!("{memory:?}").contains("ContentAddressableStore"));
     }
 }
