@@ -234,6 +234,25 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- Async host operations (`sandbox::async_host`) run only what their policy
+  allows (finding K15).
+  - **Canonical before checked.** The enforcer matches resources by prefix and
+    suffix, and operations were checked as given. `/data/../secret` passed a
+    rule for `/data/*`, and `http://allowed@evil/` passed one for
+    `http://allowed*`. Paths must now be absolute with no `..`, and `.` and
+    repeated separators are removed. URLs must be http or https, with a host
+    and no user info, and are normalised. What is checked is what runs.
+  - **HTTP.** Redirects aren't followed, a request can't set `Host`, and
+    responses are capped by the new `max_response_bytes` (10 MiB by default).
+  - **Settings.** `default_timeout` applies to every operation. Before, it
+    applied only to HTTP. `queue_when_full` and `max_queue_depth` apply; they
+    were ignored.
+  - **Keys.** Authorization-cache and executor keys are tuples. Joined with
+    `:`, one operation could share another's cached decision, and one agent
+    could run in another's context.
+  - **Enforcers and cleanup.** `with_enforcer` gives a context, or an
+    executor's contexts, an enforcer; there was no way to, so everything was
+    denied. `cleanup_inactive` removes idle contexts; it removed nothing.
 - `MarketplaceClient::install` no longer trusts the registry (finding K14).
   - **Paths.** Names and versions, including the dependencies a registry lists,
     are checked before they reach a path or URL. A dependency named `../../x`
