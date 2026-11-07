@@ -234,6 +234,14 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- Snapshot backends (`memory::snapshot_backend`) store each agent's checkpoints
+  faithfully (finding M5).
+  - **Loading** checks the snapshot is the one asked for, and that it verifies.
+  - **Saving** refuses an unverifiable checkpoint.
+  - **Directories.** Agent directory names are a one-to-one percent-encoding,
+    never `.` or `..`. Before, `a/b` and `a_b` shared a directory and index, and
+    agent `..` wrote outside the base directory. Agent IDs containing `/`, `\`,
+    `:`, `*`, `?`, `"`, `<`, `>`, `|` or NUL get new directories.
 - The content-addressable store (`memory::content_addressable`) is durable and
   tamper-evident (finding M4).
   - **Reopened stores.** A reopened file store reads its compressed blobs. They

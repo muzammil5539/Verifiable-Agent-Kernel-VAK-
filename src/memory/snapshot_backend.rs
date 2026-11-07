@@ -150,6 +150,39 @@ impl StoredSnapshot {
         }
     }
 
+    /// The snapshot, if it is the one asked for and its checkpoint
+    /// verifies. A load used to return whatever was stored under the ID,
+    /// tampered or another snapshot entirely.
+    fn checked(self, id: &SnapshotId) -> SnapshotResult<Self> {
+        if self.checkpoint.id != *id {
+            return Err(SnapshotError::CorruptedData(format!(
+                "the snapshot stored as {id} is {}",
+                self.checkpoint.id
+            )));
+        }
+        if !self.checkpoint.verify() {
+            return Err(SnapshotError::CorruptedData(format!(
+                "snapshot {id} fails verification"
+            )));
+        }
+        Ok(self)
+    }
+}
+
+/// Refuses to store a checkpoint that doesn't verify: it could never be
+/// loaded.
+fn check_saved(checkpoint: &StateCheckpoint) -> SnapshotResult<()> {
+    if checkpoint.verify() {
+        Ok(())
+    } else {
+        Err(SnapshotError::CorruptedData(format!(
+            "refusing to save checkpoint {}, which fails verification",
+            checkpoint.id
+        )))
+    }
+}
+
+impl StoredSnapshot {
     /// Get the snapshot ID
     pub fn id(&self) -> SnapshotId {
         self.checkpoint.id
@@ -395,6 +428,7 @@ impl SnapshotBackend for InMemorySnapshotBackend {
         agent_id: &str,
         checkpoint: &StateCheckpoint,
     ) -> SnapshotResult<()> {
+        check_saved(checkpoint)?;
         let stored = StoredSnapshot::new(agent_id, checkpoint.clone());
         let id = stored.id();
 
@@ -419,7 +453,8 @@ impl SnapshotBackend for InMemorySnapshotBackend {
             .await
             .get(id)
             .cloned()
-            .ok_or(SnapshotError::NotFound(*id))
+            .ok_or(SnapshotError::NotFound(*id))?
+            .checked(id)
     }
 
     async fn list_snapshots(&self, agent_id: &str) -> SnapshotResult<Vec<SnapshotId>> {
@@ -606,26 +641,30 @@ impl FileSnapshotBackend {
             .map_err(|e| SnapshotError::CorruptedData(format!("Invalid JSON: {}", e)))
     }
 
-    /// Find the snapshot file for a given ID (checks both compressed and uncompressed)
-    async fn find_snapshot_file(&self, id: &SnapshotId) -> SnapshotResult<(PathBuf, String, bool)> {
+    /// Find the snapshot file for a given ID (checks both compressed and
+    /// uncompressed): its path, its agent's directory, and whether it's
+    /// compressed.
+    async fn find_snapshot_file(
+        &self,
+        id: &SnapshotId,
+    ) -> SnapshotResult<(PathBuf, PathBuf, bool)> {
         // Search through all agent directories
         let mut entries = fs::read_dir(&self.config.base_path).await?;
 
         while let Some(entry) = entries.next_entry().await? {
             if entry.file_type().await?.is_dir() {
-                let agent_id = entry.file_name().to_string_lossy().to_string();
                 let agent_dir = entry.path();
 
                 // Check for compressed file
                 let compressed_path = agent_dir.join(format!("{}.json.gz", id));
                 if compressed_path.exists() {
-                    return Ok((compressed_path, agent_id, true));
+                    return Ok((compressed_path, agent_dir, true));
                 }
 
                 // Check for uncompressed file
                 let uncompressed_path = agent_dir.join(format!("{}.json", id));
                 if uncompressed_path.exists() {
-                    return Ok((uncompressed_path, agent_id, false));
+                    return Ok((uncompressed_path, agent_dir, false));
                 }
             }
         }
@@ -641,6 +680,7 @@ impl SnapshotBackend for FileSnapshotBackend {
         agent_id: &str,
         checkpoint: &StateCheckpoint,
     ) -> SnapshotResult<()> {
+        check_saved(checkpoint)?;
         // Ensure agent directory exists
         let agent_dir = self.agent_dir(agent_id);
         fs::create_dir_all(&agent_dir).await?;
@@ -667,9 +707,9 @@ impl SnapshotBackend for FileSnapshotBackend {
     }
 
     async fn load_snapshot(&self, id: &SnapshotId) -> SnapshotResult<StoredSnapshot> {
-        let (path, _agent_id, compressed) = self.find_snapshot_file(id).await?;
+        let (path, _agent_dir, compressed) = self.find_snapshot_file(id).await?;
         let data = fs::read(&path).await?;
-        self.deserialize_snapshot(&data, compressed)
+        self.deserialize_snapshot(&data, compressed)?.checked(id)
     }
 
     async fn list_snapshots(&self, agent_id: &str) -> SnapshotResult<Vec<SnapshotId>> {
@@ -678,15 +718,22 @@ impl SnapshotBackend for FileSnapshotBackend {
     }
 
     async fn delete_snapshot(&self, id: &SnapshotId) -> SnapshotResult<()> {
-        let (path, agent_id, _compressed) = self.find_snapshot_file(id).await?;
+        let (path, agent_dir, _compressed) = self.find_snapshot_file(id).await?;
 
         // Delete the file
         fs::remove_file(&path).await?;
 
-        // Update index
-        let mut index = self.load_index(&agent_id).await?;
-        index.remove(id);
-        self.save_index(&agent_id, &index).await?;
+        // Update the index of the directory it was in. Its agent comes from
+        // the index itself: a directory name is an encoding of the agent,
+        // not the agent.
+        let index_path = agent_dir.join("index.json");
+        if index_path.exists() {
+            let content = fs::read_to_string(&index_path).await?;
+            let stored: SnapshotIndex = serde_json::from_str(&content)?;
+            let mut index = self.load_index(&stored.agent_id).await?;
+            index.remove(id);
+            self.save_index(&stored.agent_id, &index).await?;
+        }
 
         Ok(())
     }
@@ -742,13 +789,32 @@ impl SnapshotBackend for FileSnapshotBackend {
 // Utility Functions
 
 /// Sanitize a string to be safe for use as a filename
+/// An agent ID as a directory name, one-to-one: `%` and the characters a
+/// file name can't hold are percent-encoded, and a name that is empty or
+/// all dots is encoded whole, so it can't be `.` or `..`.
+///
+/// It used to replace those characters with `_`, so `a/b` and `a_b` shared
+/// a directory, and one agent's index and snapshots were the other's; and
+/// it left `..` alone, so agent `..` wrote outside the base directory.
+/// Agent IDs with `/`, `\`, `:`, `*`, `?`, `"`, `<`, `>`, `|` or NUL get new
+/// directories.
 fn sanitize_filename(name: &str) -> String {
-    name.chars()
-        .map(|c| match c {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0' => '_',
-            c => c,
-        })
-        .collect()
+    if name.is_empty() {
+        return "%".to_string();
+    }
+    if name.chars().all(|c| c == '.') {
+        return "%2E".repeat(name.len());
+    }
+    let mut encoded = String::with_capacity(name.len());
+    for c in name.chars() {
+        match c {
+            '%' | '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0' => {
+                encoded.push_str(&format!("%{:02X}", u32::from(c)));
+            }
+            c => encoded.push(c),
+        }
+    }
+    encoded
 }
 
 // Tests
@@ -1160,10 +1226,23 @@ mod tests {
 
     #[test]
     fn test_sanitize_filename() {
+        // One-to-one: "agent/1" and "agent:1" used to share "agent_1" with
+        // each other and with agent "agent_1".
         assert_eq!(sanitize_filename("agent1"), "agent1");
-        assert_eq!(sanitize_filename("agent/1"), "agent_1");
-        assert_eq!(sanitize_filename("agent:1"), "agent_1");
-        assert_eq!(sanitize_filename("agent*1?test"), "agent_1_test");
+        assert_eq!(sanitize_filename("agent_1"), "agent_1");
+        assert_eq!(sanitize_filename("agent/1"), "agent%2F1");
+        assert_eq!(sanitize_filename("agent:1"), "agent%3A1");
+        assert_eq!(sanitize_filename("agent*1?test"), "agent%2A1%3Ftest");
+        assert_eq!(sanitize_filename("100%"), "100%25");
+        assert_eq!(sanitize_filename("a.b"), "a.b");
+        // Never "." or "..", nor the base directory itself.
+        assert_eq!(sanitize_filename(".."), "%2E%2E");
+        assert_eq!(sanitize_filename("."), "%2E");
+        assert_eq!(sanitize_filename(""), "%");
+        let names = ["a/b", "a_b", "a%2Fb", "a:b", "..", "%2E%2E", "", "%"];
+        let encoded: std::collections::HashSet<_> =
+            names.iter().map(|n| sanitize_filename(n)).collect();
+        assert_eq!(encoded.len(), names.len(), "{encoded:?}");
     }
 
     // Error Tests
@@ -1186,5 +1265,111 @@ mod tests {
 
         let err = SnapshotError::BackendError("connection failed".to_string());
         assert!(err.to_string().contains("Backend"));
+    }
+
+    async fn file_backend(dir: &std::path::Path, compression: bool) -> FileSnapshotBackend {
+        FileSnapshotBackend::new(SnapshotConfig::new(dir).with_compression(compression))
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_a_loaded_snapshot_must_verify_and_be_the_one_asked_for() {
+        // A load returned whatever was stored under the ID.
+        let dir = TempDir::new().unwrap();
+        let backend = file_backend(dir.path(), false).await;
+        let first = create_test_checkpoint("first", None);
+        let second = create_test_checkpoint("second", None);
+        backend.save_snapshot("agent1", &first).await.unwrap();
+        backend.save_snapshot("agent1", &second).await.unwrap();
+        let path = |id: &SnapshotId| dir.path().join("agent1").join(format!("{id}.json"));
+
+        // Tampered: the label changed, the hash didn't.
+        let text = std::fs::read_to_string(path(&first.id)).unwrap();
+        std::fs::write(path(&first.id), text.replace("\"first\"", "\"forged\"")).unwrap();
+        let err = backend.load_snapshot(&first.id).await.unwrap_err();
+        assert!(err.to_string().contains("fails verification"), "{err}");
+
+        // Swapped: another snapshot's file under this ID.
+        std::fs::copy(path(&second.id), path(&first.id)).unwrap();
+        let err = backend.load_snapshot(&first.id).await.unwrap_err();
+        assert!(
+            err.to_string().contains(&format!("is {}", second.id)),
+            "{err}"
+        );
+        assert_eq!(
+            backend
+                .load_snapshot(&second.id)
+                .await
+                .unwrap()
+                .checkpoint
+                .label,
+            "second"
+        );
+
+        // A corrupt snapshot can still be deleted.
+        backend.delete_snapshot(&first.id).await.unwrap();
+        assert_eq!(backend.list_snapshots("agent1").await.unwrap(), [second.id]);
+        assert!(!backend.exists(&first.id).await.unwrap());
+
+        // Nothing unverifiable is saved.
+        let mut broken = create_test_checkpoint("broken", None);
+        broken.label = "changed".into();
+        assert!(backend.save_snapshot("agent1", &broken).await.is_err());
+        let memory = InMemorySnapshotBackend::new();
+        assert!(memory.save_snapshot("agent1", &broken).await.is_err());
+        memory.save_snapshot("agent1", &first).await.unwrap();
+        assert_eq!(
+            memory.load_snapshot(&first.id).await.unwrap().checkpoint.id,
+            first.id
+        );
+    }
+
+    #[tokio::test]
+    async fn test_agents_get_separate_directories() {
+        // "a/b" and "a_b" shared a directory and index; ".." wrote outside
+        // the base directory.
+        let dir = TempDir::new().unwrap();
+        let base = dir.path().join("snapshots");
+        let backend = file_backend(&base, true).await;
+        let (slash, underscore, dots) = (
+            create_test_checkpoint("slash", None),
+            create_test_checkpoint("underscore", None),
+            create_test_checkpoint("dots", None),
+        );
+        backend.save_snapshot("a/b", &slash).await.unwrap();
+        backend.save_snapshot("a_b", &underscore).await.unwrap();
+        backend.save_snapshot("..", &dots).await.unwrap();
+
+        assert_eq!(backend.list_snapshots("a/b").await.unwrap(), [slash.id]);
+        assert_eq!(
+            backend.list_snapshots("a_b").await.unwrap(),
+            [underscore.id]
+        );
+        let latest = backend.get_latest("a_b").await.unwrap().unwrap();
+        assert_eq!(latest.checkpoint.label, "underscore");
+        assert!(
+            !dir.path().join("index.json").exists(),
+            "nothing above the base"
+        );
+        assert!(base.join("%2E%2E").join("index.json").exists());
+        assert_eq!(
+            backend.get_latest("..").await.unwrap().unwrap().agent_id,
+            ".."
+        );
+
+        // Deleting through an encoded directory updates the right index.
+        backend.delete_snapshot(&slash.id).await.unwrap();
+        assert!(backend.list_snapshots("a/b").await.unwrap().is_empty());
+        assert_eq!(
+            backend.list_snapshots("a_b").await.unwrap(),
+            [underscore.id]
+        );
+        assert_eq!(backend.prune_old("a_b", 0).await.unwrap(), 1);
+        assert!(backend.get_latest("a_b").await.unwrap().is_none());
+        assert!(matches!(
+            backend.load_snapshot(&SnapshotId::new()).await,
+            Err(SnapshotError::NotFound(_))
+        ));
     }
 }
