@@ -168,18 +168,40 @@ impl TraceContext {
         }
     }
 
-    /// Parse from W3C traceparent header
+    /// Parses a W3C `traceparent` header (Trace Context, level 1):
+    /// `00-<32 hex trace id>-<16 hex parent id>-<2 hex flags>`.
+    ///
+    /// `None` for anything else: the wrong version or number of fields,
+    /// uppercase or non-hex digits, the wrong lengths, an all-zero trace or
+    /// parent id, or flags that aren't two hex digits. The spec says to
+    /// ignore such a header and start a new trace. The header comes from
+    /// whoever sent the request, and `to_traceparent` writes these fields
+    /// back into outgoing headers, so nothing unchecked passes through.
     pub fn from_traceparent(header: &str) -> Option<Self> {
-        let parts: Vec<&str> = header.split('-').collect();
-        if parts.len() != 4 {
+        fn hex(field: &str, len: usize) -> bool {
+            field.len() == len
+                && field
+                    .bytes()
+                    .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        }
+        let mut parts = header.trim().split('-');
+        let (version, trace_id, span_id, flags) =
+            (parts.next()?, parts.next()?, parts.next()?, parts.next()?);
+        if parts.next().is_some() || version != "00" {
+            return None;
+        }
+        if !hex(trace_id, 32) || !hex(span_id, 16) || !hex(flags, 2) {
+            return None;
+        }
+        if trace_id.bytes().all(|b| b == b'0') || span_id.bytes().all(|b| b == b'0') {
             return None;
         }
 
         Some(Self {
-            trace_id: parts[1].to_string(),
-            span_id: parts[2].to_string(),
+            trace_id: trace_id.to_string(),
+            span_id: span_id.to_string(),
             parent_span_id: None,
-            trace_flags: u8::from_str_radix(parts[3], 16).unwrap_or(0),
+            trace_flags: u8::from_str_radix(flags, 16).ok()?,
             trace_state: HashMap::new(),
         })
     }
@@ -387,21 +409,25 @@ impl From<bool> for AttributeValue {
 /// Configuration for the VAK tracer
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TracingConfig {
-    /// Enable tracing
+    /// Not applied: the tracer records whatever it's given.
     pub enabled: bool,
     /// Service name
     pub service_name: String,
     /// Service version
     pub service_version: String,
-    /// Sampling rate (0.0 to 1.0)
+    /// Sampling rate (0.0 to 1.0). Checked by [`VakTracer::new`], but not
+    /// applied: every span is recorded.
     pub sampling_rate: f64,
     /// Maximum spans to buffer
     pub max_buffer_size: usize,
-    /// Export interval in seconds
+    /// Not applied: nothing exports on a timer. Drain spans with
+    /// [`VakTracer::drain_completed_spans`] and send them with
+    /// [`OtlpExporter::export`].
     pub export_interval_secs: u64,
-    /// Export endpoint (OTLP)
+    /// Not applied, for the same reason; pass the endpoint to
+    /// [`OtlpExporter::new`].
     pub otlp_endpoint: Option<String>,
-    /// Include detailed attributes
+    /// Not applied.
     pub detailed_attributes: bool,
 }
 
@@ -682,7 +708,12 @@ impl OtlpExporter {
         }
     }
 
-    /// Export spans to OTLP endpoint
+    /// Exports spans to the OTLP/HTTP endpoint (`{endpoint}/v1/traces`).
+    ///
+    /// # Errors
+    ///
+    /// [`TracingError::ExportFailed`] if the request fails or the collector
+    /// answers with anything but success.
     pub async fn export(&self, spans: Vec<Span>) -> TracingResult<()> {
         if spans.is_empty() {
             return Ok(());
@@ -733,13 +764,23 @@ impl OtlpExporter {
             }]
         });
 
-        self.client
+        let response = self
+            .client
             .post(format!("{}/v1/traces", self.endpoint))
             .header("Content-Type", "application/json")
             .json(&payload)
             .send()
             .await
             .map_err(|e| TracingError::ExportFailed(e.to_string()))?;
+        // A collector that refuses the spans hasn't stored them. Any
+        // response used to count as exported.
+        let status = response.status();
+        if !status.is_success() {
+            return Err(TracingError::ExportFailed(format!(
+                "the collector at {} answered {status}",
+                self.endpoint
+            )));
+        }
 
         tracing::debug!(spans_exported = spans.len(), "Exported spans to OTLP");
         Ok(())
@@ -881,7 +922,7 @@ fn current_time_ns() -> u64 {
 #[macro_export]
 macro_rules! trace_inference {
     ($tracer:expr, $name:expr) => {
-        $tracer.span_context($name, $crate::audit::tracing::SpanKind::Inference)
+        $tracer.span_context($name, $crate::audit::otel::SpanKind::Inference)
     };
 }
 
@@ -889,7 +930,7 @@ macro_rules! trace_inference {
 #[macro_export]
 macro_rules! trace_logic_check {
     ($tracer:expr, $name:expr) => {
-        $tracer.span_context($name, $crate::audit::tracing::SpanKind::LogicCheck)
+        $tracer.span_context($name, $crate::audit::otel::SpanKind::LogicCheck)
     };
 }
 
@@ -897,7 +938,7 @@ macro_rules! trace_logic_check {
 #[macro_export]
 macro_rules! trace_policy_eval {
     ($tracer:expr, $name:expr) => {
-        $tracer.span_context($name, $crate::audit::tracing::SpanKind::PolicyEval)
+        $tracer.span_context($name, $crate::audit::otel::SpanKind::PolicyEval)
     };
 }
 
@@ -905,7 +946,7 @@ macro_rules! trace_policy_eval {
 #[macro_export]
 macro_rules! trace_tool_exec {
     ($tracer:expr, $name:expr) => {
-        $tracer.span_context($name, $crate::audit::tracing::SpanKind::ToolExec)
+        $tracer.span_context($name, $crate::audit::otel::SpanKind::ToolExec)
     };
 }
 
@@ -931,6 +972,147 @@ mod tests {
         assert_eq!(parent.trace_id, child.trace_id);
         assert_ne!(parent.span_id, child.span_id);
         assert_eq!(child.parent_span_id, Some(parent.span_id.clone()));
+    }
+
+    /// Serves one HTTP request with `status`, and returns its address and
+    /// the request it received.
+    async fn one_response(status: &'static str) -> (String, tokio::task::JoinHandle<String>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+        let served = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0u8; 4096];
+            // Read the headers, then the body Content-Length announces.
+            loop {
+                let n = socket.read(&mut chunk).await.unwrap();
+                request.extend_from_slice(&chunk[..n]);
+                let text = String::from_utf8_lossy(&request).to_string();
+                if let Some(end) = text.find("\r\n\r\n") {
+                    let length = text
+                        .lines()
+                        .find_map(|l| {
+                            l.to_lowercase()
+                                .strip_prefix("content-length:")
+                                .map(|v| v.trim().parse::<usize>().unwrap())
+                        })
+                        .unwrap_or(0);
+                    if request.len() >= end + 4 + length || n == 0 {
+                        break;
+                    }
+                }
+                if n == 0 {
+                    break;
+                }
+            }
+            let reply =
+                format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            socket.write_all(reply.as_bytes()).await.unwrap();
+            String::from_utf8_lossy(&request).to_string()
+        });
+        (address, served)
+    }
+
+    fn finished_span() -> Span {
+        let mut span = Span::new("op", SpanKind::Custom, TraceContext::new());
+        span.set_attribute("n", 1i64);
+        span.end();
+        span
+    }
+
+    #[tokio::test]
+    async fn test_the_exported_macros_expand() {
+        // They named `$crate::audit::tracing`, which doesn't exist, so no
+        // use of them compiled.
+        let tracer = VakTracer::new(TracingConfig::default()).unwrap();
+        let spans = [
+            (
+                crate::trace_inference!(tracer, "a").await,
+                SpanKind::Inference,
+            ),
+            (
+                crate::trace_logic_check!(tracer, "b").await,
+                SpanKind::LogicCheck,
+            ),
+            (
+                crate::trace_policy_eval!(tracer, "c").await,
+                SpanKind::PolicyEval,
+            ),
+            (
+                crate::trace_tool_exec!(tracer, "d").await,
+                SpanKind::ToolExec,
+            ),
+        ];
+        for (context, kind) in spans {
+            let span = tracer.end_span(context.span_id()).await.unwrap();
+            assert_eq!(span.kind, kind);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_a_refused_export_is_an_error() {
+        // Any response used to count as exported, a 503 included.
+        let (address, served) = one_response("503 Service Unavailable").await;
+        let err = OtlpExporter::new(&address)
+            .export(vec![finished_span()])
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("503"), "{err}");
+        let request = served.await.unwrap();
+        assert!(request.starts_with("POST /v1/traces"), "{request}");
+        assert!(request.contains("\"name\":\"op\""), "{request}");
+
+        let (address, served) = one_response("200 OK").await;
+        OtlpExporter::new(&address)
+            .export(vec![finished_span()])
+            .await
+            .unwrap();
+        served.await.unwrap();
+
+        // Nothing to export needs no collector; no collector at all fails.
+        OtlpExporter::new("http://127.0.0.1:9")
+            .export(Vec::new())
+            .await
+            .unwrap();
+        assert!(OtlpExporter::new("http://127.0.0.1:9")
+            .export(vec![finished_span()])
+            .await
+            .is_err());
+    }
+
+    #[test]
+    fn test_a_malformed_traceparent_is_ignored() {
+        let valid = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+        let parsed = TraceContext::from_traceparent(valid).unwrap();
+        assert_eq!(parsed.trace_id, "4bf92f3577b34da6a3ce929d0e0e4736");
+        assert_eq!(parsed.span_id, "00f067aa0ba902b7");
+        assert_eq!(parsed.trace_flags, 1);
+        assert_eq!(parsed.to_traceparent(), valid);
+
+        for header in [
+            // Anything with four fields used to be taken whole, so text the
+            // client chose reached outgoing headers.
+            "x-evil\r\nSet-Cookie: a=b-zz-01",
+            "a-b-c-d",
+            "",
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7",
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01-extra",
+            "01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+            "00-4BF92F3577B34DA6A3CE929D0E0E4736-00f067aa0ba902b7-01",
+            "00-4bf92f3577b34da6a3ce929d0e0e473-00f067aa0ba902b7-01",
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b-01",
+            "00-00000000000000000000000000000000-00f067aa0ba902b7-01",
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01",
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-1",
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-zz",
+            "00-4bf92f3577b34da6a3ce929d0e0e47g6-00f067aa0ba902b7-01",
+        ] {
+            assert!(
+                TraceContext::from_traceparent(header).is_none(),
+                "{header:?} must be ignored"
+            );
+        }
     }
 
     #[test]

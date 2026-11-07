@@ -234,6 +234,18 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- OpenTelemetry tracing (`audit::otel`; finding I6).
+  - **traceparent.** `TraceContext::from_traceparent` accepted any header with four
+    `-`-separated fields, so text a client chose, line breaks included, went back
+    out through `to_traceparent`. It now parses W3C Trace Context strictly and
+    ignores anything else, as the spec requires.
+  - **Refused exports.** `OtlpExporter::export` counted any response as exported.
+    A 4xx or 5xx is now `ExportFailed`.
+  - **Macros.** The exported `trace_inference!`, `trace_logic_check!`,
+    `trace_policy_eval!` and `trace_tool_exec!` macros named a module that doesn't
+    exist, so no use of them compiled. They now name `audit::otel`.
+  - **Settings.** `TracingConfig`'s unapplied settings (`enabled`, `sampling_rate`,
+    `export_interval_secs`, `otlp_endpoint`, `detailed_attributes`) say so.
 - Audit stream subscribers receive events (finding I5).
   - **Subscriptions were closed from the start.** `AuditStreamManager::subscribe`
     dropped each subscriber's receiver, so nobody received anything. It now returns
