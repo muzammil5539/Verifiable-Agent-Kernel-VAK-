@@ -115,14 +115,15 @@
 //! | Component | Level | Notes |
 //! |-----------|-------|-------|
 //! | Kernel mediation | Enforced | Default deny; unknown tools fail closed |
-//! | Guard stage | Enforced, for the stage | Guards only narrow; a guard that fails denies; `policy.min_assurance` counts only guard passes. Each guard's own check is at the level it declares; no adapters ship yet (ADR 0013) |
+//! | Guard stage | Enforced, for the stage | Guards only narrow; a guard that fails denies; `policy.min_assurance` counts only guard passes. Each guard's own check is at the level it declares (ADR 0013). Adapters: the constitution (Enforced, ADR 0018), prompt injection (Heuristic, ADR 0019), Datalog (Enforced, ADR 0020); none passes, so none meets a floor |
 //! | Information-flow labels (`policy.labels`) | Enforced, for propagation inside the kernel | Per-agent context labels that only rise; YAML and Cedar policies and guards read them (ADR 0016 for Cedar). Only as good as the framework's declared labels and agent identities; off by default (ADR 0014) |
 //! | Policy (`CedarEnforcer`, YAML) | Enforced | Cedar-style, not the `cedar-policy` engine |
 //! | Policy (`CedarPolicy`, feature `cedar`) | Enforced | The `cedar-policy` engine; schema-validated; errors deny |
 //! | Policy analysis (feature `cedar-analysis`) | Enforced, for the properties stated | SymCC with cvc5: ceilings, floors, never-errors, no-widening reloads |
 //! | Kernel audit log | Enforced | RFC 9162 Merkle tree, signed tree heads; in memory, or durable (JSONL or SQLite) with `audit.log_path`, verified on open |
 //! | WASM sandbox | Enforced | Fuel and wall-clock limits; Ed25519-signed skills pinned to their verified module |
-//! | `reasoner` (PRM, ToT, Datalog, prompt-injection) | Heuristic | LLM judge, closures, regexes |
+//! | `reasoner` (PRM, ToT, prompt-injection) | Heuristic | LLM judge, value-guided search, regexes |
+//! | `reasoner::datalog` | Enforced, for the rules stated | An Ascent program over canonical paths, endpoints and commands; symlinks aren't resolved (ADR 0020) |
 //! | `reasoner::zk_proof` | Experimental | Not a sound proof system |
 //! | `swarm` consensus | Heuristic | Votes are unauthenticated |
 //! | Python bindings (`python`) | Enforced, for calls through the kernel | Tool calls, policy questions, skills and the audit log go through the Rust kernel (ADR 0011); the SDK's memory and voting are Python and not mediated |

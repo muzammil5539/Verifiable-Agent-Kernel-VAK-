@@ -99,6 +99,8 @@ regex = "1.10"
 
 # Graph data structure for knowledge graphs
 petgraph = "0.6"
+# Datalog for the reasoner's safety rules (docs/adr/0020); `par` would pull in rayon.
+ascent = { version = "0.8.1", default-features = false }
 
 # Python bindings
 # No `extension-module` feature here: maturin sets it when it builds the
@@ -160,6 +162,7 @@ cedar-policy = { workspace = true, optional = true }
 cedar-policy-symcc = { workspace = true, optional = true }
 tokio-stream = { workspace = true, optional = true }
 petgraph = { workspace = true, optional = true }
+ascent = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true }
 pyo3 = { workspace = true, optional = true }
 
@@ -174,10 +177,10 @@ wasm = ["dep:wasmtime"]
 llm = ["dep:tokio-stream"]
 # Memory tiers: working, episodic, semantic.
 memory = ["llm", "dep:petgraph"]
-# Heuristic reasoning outside the trusted core: PRM scoring, Datalog safety
-# rules, the Z3 verifier, tree search, prompt-injection detection, and the
+# Reasoning outside the trusted core: PRM scoring, Datalog safety rules (on
+# Ascent), the Z3 verifier, tree search, prompt-injection detection, and the
 # kernel's neuro-symbolic pipeline.
-reasoner = ["llm"]
+reasoner = ["llm", "dep:ascent"]
 # Zero-knowledge proof prototypes. Not a sound proof system (finding V1).
 experimental-zk = ["reasoner"]
 # Multi-agent voting, consensus and the in-process A2A bus.

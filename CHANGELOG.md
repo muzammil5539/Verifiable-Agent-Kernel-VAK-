@@ -12,6 +12,24 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 `docs/adr/0003-admit-budget-record-outcome-pipeline-stages.md` for the decision records.
 
 ### Added
+- Datalog safety rules on Ascent, and on the request path (docs/adr/0020, finding V3).
+  - **The engine.** The nine built-in rules of `reasoner::datalog::SafetyEngine` are
+    an Ascent program evaluated to a fixpoint, no longer Rust closures. Directory
+    containment is recursive, the network-capability rule is a stratified negation,
+    and an agent's risk is the highest score recorded for it. The closures read an
+    arbitrary one of several. The API is unchanged.
+  - **The guard.** `reasoner::DatalogGuard`, assurance `enforced`, is added with
+    `KernelBuilder::with_guard`.
+    - **Verdicts.** It denies on a violation, escalates on a risk warning, and
+      otherwise abstains, so it never satisfies a floor.
+    - **Targets.** It checks a tool's `path`, `target`, `file`, `url`, `tool` and
+      `command` arguments, or the one argument `with_tool` names. It denies a call
+      whose target it can't read.
+  - **Wider matches.** External endpoints are canonicalised and match by host and
+    path: `https://EVIL.com/x` used to pass a fact for `https://evil.com`. Restricted
+    tools match by leading words (`rm  -rf /` runs `rm -rf`). A NaN block threshold
+    blocks instead of passing everything.
+  - **Dependency:** `ascent` 0.8.1, without its parallel feature, behind `reasoner`.
 - The prompt-injection detector on the request path (docs/adr/0019, finding R6).
   `reasoner::PromptInjectionGuard`, assurance `heuristic`, added with
   `KernelBuilder::with_guard`.

@@ -1224,17 +1224,50 @@ let score = prm.score_step(&step, &context).await?;
 
 ### SafetyEngine
 
-Datalog-based safety rule evaluation.
+Datalog safety rules. The nine built-in rules are an Ascent program,
+evaluated to a fixpoint for each check (docs/adr/0020). Paths, endpoints and
+commands are compared in canonical form.
 
 ```rust
-use vak::reasoner::{SafetyEngine, SafetyRule, Fact};
+use vak::reasoner::{Fact, SafetyEngine, SafetyVerdict};
 
-let engine = SafetyEngine::new();
-engine.add_rule(SafetyRule { /* ... */ })?;
-engine.add_fact(Fact { /* ... */ })?;
+let mut engine = SafetyEngine::new(); // built-in rules and default facts
+engine.add_fact(Fact::critical_file("/srv/keys"));
+engine.add_fact(Fact::agent_capability("agent-1", "network"));
 
-let verdict = engine.check_violations(&facts)?;
-// Returns SafetyVerdict with list of Violations
+let verdict = engine.check_action_with_agent("delete_file", "/srv//keys", "agent-1");
+assert!(verdict.is_violation()); // RULE_001_CRITICAL_DELETE
+let plan = engine.verify_plan(&[("read_file", "/srv/a.txt")], "agent-1");
+```
+
+`SafetyEngine::add_rule` adds a Rust check, run after the program.
+
+### DatalogGuard
+
+The engine on the request path, as an enforced guard (feature `reasoner`). It
+denies on a violation, escalates on a risk warning, and otherwise abstains; it
+never passes. A tool's targets are its `path`, `target`, `file`, `url`, `tool`
+and `command` arguments; a call with none, or a non-string one, is denied.
+
+```rust
+use std::sync::Arc;
+use vak::reasoner::{DatalogGuard, SafetyEngine};
+
+let guard = DatalogGuard::new(SafetyEngine::new())?
+    .with_tool("fs.rm", "delete_file", "name"); // tool, action, argument
+let kernel = Kernel::builder(config).with_guard(Arc::new(guard)).build().await?;
+```
+
+### PromptInjectionGuard
+
+The regex detector as a heuristic guard (feature `reasoner`, docs/adr/0019).
+It denies at block level, escalates at review level, otherwise abstains, and
+reads every string in the arguments, decoded.
+
+```rust
+use vak::reasoner::{DetectorConfig, PromptInjectionGuard};
+
+let guard = PromptInjectionGuard::new(DetectorConfig::default())?;
 ```
 
 ### Z3Verifier

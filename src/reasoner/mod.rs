@@ -87,8 +87,8 @@ pub use prm::{
 
 // Re-export Datalog safety engine types (NSR-001, NSR-002)
 pub use datalog::{
-    DatalogError, DatalogResult, Fact, SafetyConfig, SafetyEngine, SafetyEngineBuilder, SafetyRule,
-    SafetyStats, SafetyVerdict, Violation,
+    DatalogError, DatalogGuard, DatalogResult, Fact, SafetyConfig, SafetyEngine,
+    SafetyEngineBuilder, SafetyRule, SafetyStats, SafetyVerdict, Violation,
 };
 
 // Re-export PRM gating types (Issue #47)

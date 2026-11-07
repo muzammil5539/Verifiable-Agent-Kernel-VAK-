@@ -419,7 +419,7 @@ Combines neural (LLM) creativity with symbolic verification to validate agent re
 |-----------|------|-------------|
 | `ProcessRewardModel` | `prm.rs` | Scores individual reasoning steps with confidence |
 | `PrmGating` | `prm_gating.rs` | Threshold-based gating logic |
-| `SafetyEngine` | `datalog.rs` | Datalog rule evaluation for safety constraints |
+| `SafetyEngine` | `datalog.rs` | Datalog safety rules: an Ascent program, evaluated to a fixpoint; `DatalogGuard` runs it on the request path (ADR 0020) |
 | `ConstraintVerifier` | `verifier.rs` | Generic constraint satisfaction |
 | `Z3Verifier` | `z3_verifier.rs` | SMT solver for formal verification |
 | `VerificationGateway` | `verification_gateway.rs` | Routes high-stakes actions through Z3 |

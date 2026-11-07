@@ -168,11 +168,17 @@ request path. In order of leverage:
          allowlisted span exempts only the matches it contains (finding R6).
          Still to do: a `policy.prompt_injection` key, so `Kernel::new` users
          can turn it on.
-      3. **Datalog on Ascent (V3)**, as an Enforced guard. The canonical-path
-         bypass is fixed in `reasoner::datalog`; what remains is the real
-         fixpoint engine.
+      3. [x] **Datalog on Ascent (V3)**, as an Enforced guard (ADR 0020):
+         `DatalogGuard`. The nine built-in rules are an Ascent program
+         (recursion, stratified negation, a `max` aggregate). Endpoints match
+         by host and path, and restricted tools by leading words. It abstains,
+         never passes, and denies a call whose target it can't read. Next:
+         rules over a plan's actions (read a secret, then call out), and a
+         `permitted` relation so it can pass.
 
-      Until one is added, a `min_assurance` floor refuses its tools. The Python
+      None of the three passes, so a `min_assurance` floor still needs an
+      embedder's guard that checks positively; until one is added, it refuses
+      its tools. The Python
       SDK and `VakRuntime` build kernels with `Kernel::new` and can't add guards.
       Any floor in their config file therefore refuses every matching call.
 - [ ] **Information-flow labels, the rest of §4.4.** Slice 2d (ADR 0014) tracks

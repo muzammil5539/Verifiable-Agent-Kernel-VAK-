@@ -35,10 +35,11 @@ The core request path is built and tested. The research modules around it are no
 | Audit log: memory, JSONL and SQLite adapters, receipts, proofs | Built |
 | WASM sandbox: Wasmtime 49, fuel and epoch limits, Ed25519-signed skills | Built |
 | Python SDK, MCP `execute_skill` | Built, both through `Kernel::execute` |
-| Datalog safety rules, PRM scoring, Z3, tree search | Heuristic: useful signals, not guarantees |
+| Datalog safety rules, on Ascent | Built; an enforced guard (ADR 0020) |
+| PRM scoring, Z3, tree search | Heuristic: useful signals, not guarantees |
 | Zero-knowledge proofs | Not a proof system. Behind `experimental-zk`, off by default |
 | Sparse Merkle tree, swarm voting | Known unsound (findings V4 and S1) |
-| Constitution, reasoner as guards | Not on the request path yet |
+| Guards: constitution, prompt injection, Datalog | Built; turned on by config or `with_guard`; none passes a `min_assurance` floor |
 
 ## Install
 

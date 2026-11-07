@@ -1,8 +1,11 @@
 //! Datalog Safety Rules Engine (NSR-001, NSR-002)
 //!
-//! This module provides a Datalog-based safety verification system using
-//! compile-time rule definitions. It enables deterministic validation of
-//! agent actions against safety invariants.
+//! This module provides a Datalog-based safety verification system. Its
+//! built-in rules are a Datalog program, compiled by the Ascent crate and
+//! evaluated to a fixpoint for each check: joins, recursion (the directories
+//! a path lies in), stratified negation (an agent *without* a capability)
+//! and aggregation (an agent's highest risk score). It used to be a list of
+//! Rust closures (finding V3, `docs/adr/0020`).
 //!
 //! # Architecture
 //!
@@ -13,8 +16,10 @@
 //!
 //! # Features
 //!
-//! - Compile-time Datalog rules using declarative macros
-//! - Safety violation detection before action execution
+//! - Compile-time Datalog rules (Ascent), evaluated to a fixpoint
+//! - Paths, endpoints and commands compared in canonical form
+//! - Safety violation detection before action execution, on the kernel's
+//!   request path as [`DatalogGuard`]
 //! - Risk-based access control integration
 //! - File and network access restrictions
 //! - Custom rule definitions
@@ -39,7 +44,8 @@
 //!
 //! - Gap Analysis Section 2.4.1: Neuro-Symbolic Hybrid Architecture
 //! - Gap Analysis Section 6.2: The Neuro-Symbolic "Safety Valve"
-//! - Crepe crate: https://github.com/ekzhang/crepe
+//! - Ascent: Sahebolamri, Gilray and Micinski, "Seamless Deductive
+//!   Inference via Macros", CC 2022; https://github.com/s-arash/ascent
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -98,31 +104,6 @@ pub fn canonical_path(path: &str) -> String {
         (true, false) => format!("/{}", parts.join("/")),
         (false, false) => parts.join("/"),
     }
-}
-
-/// Whether `inner` is `outer` or lies under it, compared by whole components.
-/// Both arguments must already be canonical.
-fn path_is_within(inner: &str, outer: &str) -> bool {
-    if outer == "/" {
-        return inner.starts_with('/');
-    }
-    inner == outer
-        || inner
-            .strip_prefix(outer)
-            .is_some_and(|rest| rest.starts_with('/'))
-}
-
-/// Whether a canonical `target` matches a canonical sensitive-file `pattern`.
-/// An absolute pattern names one file. A relative pattern such as `.env` or
-/// `.ssh/id_rsa` matches that file in any directory.
-fn sensitive_pattern_matches(pattern: &str, target: &str) -> bool {
-    if pattern.starts_with('/') {
-        return pattern == target;
-    }
-    target == pattern
-        || target
-            .strip_suffix(pattern)
-            .is_some_and(|head| head.ends_with('/'))
 }
 
 /// A fact in the Datalog knowledge base
@@ -283,13 +264,16 @@ impl std::hash::Hash for Fact {
 }
 
 impl Fact {
-    /// The fact with any path argument canonicalised (finding V3).
-    /// The engine stores and looks up facts in this form.
+    /// The fact with its paths, endpoints and commands canonicalised
+    /// (finding V3). The engine stores and looks up facts in this form.
     fn canonical(self) -> Self {
         match self {
             Fact::CriticalFile(p) => Fact::CriticalFile(canonical_path(&p)),
             Fact::SensitiveFile(p) => Fact::SensitiveFile(canonical_path(&p)),
             Fact::SystemPath(p) => Fact::SystemPath(canonical_path(&p)),
+            Fact::ExternalEndpoint(e) => Fact::ExternalEndpoint(canonical_endpoint(&e)),
+            Fact::InternalEndpoint(e) => Fact::InternalEndpoint(canonical_endpoint(&e)),
+            Fact::RestrictedTool(t) => Fact::RestrictedTool(canonical_command(&t)),
             other => other,
         }
     }
@@ -433,14 +417,15 @@ impl SafetyVerdict {
     }
 }
 
-/// Safety rule definition
+/// A rule added with [`SafetyEngine::add_rule`]: a Rust check, run after
+/// the built-in Datalog program.
 #[derive(Debug, Clone)]
 pub struct SafetyRule {
     /// Unique rule ID
     pub id: String,
     /// Human-readable description
     pub description: String,
-    /// Action types this rule applies to
+    /// Action types this rule applies to (`"*"` for every action)
     pub applies_to: Vec<String>,
     /// The check function
     checker: RuleChecker,
@@ -465,11 +450,288 @@ impl SafetyRule {
     }
 }
 
-/// The Safety Engine implementing Datalog-style reasoning
+// The built-in rules (finding V3)
+
+/// Deleting a critical file.
+pub const RULE_001_CRITICAL_DELETE: &str = "RULE_001_CRITICAL_DELETE";
+/// Modifying a critical file.
+pub const RULE_002_CRITICAL_MODIFY: &str = "RULE_002_CRITICAL_MODIFY";
+/// Reading a sensitive file.
+pub const RULE_003_SENSITIVE_ACCESS: &str = "RULE_003_SENSITIVE_ACCESS";
+/// A request to an external endpoint.
+pub const RULE_004_EXTERNAL_NETWORK: &str = "RULE_004_EXTERNAL_NETWORK";
+/// Running a restricted tool.
+pub const RULE_005_RESTRICTED_TOOL: &str = "RULE_005_RESTRICTED_TOOL";
+/// Writing in a system path.
+pub const RULE_006_SYSTEM_PATH: &str = "RULE_006_SYSTEM_PATH";
+/// Network access by an agent whose risk is over `block_threshold`.
+pub const RULE_007_HIGH_RISK_NETWORK: &str = "RULE_007_HIGH_RISK_NETWORK";
+/// An external API call by an agent whose risk is over 0.5.
+pub const RULE_008_RISK_EXTERNAL_API: &str = "RULE_008_RISK_EXTERNAL_API";
+/// Network access by an agent without the `network` capability.
+pub const RULE_009_NETWORK_CAPABILITY: &str = "RULE_009_NETWORK_CAPABILITY";
+
+/// A built-in rule's ID, description and the actions it applies to. Its
+/// logic is a rule of [`program::SafetyProgram`].
+struct BuiltinRule {
+    id: &'static str,
+    description: &'static str,
+    actions: &'static [&'static str],
+}
+
+/// The built-in rules, in the order their violations are reported.
+const BUILTIN_RULES: [BuiltinRule; 9] = [
+    BuiltinRule {
+        id: RULE_001_CRITICAL_DELETE,
+        description: "Cannot delete critical system files",
+        actions: &["delete_file", "remove"],
+    },
+    BuiltinRule {
+        id: RULE_002_CRITICAL_MODIFY,
+        description: "Cannot modify critical system files",
+        actions: &["write_file", "modify", "append"],
+    },
+    BuiltinRule {
+        id: RULE_003_SENSITIVE_ACCESS,
+        description: "Cannot access sensitive files without proper capability",
+        actions: &["read_file", "open"],
+    },
+    BuiltinRule {
+        id: RULE_004_EXTERNAL_NETWORK,
+        description: "External network requests require validation",
+        actions: &["http_request", "network_call"],
+    },
+    BuiltinRule {
+        id: RULE_005_RESTRICTED_TOOL,
+        description: "Cannot use restricted tools",
+        actions: &["execute_tool", "call_tool"],
+    },
+    BuiltinRule {
+        id: RULE_006_SYSTEM_PATH,
+        description: "System path operations are restricted",
+        actions: &["write_file", "delete_file", "create_dir"],
+    },
+    BuiltinRule {
+        id: RULE_007_HIGH_RISK_NETWORK,
+        description: "High-risk agents cannot make network requests",
+        actions: &["http_request", "network_call", "fetch", "socket_connect"],
+    },
+    BuiltinRule {
+        id: RULE_008_RISK_EXTERNAL_API,
+        description: "Risk-based external API access control",
+        actions: &["http_request", "api_call"],
+    },
+    BuiltinRule {
+        id: RULE_009_NETWORK_CAPABILITY,
+        description: "Network operations require network capability",
+        actions: &[
+            "http_request",
+            "network_call",
+            "fetch",
+            "socket_connect",
+            "dns_lookup",
+        ],
+    },
+];
+
+/// The capability network actions need (rule 9).
+const NETWORK: &str = "network";
+
+/// Risk above this many basis points makes an external API call a
+/// violation (rule 8).
+const EXTERNAL_API_RISK_BP: i64 = 5_000;
+
+/// The directory a canonical path lies in, or `None` at the top: `/`, `.`,
+/// a single relative component (whose base is unknown), or a path ending in
+/// `..`.
+fn parent_dir(path: &str) -> Option<String> {
+    let (head, last) = path.rsplit_once('/')?;
+    if last == ".." || last.is_empty() {
+        return None;
+    }
+    Some(if head.is_empty() { "/" } else { head }.to_string())
+}
+
+/// Every relative suffix of a canonical path, by whole components:
+/// `/home/user/.env` gives `home/user/.env`, `user/.env` and `.env`.
+fn relative_suffixes(path: &str) -> Vec<String> {
+    let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+    (0..parts.len())
+        .map(|i| parts.iter().skip(i).copied().collect::<Vec<_>>().join("/"))
+        .collect()
+}
+
+/// Canonicalise an endpoint for comparison (finding V3).
+///
+/// A URL with a host is parsed and reserialised, which lowercases the
+/// scheme and host, drops a default port and resolves dot segments; its
+/// fragment is dropped. Anything else is only trimmed.
+pub fn canonical_endpoint(endpoint: &str) -> String {
+    let endpoint = endpoint.trim();
+    match reqwest::Url::parse(endpoint) {
+        Ok(mut url) if url.has_host() => {
+            url.set_fragment(None);
+            url.into()
+        }
+        _ => endpoint.to_string(),
+    }
+}
+
+/// Whether the canonical `target` is at the canonical `endpoint`: on its
+/// host, on any scheme or port, at its path or under it. Non-URLs compare
+/// exactly.
+fn endpoint_within(target: &str, endpoint: &str) -> bool {
+    use reqwest::Url;
+    let host = |url: &Url| {
+        url.host_str()
+            .map(|h| h.trim_end_matches('.').to_ascii_lowercase())
+    };
+    match (Url::parse(target), Url::parse(endpoint)) {
+        (Ok(t), Ok(e)) if t.has_host() && e.has_host() => {
+            // A URL's path starts with `/`, so a root endpoint (`""` here)
+            // covers every path on its host.
+            let base = e.path().trim_end_matches('/');
+            host(&t) == host(&e)
+                && (t.path() == base
+                    || t.path()
+                        .strip_prefix(base)
+                        .is_some_and(|rest| rest.starts_with('/')))
+        }
+        _ => target == endpoint,
+    }
+}
+
+/// A command with its whitespace collapsed, for comparison.
+fn canonical_command(command: &str) -> String {
+    command.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Whether `command` runs the restricted `tool`: its words start with the
+/// tool's, so `rm -rf /tmp` runs `rm -rf`, and `ddrescue` doesn't run `dd`.
+fn runs_restricted(command: &str, tool: &str) -> bool {
+    let tool: Vec<&str> = tool.split_whitespace().collect();
+    let command: Vec<&str> = command.split_whitespace().collect();
+    !tool.is_empty() && command.starts_with(&tool)
+}
+
+/// `block_threshold` in basis points. A risk score `r` (in basis points
+/// `bp`) is over the threshold `t` exactly when `bp > floor(t * 10_000)`.
+/// NaN, which no score is over, becomes the lowest value, so a broken
+/// threshold blocks rather than allows.
+fn threshold_bp(threshold: f64) -> i64 {
+    if threshold.is_nan() {
+        i64::MIN
+    } else {
+        // Saturating: infinities become i64::MIN and i64::MAX.
+        (threshold * 10_000.0).floor() as i64
+    }
+}
+
+/// The built-in rules as a Datalog program, evaluated by Ascent to a
+/// fixpoint (semi-naive, with stratified negation and aggregation).
+mod program {
+    use super::{
+        canonical_endpoint, canonical_path, endpoint_within, parent_dir, relative_suffixes,
+        runs_restricted, EXTERNAL_API_RISK_BP, NETWORK, RULE_001_CRITICAL_DELETE,
+        RULE_002_CRITICAL_MODIFY, RULE_003_SENSITIVE_ACCESS, RULE_004_EXTERNAL_NETWORK,
+        RULE_005_RESTRICTED_TOOL, RULE_006_SYSTEM_PATH, RULE_007_HIGH_RISK_NETWORK,
+        RULE_008_RISK_EXTERNAL_API, RULE_009_NETWORK_CAPABILITY,
+    };
+
+    ascent::ascent! {
+        pub(super) struct SafetyProgram;
+
+        // Inputs: the action checked, which rules apply to which actions,
+        // and the knowledge base (paths and endpoints canonical).
+        relation proposed(String, String, String); // action, target, agent
+        relation applies(&'static str, String); // rule, action
+        relation critical_file(String);
+        relation sensitive_file(String); // an absolute path, or a relative pattern
+        relation system_path(String);
+        relation external_endpoint(String);
+        relation restricted_tool(String);
+        relation capability(String, String); // agent, capability
+        relation risk(String, i64); // agent, basis points
+        relation block_above(i64); // basis points
+
+        // Paths: each target's canonical form, and every directory it is in.
+        relation canon(String, String); // target, canonical path
+        relation node(String);
+        relation parent(String, String);
+        relation within(String, String); // path, itself or a directory above it
+        relation suffix(String, String); // path, a relative suffix of it
+        relation sensitive(String, String); // path, the pattern it matches
+
+        canon(t.clone(), canonical_path(t)) <-- proposed(_, t, _);
+        node(c.clone()) <-- canon(_, c);
+        parent(c.clone(), p) <-- node(c), if let Some(p) = parent_dir(c);
+        node(p.clone()) <-- parent(_, p);
+        within(c.clone(), c.clone()) <-- node(c);
+        within(c.clone(), a.clone()) <-- parent(c, p), within(p, a);
+        suffix(c.clone(), s) <-- canon(_, c), for s in relative_suffixes(c);
+        sensitive(c.clone(), c.clone()) <-- canon(_, c), sensitive_file(c), if c.starts_with('/');
+        sensitive(c.clone(), p.clone()) <-- suffix(c, p), sensitive_file(p);
+
+        // Endpoints and commands.
+        relation endpoint(String, String); // target, canonical endpoint
+        relation external(String, String); // target, the endpoint it is at
+        relation restricted(String, String); // target, the tool it runs
+        endpoint(t.clone(), canonical_endpoint(t)) <-- proposed(_, t, _);
+        external(t.clone(), e.clone()) <--
+            endpoint(t, k), external_endpoint(e), if endpoint_within(k, e);
+        restricted(t.clone(), x.clone()) <--
+            proposed(_, t, _), restricted_tool(x), if runs_restricted(t, x);
+
+        // Each agent's risk: the highest score recorded for it, else 0.
+        relation agent(String);
+        relation max_risk(String, i64);
+        agent(ag.clone()) <-- proposed(_, _, ag);
+        max_risk(ag.clone(), m) <--
+            agent(ag), agg m = ascent::aggregators::max(bp) in risk(ag, bp);
+        max_risk(ag.clone(), 0) <-- agent(ag), !risk(ag, _);
+
+        // The rules: rule, action, target, the fact behind it, risk.
+        relation violation(&'static str, String, String, String, i64);
+
+        violation(RULE_001_CRITICAL_DELETE, a.clone(), t.clone(), format!("CriticalFile({c:?})"), 0) <--
+            proposed(a, t, _), applies(r, a), if *r == RULE_001_CRITICAL_DELETE,
+            canon(t, c), critical_file(c);
+        violation(RULE_002_CRITICAL_MODIFY, a.clone(), t.clone(), format!("CriticalFile({c:?})"), 0) <--
+            proposed(a, t, _), applies(r, a), if *r == RULE_002_CRITICAL_MODIFY,
+            canon(t, c), critical_file(c);
+        violation(RULE_003_SENSITIVE_ACCESS, a.clone(), t.clone(), format!("SensitiveFile({p:?})"), 0) <--
+            proposed(a, t, _), applies(r, a), if *r == RULE_003_SENSITIVE_ACCESS,
+            canon(t, c), sensitive(c, p);
+        violation(RULE_004_EXTERNAL_NETWORK, a.clone(), t.clone(), format!("ExternalEndpoint({e:?})"), 0) <--
+            proposed(a, t, _), applies(r, a), if *r == RULE_004_EXTERNAL_NETWORK,
+            external(t, e);
+        violation(RULE_005_RESTRICTED_TOOL, a.clone(), t.clone(), format!("RestrictedTool({x:?})"), 0) <--
+            proposed(a, t, _), applies(r, a), if *r == RULE_005_RESTRICTED_TOOL,
+            restricted(t, x);
+        violation(RULE_006_SYSTEM_PATH, a.clone(), t.clone(), format!("SystemPath({s:?})"), 0) <--
+            proposed(a, t, _), applies(r, a), if *r == RULE_006_SYSTEM_PATH,
+            canon(t, c), within(c, s), system_path(s);
+        violation(RULE_007_HIGH_RISK_NETWORK, a.clone(), t.clone(), format!("AgentRiskScore({ag:?}, {bp})"), *bp) <--
+            proposed(a, t, ag), applies(r, a), if *r == RULE_007_HIGH_RISK_NETWORK,
+            max_risk(ag, bp), block_above(th), if bp > th;
+        violation(RULE_008_RISK_EXTERNAL_API, a.clone(), t.clone(), format!("ExternalEndpoint({e:?}), AgentRiskScore({ag:?}, {bp})"), *bp) <--
+            proposed(a, t, ag), applies(r, a), if *r == RULE_008_RISK_EXTERNAL_API,
+            external(t, e), max_risk(ag, bp), if *bp > EXTERNAL_API_RISK_BP;
+        violation(RULE_009_NETWORK_CAPABILITY, a.clone(), t.clone(), format!("!AgentCapability({ag:?}, {NETWORK:?})"), 0) <--
+            proposed(a, t, ag), applies(r, a), if *r == RULE_009_NETWORK_CAPABILITY,
+            !capability(ag, NETWORK.to_string());
+    }
+}
+
+/// The safety engine: a knowledge base of facts, the built-in rules as a
+/// Datalog program (finding V3), and any rules added with
+/// [`SafetyEngine::add_rule`].
 pub struct SafetyEngine {
     /// Knowledge base of facts
     facts: HashSet<Fact>,
-    /// Safety rules
+    /// Whether the built-in rules apply
+    builtin: bool,
+    /// Rules added with `add_rule`
     rules: Vec<SafetyRule>,
     /// Statistics
     stats: SafetyStats,
@@ -515,7 +777,7 @@ impl std::fmt::Debug for SafetyEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SafetyEngine")
             .field("facts_count", &self.facts.len())
-            .field("rules_count", &self.rules.len())
+            .field("rules_count", &self.rule_count())
             .field("stats", &self.stats)
             .finish()
     }
@@ -528,21 +790,16 @@ impl Default for SafetyEngine {
 }
 
 impl SafetyEngine {
-    /// Create a new safety engine with default rules
+    /// Create a new safety engine with the built-in rules and default facts
     pub fn new() -> Self {
         let mut engine = Self {
             facts: HashSet::new(),
+            builtin: true,
             rules: Vec::new(),
             stats: SafetyStats::default(),
             config: SafetyConfig::default(),
         };
-
-        // Register default safety rules
-        engine.register_default_rules();
-
-        // Add default critical files
         engine.add_default_facts();
-
         engine
     }
 
@@ -553,327 +810,34 @@ impl SafetyEngine {
         engine
     }
 
-    /// Register default safety rules
-    fn register_default_rules(&mut self) {
-        // Rule: Cannot delete critical files
-        self.rules.push(SafetyRule::new(
-            "RULE_001_CRITICAL_DELETE",
-            "Cannot delete critical system files",
-            vec!["delete_file".to_string(), "remove".to_string()],
-            |engine, action, target, _agent| {
-                if engine.is_critical_file(target) {
-                    Some(
-                        Violation::new(
-                            "RULE_001_CRITICAL_DELETE",
-                            format!("Attempted to delete critical file: {}", target),
-                            action,
-                            target,
-                        )
-                        .with_severity(1.0)
-                        .with_fact(format!("CriticalFile(\"{}\")", target)),
-                    )
-                } else {
-                    None
-                }
-            },
-        ));
-
-        // Rule: Cannot modify critical files
-        self.rules.push(SafetyRule::new(
-            "RULE_002_CRITICAL_MODIFY",
-            "Cannot modify critical system files",
-            vec![
-                "write_file".to_string(),
-                "modify".to_string(),
-                "append".to_string(),
-            ],
-            |engine, action, target, _agent| {
-                if engine.is_critical_file(target) {
-                    Some(
-                        Violation::new(
-                            "RULE_002_CRITICAL_MODIFY",
-                            format!("Attempted to modify critical file: {}", target),
-                            action,
-                            target,
-                        )
-                        .with_severity(1.0)
-                        .with_fact(format!("CriticalFile(\"{}\")", target)),
-                    )
-                } else {
-                    None
-                }
-            },
-        ));
-
-        // Rule: Cannot access sensitive files without capability
-        self.rules.push(SafetyRule::new(
-            "RULE_003_SENSITIVE_ACCESS",
-            "Cannot access sensitive files without proper capability",
-            vec!["read_file".to_string(), "open".to_string()],
-            |engine, action, target, _agent| {
-                if engine.is_sensitive_file(target) {
-                    Some(
-                        Violation::new(
-                            "RULE_003_SENSITIVE_ACCESS",
-                            format!("Attempted to access sensitive file: {}", target),
-                            action,
-                            target,
-                        )
-                        .with_severity(0.8)
-                        .with_fact(format!("SensitiveFile(\"{}\")", target)),
-                    )
-                } else {
-                    None
-                }
-            },
-        ));
-
-        // Rule: Cannot make external network requests without validation
-        self.rules.push(SafetyRule::new(
-            "RULE_004_EXTERNAL_NETWORK",
-            "External network requests require validation",
-            vec!["http_request".to_string(), "network_call".to_string()],
-            |engine, action, target, _agent| {
-                if engine
-                    .facts
-                    .contains(&Fact::ExternalEndpoint(target.to_string()))
-                {
-                    Some(
-                        Violation::new(
-                            "RULE_004_EXTERNAL_NETWORK",
-                            format!("Attempted external network request to: {}", target),
-                            action,
-                            target,
-                        )
-                        .with_severity(0.6)
-                        .with_fact(format!("ExternalEndpoint(\"{}\")", target)),
-                    )
-                } else {
-                    None
-                }
-            },
-        ));
-
-        // Rule: Cannot use restricted tools
-        self.rules.push(SafetyRule::new(
-            "RULE_005_RESTRICTED_TOOL",
-            "Cannot use restricted tools",
-            vec!["execute_tool".to_string(), "call_tool".to_string()],
-            |engine, action, target, _agent| {
-                if engine
-                    .facts
-                    .contains(&Fact::RestrictedTool(target.to_string()))
-                {
-                    Some(
-                        Violation::new(
-                            "RULE_005_RESTRICTED_TOOL",
-                            format!("Attempted to use restricted tool: {}", target),
-                            action,
-                            target,
-                        )
-                        .with_severity(0.9)
-                        .with_fact(format!("RestrictedTool(\"{}\")", target)),
-                    )
-                } else {
-                    None
-                }
-            },
-        ));
-
-        // Rule: System path operations require elevated permissions
-        self.rules.push(SafetyRule::new(
-            "RULE_006_SYSTEM_PATH",
-            "System path operations are restricted",
-            vec![
-                "write_file".to_string(),
-                "delete_file".to_string(),
-                "create_dir".to_string(),
-            ],
-            |engine, action, target, _agent| {
-                if let Some(path) = engine.system_path_containing(target) {
-                    return Some(
-                        Violation::new(
-                            "RULE_006_SYSTEM_PATH",
-                            format!("Attempted operation in system path: {}", target),
-                            action,
-                            target,
-                        )
-                        .with_severity(0.9)
-                        .with_fact(format!("SystemPath(\"{}\")", path)),
-                    );
-                }
-                None
-            },
-        ));
-
-        // Rule NSR-004: Risk-based network access control
-        // Deny network access if agent risk score is high
-        self.rules.push(SafetyRule::new(
-            "RULE_007_HIGH_RISK_NETWORK",
-            "High-risk agents cannot make network requests",
-            vec![
-                "http_request".to_string(),
-                "network_call".to_string(),
-                "fetch".to_string(),
-                "socket_connect".to_string(),
-            ],
-            |engine, action, target, agent| {
-                // Check agent risk score
-                let risk_score = engine.get_agent_risk_internal(agent);
-                if risk_score > engine.config.block_threshold {
-                    return Some(
-                        Violation::new(
-                            "RULE_007_HIGH_RISK_NETWORK",
-                            format!(
-                                "Agent {} (risk: {:.2}) blocked from network access to: {}",
-                                agent, risk_score, target
-                            ),
-                            action,
-                            target,
-                        )
-                        .with_severity(risk_score)
-                        .with_fact(format!(
-                            "AgentRiskScore(\"{}\", {:.0})",
-                            agent,
-                            risk_score * 10000.0
-                        )),
-                    );
-                }
-                None
-            },
-        ));
-
-        // Rule NSR-004: Risk-based external API access
-        // Higher threshold for external APIs
-        self.rules.push(SafetyRule::new(
-            "RULE_008_RISK_EXTERNAL_API",
-            "Risk-based external API access control",
-            vec!["http_request".to_string(), "api_call".to_string()],
-            |engine, action, target, agent| {
-                // Only applies to external endpoints
-                if !engine
-                    .facts
-                    .contains(&Fact::ExternalEndpoint(target.to_string()))
-                {
-                    return None;
-                }
-
-                let risk_score = engine.get_agent_risk_internal(agent);
-                // Lower threshold (0.5) for external APIs
-                if risk_score > 0.5 {
-                    return Some(
-                        Violation::new(
-                            "RULE_008_RISK_EXTERNAL_API",
-                            format!(
-                                "Agent {} (risk: {:.2}) has elevated risk for external API: {}",
-                                agent, risk_score, target
-                            ),
-                            action,
-                            target,
-                        )
-                        .with_severity((risk_score * 1.2).min(1.0))
-                        .with_fact(format!(
-                            "ExternalEndpoint(\"{}\"), AgentRiskScore(\"{}\", {:.0})",
-                            target,
-                            agent,
-                            risk_score * 10000.0
-                        )),
-                    );
-                }
-                None
-            },
-        ));
-
-        // Rule NSR-004: Capability-based network access
-        // Agents need network capability for any network operation
-        self.rules.push(SafetyRule::new(
-            "RULE_009_NETWORK_CAPABILITY",
-            "Network operations require network capability",
-            vec![
-                "http_request".to_string(),
-                "network_call".to_string(),
-                "fetch".to_string(),
-                "socket_connect".to_string(),
-                "dns_lookup".to_string(),
-            ],
-            |engine, action, target, agent| {
-                let has_capability = engine.facts.contains(&Fact::AgentCapability {
-                    agent_id: agent.to_string(),
-                    capability: "network".to_string(),
-                });
-
-                if !has_capability {
-                    return Some(
-                        Violation::new(
-                            "RULE_009_NETWORK_CAPABILITY",
-                            format!(
-                                "Agent {} lacks 'network' capability for: {} {}",
-                                agent, action, target
-                            ),
-                            action,
-                            target,
-                        )
-                        .with_severity(0.7)
-                        .with_fact(format!("!AgentCapability(\"{}\", \"network\")", agent)),
-                    );
-                }
-                None
-            },
-        ));
-    }
-
-    /// Internal method to get agent risk score
-    fn get_agent_risk_internal(&self, agent_id: &str) -> f64 {
-        for fact in &self.facts {
-            if let Fact::AgentRiskScore {
-                agent_id: id,
-                score_bp,
-            } = fact
-            {
-                if id == agent_id {
-                    return (*score_bp as f64) / 10000.0;
-                }
-            }
-        }
-        0.0 // Default: no risk
+    /// The engine's configuration.
+    #[must_use]
+    pub fn config(&self) -> &SafetyConfig {
+        &self.config
     }
 
     /// Add default critical file facts
     fn add_default_facts(&mut self) {
         // Critical system files (as per Gap Analysis example)
-        self.facts
-            .insert(Fact::CriticalFile("/etc/shadow".to_string()));
-        self.facts
-            .insert(Fact::CriticalFile("/etc/passwd".to_string()));
-        self.facts
-            .insert(Fact::CriticalFile("/etc/hosts".to_string()));
-        self.facts
-            .insert(Fact::CriticalFile("/etc/sudoers".to_string()));
-
+        for path in ["/etc/shadow", "/etc/passwd", "/etc/hosts", "/etc/sudoers"] {
+            self.facts.insert(Fact::CriticalFile(path.to_string()));
+        }
         // Sensitive files
-        self.facts.insert(Fact::SensitiveFile(".env".to_string()));
-        self.facts
-            .insert(Fact::SensitiveFile("secrets.json".to_string()));
-        self.facts
-            .insert(Fact::SensitiveFile(".ssh/id_rsa".to_string()));
-        self.facts
-            .insert(Fact::SensitiveFile(".aws/credentials".to_string()));
-
+        for pattern in [".env", "secrets.json", ".ssh/id_rsa", ".aws/credentials"] {
+            self.facts.insert(Fact::SensitiveFile(pattern.to_string()));
+        }
         // System paths
-        self.facts.insert(Fact::SystemPath("/etc".to_string()));
-        self.facts.insert(Fact::SystemPath("/usr".to_string()));
-        self.facts.insert(Fact::SystemPath("/var".to_string()));
-        self.facts.insert(Fact::SystemPath("/bin".to_string()));
-        self.facts.insert(Fact::SystemPath("/sbin".to_string()));
-
+        for path in ["/etc", "/usr", "/var", "/bin", "/sbin"] {
+            self.facts.insert(Fact::SystemPath(path.to_string()));
+        }
         // Restricted tools
-        self.facts
-            .insert(Fact::RestrictedTool("rm -rf".to_string()));
-        self.facts.insert(Fact::RestrictedTool("dd".to_string()));
-        self.facts.insert(Fact::RestrictedTool("mkfs".to_string()));
+        for tool in ["rm -rf", "dd", "mkfs"] {
+            self.facts.insert(Fact::RestrictedTool(tool.to_string()));
+        }
     }
 
-    /// Add a fact to the knowledge base. Path arguments are canonicalised.
+    /// Add a fact to the knowledge base. Paths, endpoints and commands are
+    /// canonicalised.
     pub fn add_fact(&mut self, fact: Fact) {
         debug!(?fact, "Adding fact to knowledge base");
         self.facts.insert(fact.canonical());
@@ -889,33 +853,125 @@ impl SafetyEngine {
         self.facts.contains(&fact.clone().canonical())
     }
 
-    /// Whether `target` is a critical file, after canonicalising it (V3).
-    fn is_critical_file(&self, target: &str) -> bool {
-        self.facts
-            .contains(&Fact::CriticalFile(canonical_path(target)))
-    }
-
-    /// Whether `target` matches a sensitive-file fact, after canonicalising it (V3).
-    fn is_sensitive_file(&self, target: &str) -> bool {
-        let target = canonical_path(target);
-        self.facts.iter().any(|fact| {
-            matches!(fact, Fact::SensitiveFile(pattern) if sensitive_pattern_matches(pattern, &target))
-        })
-    }
-
-    /// The system path fact that contains `target`, by whole components (V3).
-    fn system_path_containing(&self, target: &str) -> Option<&str> {
-        let target = canonical_path(target);
-        self.facts.iter().find_map(|fact| match fact {
-            Fact::SystemPath(path) if path_is_within(&target, path) => Some(path.as_str()),
-            _ => None,
-        })
-    }
-
     /// Add a custom safety rule
     pub fn add_rule(&mut self, rule: SafetyRule) {
         info!(rule_id = %rule.id, "Adding custom safety rule");
         self.rules.push(rule);
+    }
+
+    /// Whether any rule applies to `action`: a built-in rule, or an added
+    /// one that names it or `"*"`.
+    #[must_use]
+    pub fn covers(&self, action: &str) -> bool {
+        (self.builtin
+            && BUILTIN_RULES
+                .iter()
+                .any(|rule| rule.actions.contains(&action)))
+            || self
+                .rules
+                .iter()
+                .any(|rule| rule.applies_to.iter().any(|a| a == action || a == "*"))
+    }
+
+    /// Runs the built-in program for one action: its violations, in rule
+    /// order, and the agent's risk score.
+    fn evaluate(&self, action: &str, target: &str, agent_id: &str) -> (Vec<Violation>, f64) {
+        let mut program = program::SafetyProgram::default();
+        program
+            .proposed
+            .push((action.to_string(), target.to_string(), agent_id.to_string()));
+        if self.builtin {
+            for rule in &BUILTIN_RULES {
+                program
+                    .applies
+                    .extend(rule.actions.iter().map(|a| (rule.id, (*a).to_string())));
+            }
+        }
+        for fact in &self.facts {
+            match fact {
+                Fact::CriticalFile(p) => program.critical_file.push((p.clone(),)),
+                Fact::SensitiveFile(p) => program.sensitive_file.push((p.clone(),)),
+                Fact::SystemPath(p) => program.system_path.push((p.clone(),)),
+                Fact::ExternalEndpoint(e) => program.external_endpoint.push((e.clone(),)),
+                Fact::RestrictedTool(t) => program.restricted_tool.push((t.clone(),)),
+                Fact::AgentCapability {
+                    agent_id,
+                    capability,
+                } => program
+                    .capability
+                    .push((agent_id.clone(), capability.clone())),
+                Fact::AgentRiskScore { agent_id, score_bp } => {
+                    program.risk.push((agent_id.clone(), i64::from(*score_bp)))
+                }
+                Fact::InternalEndpoint(_)
+                | Fact::AvailableTool(_)
+                | Fact::ProposedAction { .. }
+                | Fact::Custom { .. } => {}
+            }
+        }
+        program
+            .block_above
+            .push((threshold_bp(self.config.block_threshold),));
+        program.run();
+
+        let risk_bp = program
+            .max_risk
+            .iter()
+            .find(|(agent, _)| agent == agent_id)
+            .map_or(0, |(_, bp)| *bp);
+        let mut found: Vec<_> = program.violation.into_iter().collect();
+        let order = |rule: &str| BUILTIN_RULES.iter().position(|r| r.id == rule);
+        found.sort_by(|a, b| (order(a.0), &a.3).cmp(&(order(b.0), &b.3)));
+        let violations = found
+            .into_iter()
+            .map(|(rule, action, target, fact, bp)| {
+                let risk = bp as f64 / 10_000.0;
+                let (description, severity) = match rule {
+                    RULE_001_CRITICAL_DELETE => {
+                        (format!("Attempted to delete critical file: {target}"), 1.0)
+                    }
+                    RULE_002_CRITICAL_MODIFY => {
+                        (format!("Attempted to modify critical file: {target}"), 1.0)
+                    }
+                    RULE_003_SENSITIVE_ACCESS => {
+                        (format!("Attempted to access sensitive file: {target}"), 0.8)
+                    }
+                    RULE_004_EXTERNAL_NETWORK => (
+                        format!("Attempted external network request to: {target}"),
+                        0.6,
+                    ),
+                    RULE_005_RESTRICTED_TOOL => {
+                        (format!("Attempted to use restricted tool: {target}"), 0.9)
+                    }
+                    RULE_006_SYSTEM_PATH => (
+                        format!("Attempted operation in system path: {target}"),
+                        0.9,
+                    ),
+                    RULE_007_HIGH_RISK_NETWORK => (
+                        format!(
+                            "Agent {agent_id} (risk: {risk:.2}) blocked from network access to: {target}"
+                        ),
+                        risk,
+                    ),
+                    RULE_008_RISK_EXTERNAL_API => (
+                        format!(
+                            "Agent {agent_id} (risk: {risk:.2}) has elevated risk for external API: {target}"
+                        ),
+                        (risk * 1.2).min(1.0),
+                    ),
+                    _ => (
+                        format!(
+                            "Agent {agent_id} lacks '{NETWORK}' capability for: {action} {target}"
+                        ),
+                        0.7,
+                    ),
+                };
+                Violation::new(rule, description, action, target)
+                    .with_severity(severity)
+                    .with_fact(fact)
+            })
+            .collect();
+        (violations, risk_bp as f64 / 10_000.0)
     }
 
     /// Check if an action is safe
@@ -923,7 +979,11 @@ impl SafetyEngine {
         self.check_action_with_agent(action, target, "unknown")
     }
 
-    /// Check if an action is safe with agent context
+    /// Check if an action is safe with agent context.
+    ///
+    /// The built-in rules run as a Datalog program; then each added rule
+    /// that applies. With an agent's risk over `warning_threshold` and no
+    /// violation, the verdict is a warning.
     pub fn check_action_with_agent(
         &mut self,
         action: &str,
@@ -932,9 +992,7 @@ impl SafetyEngine {
     ) -> SafetyVerdict {
         self.stats.total_checks += 1;
 
-        let mut violations = Vec::new();
-
-        // Check all applicable rules
+        let (mut violations, risk_score) = self.evaluate(action, target, agent_id);
         for rule in &self.rules {
             if rule.applies_to.iter().any(|a| a == action || a == "*") {
                 if let Some(violation) = (rule.checker)(self, action, target, agent_id) {
@@ -942,9 +1000,6 @@ impl SafetyEngine {
                 }
             }
         }
-
-        // Check agent risk score
-        let risk_score = self.get_agent_risk(agent_id);
 
         // Determine verdict
         if !violations.is_empty() {
@@ -970,22 +1025,6 @@ impl SafetyEngine {
             self.stats.safe_verdicts += 1;
             SafetyVerdict::Safe
         }
-    }
-
-    /// Get agent risk score (NSR-004)
-    fn get_agent_risk(&self, agent_id: &str) -> f64 {
-        for fact in &self.facts {
-            if let Fact::AgentRiskScore {
-                agent_id: id,
-                score_bp,
-            } = fact
-            {
-                if id == agent_id {
-                    return (*score_bp as f64) / 10000.0;
-                }
-            }
-        }
-        0.0 // Default: no risk
     }
 
     /// Verify a plan (multiple actions)
@@ -1025,9 +1064,22 @@ impl SafetyEngine {
         self.facts.len()
     }
 
-    /// Get rule count
+    /// The number of rules: the built-in ones, unless skipped, and those
+    /// added.
     pub fn rule_count(&self) -> usize {
-        self.rules.len()
+        let builtin = if self.builtin { BUILTIN_RULES.len() } else { 0 };
+        builtin + self.rules.len()
+    }
+
+    /// The built-in rules' IDs and descriptions, unless skipped.
+    pub fn builtin_rules(&self) -> Vec<(&'static str, &'static str)> {
+        if !self.builtin {
+            return Vec::new();
+        }
+        BUILTIN_RULES
+            .iter()
+            .map(|rule| (rule.id, rule.description))
+            .collect()
     }
 
     /// Clear all facts (keeps rules)
@@ -1062,7 +1114,7 @@ impl SafetyEngineBuilder {
         self
     }
 
-    /// Skip default facts
+    /// Skip the built-in rules and the default facts
     pub fn skip_defaults(mut self) -> Self {
         self.skip_defaults = true;
         self
@@ -1073,6 +1125,7 @@ impl SafetyEngineBuilder {
         let mut engine = if self.skip_defaults {
             SafetyEngine {
                 facts: HashSet::new(),
+                builtin: false,
                 rules: Vec::new(),
                 stats: SafetyStats::default(),
                 config: self.config,
@@ -1086,6 +1139,160 @@ impl SafetyEngineBuilder {
         }
 
         engine
+    }
+}
+
+// Guard adapter
+
+/// The arguments [`DatalogGuard`] reads a tool's targets from, unless
+/// [`DatalogGuard::with_tool`] names one.
+pub const TARGET_ARGUMENTS: [&str; 6] = ["path", "target", "file", "url", "tool", "command"];
+
+/// The safety engine on the kernel's request path, as an enforced
+/// [`Guard`](crate::kernel::guard::Guard) (`docs/adr/0020`).
+///
+/// A call's action is its tool's name, and its targets are the string
+/// arguments named in [`TARGET_ARGUMENTS`]: each is checked, as the calling
+/// agent. [`DatalogGuard::with_tool`] maps a tool to another action and one
+/// argument.
+///
+/// - **A tool no rule applies to:** it abstains.
+/// - **A violation** denies, naming the rules.
+/// - **A warning** (the agent's risk over `warning_threshold`) escalates,
+///   which the kernel refuses: there is no approval channel.
+/// - **No violation:** it abstains, and never passes. The rules forbid; none
+///   firing doesn't show a call is right, so it must not satisfy a
+///   `policy.min_assurance` floor.
+/// - **No target to check** (no such argument, or one that isn't a string)
+///   denies: a rule can't be evaluated without one.
+#[derive(Debug)]
+pub struct DatalogGuard {
+    engine: std::sync::Mutex<SafetyEngine>,
+    tools: std::collections::BTreeMap<String, (String, String)>,
+}
+
+impl DatalogGuard {
+    /// The guard's name, recorded with each verdict as `guard.datalog`.
+    pub const NAME: &'static str = "datalog";
+
+    /// A guard checking calls against `engine`'s rules and facts.
+    ///
+    /// # Errors
+    ///
+    /// [`DatalogError::EvaluationError`] if a threshold in the engine's
+    /// configuration isn't a finite number: NaN compares false, so a NaN
+    /// warning threshold would never warn.
+    pub fn new(engine: SafetyEngine) -> DatalogResult<Self> {
+        let config = engine.config();
+        for (name, value) in [
+            ("warning_threshold", config.warning_threshold),
+            ("block_threshold", config.block_threshold),
+        ] {
+            if !value.is_finite() {
+                return Err(DatalogError::EvaluationError(format!(
+                    "{name} must be a finite number, not {value}"
+                )));
+            }
+        }
+        Ok(Self {
+            engine: std::sync::Mutex::new(engine),
+            tools: std::collections::BTreeMap::new(),
+        })
+    }
+
+    /// A guard over the built-in rules and default facts.
+    #[must_use]
+    pub fn default_rules() -> Self {
+        Self {
+            engine: std::sync::Mutex::new(SafetyEngine::new()),
+            tools: std::collections::BTreeMap::new(),
+        }
+    }
+
+    /// Checks `tool`'s calls as `action`, on the target in `argument`.
+    #[must_use]
+    pub fn with_tool(
+        mut self,
+        tool: impl Into<String>,
+        action: impl Into<String>,
+        argument: impl Into<String>,
+    ) -> Self {
+        self.tools
+            .insert(tool.into(), (action.into(), argument.into()));
+        self
+    }
+
+    /// The verdict on a call, without the async wrapper.
+    fn decide(
+        &self,
+        request: &crate::kernel::guard::GuardRequest<'_>,
+    ) -> crate::kernel::guard::GuardVerdict {
+        use crate::kernel::guard::GuardVerdict;
+        let tool = request.request.tool_name.as_str();
+        let (action, arguments): (&str, Vec<&str>) = match self.tools.get(tool) {
+            Some((action, argument)) => (action, vec![argument.as_str()]),
+            None => (tool, TARGET_ARGUMENTS.to_vec()),
+        };
+        let Ok(mut engine) = self.engine.lock() else {
+            return GuardVerdict::deny("datalog: the safety engine is unavailable");
+        };
+        if !engine.covers(action) {
+            return GuardVerdict::Abstain;
+        }
+        let mut targets = Vec::new();
+        for argument in &arguments {
+            match request.request.parameters.get(*argument) {
+                Some(serde_json::Value::String(target)) => targets.push(target.as_str()),
+                Some(_) => {
+                    return GuardVerdict::deny(format!(
+                        "datalog: {action}'s `{argument}` argument isn't a string, so the \
+                         rules can't check it"
+                    ))
+                }
+                None => {}
+            }
+        }
+        if targets.is_empty() {
+            return GuardVerdict::deny(format!(
+                "datalog: rules apply to {action}, but the call has no target to check \
+                 (looked for {})",
+                arguments.join(", ")
+            ));
+        }
+        let plan: Vec<(&str, &str)> = targets.iter().map(|target| (action, *target)).collect();
+        match engine.verify_plan(&plan, &request.agent_id.to_string()) {
+            SafetyVerdict::Violation(violations) => {
+                let mut rules: Vec<String> = violations
+                    .iter()
+                    .map(|v| format!("{} ({})", v.rule_id, v.description))
+                    .collect();
+                rules.dedup();
+                GuardVerdict::deny(format!("datalog: {}", rules.join("; ")))
+            }
+            SafetyVerdict::Warning { message, .. } => GuardVerdict::Escalate {
+                reason: format!("datalog: {message}"),
+            },
+            SafetyVerdict::Unknown(why) => GuardVerdict::deny(format!("datalog: {why}")),
+            SafetyVerdict::Safe => GuardVerdict::Abstain,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::kernel::guard::Guard for DatalogGuard {
+    async fn check(
+        &self,
+        request: &crate::kernel::guard::GuardRequest<'_>,
+    ) -> crate::kernel::guard::GuardVerdict {
+        self.decide(request)
+    }
+
+    fn name(&self) -> &str {
+        Self::NAME
+    }
+
+    fn assurance(&self) -> crate::kernel::guard::Assurance {
+        crate::kernel::guard::Assurance::Enforced
     }
 }
 
@@ -1316,5 +1523,356 @@ mod tests {
             .is_violation());
         assert!(engine.remove_fact(&Fact::critical_file("/srv/x/../keys")));
         assert!(!engine.has_fact(&Fact::critical_file("/srv/keys")));
+    }
+
+    // --- V3: the built-in rules are a Datalog program ---
+
+    fn rules_of(verdict: &SafetyVerdict) -> Vec<&str> {
+        verdict
+            .violations()
+            .unwrap_or_default()
+            .iter()
+            .map(|v| v.rule_id.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn path_helpers() {
+        for (path, parent) in [
+            ("/", None),
+            (".", None),
+            ("a", None),
+            ("..", None),
+            ("../..", None),
+            ("/etc", Some("/")),
+            ("/etc/shadow", Some("/etc")),
+            ("a/b", Some("a")),
+            ("../x", Some("..")),
+        ] {
+            assert_eq!(parent_dir(path).as_deref(), parent, "{path:?}");
+        }
+        assert_eq!(
+            relative_suffixes("/home/user/.env"),
+            ["home/user/.env", "user/.env", ".env"]
+        );
+        assert_eq!(relative_suffixes("a/.env"), ["a/.env", ".env"]);
+        assert!(relative_suffixes("/").is_empty());
+    }
+
+    #[test]
+    fn containment_is_recursive_over_any_depth() {
+        // `within` is the transitive closure of `parent`, derived to a
+        // fixpoint; the closures it replaced compared one string prefix.
+        let mut engine = SafetyEngineBuilder::new()
+            .skip_defaults()
+            .add_fact(Fact::system_path("srv/data"))
+            .build();
+        engine.builtin = true;
+        let deep = format!("srv/data/{}", vec!["d"; 50].join("/"));
+        assert_eq!(
+            rules_of(&engine.check_action("create_dir", &deep)),
+            [RULE_006_SYSTEM_PATH]
+        );
+        assert!(engine.check_action("create_dir", "srv/database").is_safe());
+        assert!(engine.check_action("create_dir", "srv").is_safe());
+    }
+
+    #[test]
+    fn violations_come_in_rule_order_with_their_facts() {
+        let mut engine = SafetyEngine::new();
+        let verdict = engine.check_action("delete_file", "/etc//shadow");
+        assert_eq!(
+            rules_of(&verdict),
+            [RULE_001_CRITICAL_DELETE, RULE_006_SYSTEM_PATH]
+        );
+        let violations = verdict.violations().unwrap_or_default();
+        assert_eq!(
+            violations[0].triggering_facts,
+            [r#"CriticalFile("/etc/shadow")"#]
+        );
+        assert_eq!(violations[0].target, "/etc//shadow");
+        assert_eq!(violations[0].severity, 1.0);
+        assert_eq!(violations[1].triggering_facts, [r#"SystemPath("/etc")"#]);
+        assert_eq!(violations[1].severity, 0.9);
+        // Writing a critical file breaks rule 2, not rule 1.
+        assert_eq!(
+            rules_of(&engine.check_action("write_file", "/etc/passwd")),
+            [RULE_002_CRITICAL_MODIFY, RULE_006_SYSTEM_PATH]
+        );
+        // An absolute sensitive file matches that file only.
+        engine.add_fact(Fact::sensitive_file("/srv/keys.pem"));
+        assert_eq!(
+            rules_of(&engine.check_action("read_file", "/srv//keys.pem")),
+            [RULE_003_SENSITIVE_ACCESS]
+        );
+        assert!(engine
+            .check_action("read_file", "/other/srv/keys.pem")
+            .is_safe());
+        let read = engine.check_action("open", "/home/u/.ssh/id_rsa");
+        assert_eq!(rules_of(&read), [RULE_003_SENSITIVE_ACCESS]);
+        assert_eq!(read.violations().unwrap_or_default()[0].severity, 0.8);
+    }
+
+    #[test]
+    fn violations_are_ordered_whatever_the_fact_order() {
+        // Facts reach the program in hash-set order, which varies between
+        // engines; the report must not.
+        let expected = [
+            RULE_004_EXTERNAL_NETWORK,
+            RULE_007_HIGH_RISK_NETWORK,
+            RULE_008_RISK_EXTERNAL_API,
+            RULE_009_NETWORK_CAPABILITY,
+        ];
+        for round in 0..20 {
+            let mut paths = vec!["/srv", "/srv/a", "/srv/a/b", "/srv/a/b/c"];
+            if round % 2 == 1 {
+                paths.reverse();
+            }
+            let mut engine = SafetyEngine::new();
+            for path in paths {
+                engine.add_fact(Fact::system_path(path));
+            }
+            engine.add_fact(Fact::external_endpoint("https://x.example"));
+            engine.add_fact(Fact::agent_risk("ag", 0.95));
+            let facts: Vec<String> = engine
+                .check_action("create_dir", "/srv/a/b/c/d")
+                .violations()
+                .unwrap_or_default()
+                .iter()
+                .flat_map(|v| v.triggering_facts.clone())
+                .collect();
+            assert_eq!(
+                facts,
+                [
+                    r#"SystemPath("/srv")"#,
+                    r#"SystemPath("/srv/a")"#,
+                    r#"SystemPath("/srv/a/b")"#,
+                    r#"SystemPath("/srv/a/b/c")"#,
+                ],
+                "round {round}"
+            );
+            assert_eq!(
+                rules_of(&engine.check_action_with_agent(
+                    "http_request",
+                    "https://x.example/",
+                    "ag"
+                )),
+                expected,
+                "round {round}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_agents_risk_is_its_highest_score() {
+        // Two scores for one agent: the closure read whichever the hash set
+        // yielded first, so a stale low score could hide a high one.
+        let mut engine = SafetyEngine::new();
+        engine.add_fact(Fact::agent_capability("ag", "network"));
+        engine.add_fact(Fact::agent_risk("ag", 0.2));
+        engine.add_fact(Fact::agent_risk("ag", 0.9));
+        let verdict = engine.check_action_with_agent("fetch", "https://example.org", "ag");
+        assert_eq!(rules_of(&verdict), [RULE_007_HIGH_RISK_NETWORK]);
+        let v = &verdict.violations().unwrap_or_default()[0];
+        assert_eq!(v.severity, 0.9);
+        assert!(v.description.contains("risk: 0.90"), "{}", v.description);
+        assert_eq!(v.triggering_facts, [r#"AgentRiskScore("ag", 9000)"#]);
+
+        // At the threshold isn't over it.
+        let mut at = SafetyEngine::new();
+        at.add_fact(Fact::agent_capability("ag", "network"));
+        at.add_fact(Fact::agent_risk("ag", 0.7));
+        assert!(at
+            .check_action_with_agent("fetch", "https://example.org", "ag")
+            .is_warning());
+    }
+
+    #[test]
+    fn the_block_threshold_fails_closed() {
+        assert_eq!(threshold_bp(0.7), 7_000);
+        assert_eq!(threshold_bp(0.0), 0);
+        assert_eq!(threshold_bp(f64::NAN), i64::MIN);
+        assert_eq!(threshold_bp(f64::INFINITY), i64::MAX);
+        assert_eq!(threshold_bp(f64::NEG_INFINITY), i64::MIN);
+        // An agent with no score has risk 0, so a NaN or negative threshold
+        // blocks it: NaN used to compare false and block nothing.
+        for block_threshold in [f64::NAN, -0.1] {
+            let mut engine = SafetyEngine::with_config(SafetyConfig {
+                block_threshold,
+                ..SafetyConfig::default()
+            });
+            engine.add_fact(Fact::agent_capability("ag", "network"));
+            assert_eq!(
+                rules_of(&engine.check_action_with_agent("fetch", "https://example.org", "ag")),
+                [RULE_007_HIGH_RISK_NETWORK],
+                "{block_threshold}"
+            );
+        }
+    }
+
+    #[test]
+    fn network_actions_need_the_capability() {
+        // Rule 9 is a negation: the agent has no `network` capability.
+        let mut engine = SafetyEngine::new();
+        engine.add_fact(Fact::agent_capability("other", "network"));
+        engine.add_fact(Fact::agent_capability("ag", "files"));
+        let verdict = engine.check_action_with_agent("dns_lookup", "example.org", "ag");
+        assert_eq!(rules_of(&verdict), [RULE_009_NETWORK_CAPABILITY]);
+        assert_eq!(
+            verdict.violations().unwrap_or_default()[0].triggering_facts,
+            [r#"!AgentCapability("ag", "network")"#]
+        );
+        engine.add_fact(Fact::agent_capability("ag", "network"));
+        assert!(engine
+            .check_action_with_agent("dns_lookup", "example.org", "ag")
+            .is_safe());
+    }
+
+    #[test]
+    fn endpoints_match_by_host_and_path() {
+        assert_eq!(
+            canonical_endpoint(" HTTPS://Evil.COM:443/a/./b#frag "),
+            "https://evil.com/a/b"
+        );
+        assert_eq!(canonical_endpoint("intranet"), "intranet");
+        let mut engine = SafetyEngine::new();
+        engine.add_fact(Fact::agent_capability("ag", "network"));
+        engine.add_fact(Fact::external_endpoint("https://evil.com"));
+        engine.add_fact(Fact::external_endpoint("https://api.x.com/v1/"));
+        engine.add_fact(Fact::external_endpoint("intranet"));
+        assert!(engine.has_fact(&Fact::external_endpoint("HTTPS://EVIL.COM/")));
+        let mut external = |target: &str| {
+            rules_of(&engine.check_action_with_agent("http_request", target, "ag"))
+                .contains(&RULE_004_EXTERNAL_NETWORK)
+        };
+        // Exact strings used to match: case, a port, a trailing dot or
+        // another path all got past the fact.
+        for target in [
+            "https://EVIL.com/steal",
+            "http://evil.com:8080/x",
+            "https://evil.com./",
+            "https://user@evil.com/",
+            "https://api.x.com/v1",
+            "https://api.x.com/v1/users",
+            "intranet",
+        ] {
+            assert!(external(target), "{target}");
+        }
+        for target in [
+            "https://evil.com.attacker.net/",
+            "https://notevil.com/",
+            "https://evil.com@good.example/",
+            "https://api.x.com/v10",
+            "https://api.x.com/v1/../admin",
+            "intranet2",
+        ] {
+            assert!(!external(target), "{target}");
+        }
+        assert!(endpoint_within("https://a.com/x", "https://a.com"));
+        assert!(!endpoint_within("not a url", "https://a.com"));
+    }
+
+    #[test]
+    fn external_api_calls_by_risky_agents_break_rule_8() {
+        let mut engine = SafetyEngine::new();
+        engine.add_fact(Fact::agent_capability("ag", "network"));
+        engine.add_fact(Fact::external_endpoint("https://api.x.com"));
+        engine.add_fact(Fact::agent_risk("ag", 0.6));
+        let verdict = engine.check_action_with_agent("api_call", "https://api.x.com/q", "ag");
+        assert_eq!(rules_of(&verdict), [RULE_008_RISK_EXTERNAL_API]);
+        let v = &verdict.violations().unwrap_or_default()[0];
+        assert!((v.severity - 0.72).abs() < 1e-9, "{}", v.severity);
+        // At 0.5 it isn't over.
+        engine.add_fact(Fact::agent_risk("calm", 0.5));
+        engine.add_fact(Fact::agent_capability("calm", "network"));
+        assert!(!engine
+            .check_action_with_agent("api_call", "https://api.x.com/q", "calm")
+            .is_violation());
+    }
+
+    #[test]
+    fn restricted_tools_match_by_leading_words() {
+        let mut engine = SafetyEngine::new();
+        engine.add_fact(Fact::RestrictedTool("  shred   -u ".to_string()));
+        assert!(engine.has_fact(&Fact::RestrictedTool("shred -u".to_string())));
+        assert!(engine.has_fact(&Fact::RestrictedTool("rm   -rf".to_string())));
+        for target in ["rm  -rf /tmp", "dd if=/dev/zero", "mkfs", "shred -u x"] {
+            assert_eq!(
+                rules_of(&engine.check_action("execute_tool", target)),
+                [RULE_005_RESTRICTED_TOOL],
+                "{target}"
+            );
+        }
+        for target in ["ddrescue", "rm -r", "rm", "shred"] {
+            assert!(
+                engine.check_action("call_tool", target).is_safe(),
+                "{target}"
+            );
+        }
+        assert!(!runs_restricted("anything", "   "));
+    }
+
+    #[test]
+    fn skipped_defaults_leave_only_added_rules() {
+        let mut engine = SafetyEngineBuilder::new().skip_defaults().build();
+        assert_eq!(engine.rule_count(), 0);
+        assert!(engine.builtin_rules().is_empty());
+        assert!(!engine.covers("delete_file"));
+        engine.add_fact(Fact::critical_file("/etc/shadow"));
+        assert!(engine.check_action("delete_file", "/etc/shadow").is_safe());
+
+        engine.add_rule(SafetyRule::new(
+            "NO_TMP",
+            "Nothing under /tmp",
+            vec!["*".to_string()],
+            |_, action, target, _| {
+                target
+                    .starts_with("/tmp")
+                    .then(|| Violation::new("NO_TMP", "tmp", action, target))
+            },
+        ));
+        assert_eq!(engine.rule_count(), 1);
+        assert!(engine.covers("anything"));
+        assert_eq!(
+            rules_of(&engine.check_action("anything", "/tmp/x")),
+            ["NO_TMP"]
+        );
+
+        let defaults = SafetyEngine::new();
+        assert_eq!(defaults.rule_count(), 9);
+        assert_eq!(defaults.builtin_rules()[0].0, RULE_001_CRITICAL_DELETE);
+        assert!(defaults.covers("dns_lookup"));
+        assert!(!defaults.covers("send_email"));
+        assert!(format!("{defaults:?}").contains("rules_count: 9"));
+    }
+
+    #[test]
+    fn the_guard_refuses_thresholds_it_cant_compare() {
+        for (warning_threshold, block_threshold) in [
+            (f64::NAN, 0.7),
+            (0.3, f64::NAN),
+            (f64::INFINITY, 0.7),
+            (0.3, f64::NEG_INFINITY),
+        ] {
+            let engine = SafetyEngine::with_config(SafetyConfig {
+                warning_threshold,
+                block_threshold,
+                ..SafetyConfig::default()
+            });
+            assert!(
+                matches!(DatalogGuard::new(engine), Err(DatalogError::EvaluationError(m)) if m.contains("finite")),
+                "{warning_threshold} {block_threshold}"
+            );
+        }
+        let guard = DatalogGuard::new(SafetyEngine::new()).unwrap().with_tool(
+            "fs.rm",
+            "delete_file",
+            "name",
+        );
+        assert_eq!(
+            guard.tools.get("fs.rm"),
+            Some(&("delete_file".to_string(), "name".to_string()))
+        );
+        assert!(format!("{:?}", DatalogGuard::default_rules()).contains("SafetyEngine"));
     }
 }
