@@ -234,6 +234,12 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- `FileAuditBackend::rotate` never overwrites a rotated file.
+  - **The loss.** Rotated files were named by the second, so a second rotation in
+    the same second renamed over the first and lost its entries. A taken name now
+    gets `_1`, `_2`, and so on.
+  - **The count.** Reopening a log counted blank lines as entries; it now counts
+    entries.
 - OpenTelemetry tracing (`audit::otel`; finding I6).
   - **traceparent.** `TraceContext::from_traceparent` accepted any header with four
     `-`-separated fields, so text a client chose, line breaks included, went back

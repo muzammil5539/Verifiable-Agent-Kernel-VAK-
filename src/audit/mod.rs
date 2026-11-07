@@ -316,10 +316,17 @@ impl FileAuditBackend {
 
         let current_file = log_dir.join("audit.jsonl");
 
-        // Count existing entries
+        // Count existing entries: non-blank lines, as every reader skips
+        // blank ones.
         let entry_count = if current_file.exists() {
             let file = File::open(&current_file)?;
-            BufReader::new(file).lines().count() as u64
+            let mut count = 0u64;
+            for line in BufReader::new(file).lines() {
+                if !line?.trim().is_empty() {
+                    count += 1;
+                }
+            }
+            count
         } else {
             0
         };
@@ -346,19 +353,32 @@ impl FileAuditBackend {
         })
     }
 
-    /// Rotate log file (create new file with timestamp)
+    /// Moves the current log aside as `audit_<unix seconds>.jsonl` and starts
+    /// a new one. Returns the rotated file's path.
+    ///
+    /// A rotated file is never overwritten: if the name is taken, as by a
+    /// second rotation in the same second, `_1`, `_2`, ... is appended. It
+    /// used to rename over the earlier file, losing it.
+    ///
+    /// # Errors
+    ///
+    /// The rename fails.
     pub fn rotate(&mut self) -> Result<PathBuf, AuditError> {
         // Close current file
         self.file_handle = None;
 
-        // Rename current file with timestamp
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-
-        let rotated_name = format!("audit_{}.jsonl", timestamp);
-        let rotated_path = self.log_dir.join(&rotated_name);
+        let mut rotated_path = self.log_dir.join(format!("audit_{timestamp}.jsonl"));
+        let mut suffix = 0u32;
+        while rotated_path.exists() {
+            suffix += 1;
+            rotated_path = self
+                .log_dir
+                .join(format!("audit_{timestamp}_{suffix}.jsonl"));
+        }
 
         if self.current_file.exists() {
             fs::rename(&self.current_file, &rotated_path)?;
@@ -1784,6 +1804,88 @@ mod tests {
             assert_eq!(loaded.len(), 5);
             assert_eq!(backend.count().unwrap(), 5);
         }
+    }
+
+    #[test]
+    fn test_rotating_twice_in_a_second_keeps_both_files() {
+        // The rotated name has one-second resolution, and a second rotation
+        // used to rename over the first, losing its entries.
+        let dir = tempfile::tempdir().unwrap();
+        let mut backend = FileAuditBackend::new(dir.path()).unwrap();
+        let mut rotated = Vec::new();
+        for round in 0..3 {
+            let mut logger = AuditLogger::new();
+            logger
+                .log(
+                    format!("agent-{round}"),
+                    "read",
+                    "/r",
+                    AuditDecision::Allowed,
+                )
+                .unwrap();
+            let entry = logger.last_entry().unwrap().clone();
+            backend.append(&entry).unwrap();
+            assert_eq!(backend.count().unwrap(), 1);
+            rotated.push(backend.rotate().unwrap());
+            assert_eq!(backend.count().unwrap(), 0, "a fresh log");
+        }
+        let unique: std::collections::BTreeSet<_> = rotated.iter().collect();
+        assert_eq!(unique.len(), 3, "{rotated:?}");
+        for (round, path) in rotated.iter().enumerate() {
+            let text = std::fs::read_to_string(path).unwrap();
+            assert!(
+                text.contains(&format!("agent-{round}")),
+                "{path:?} kept its entry"
+            );
+        }
+        // Rotating with nothing written still names a free path.
+        assert!(!backend.rotate().unwrap().exists());
+    }
+
+    #[test]
+    fn test_a_reopened_file_counts_entries_not_blank_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut logger =
+            AuditLogger::with_backend(Box::new(FileAuditBackend::new(dir.path()).unwrap()))
+                .unwrap();
+        logger
+            .log("a", "read", "/r", AuditDecision::Allowed)
+            .unwrap();
+        logger
+            .log("b", "read", "/r", AuditDecision::Denied)
+            .unwrap();
+        logger.flush().unwrap();
+        drop(logger);
+        let path = dir.path().join("audit.jsonl");
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, format!("{text}\n\n")).unwrap();
+
+        let backend = FileAuditBackend::new(dir.path()).unwrap();
+        assert_eq!(backend.count().unwrap(), 2);
+        assert_eq!(backend.get_last().unwrap().unwrap().agent_id, "b");
+        assert_eq!(backend.get_entry(2).unwrap().unwrap().agent_id, "b");
+        assert!(backend.get_entry(9).unwrap().is_none());
+        assert_eq!(backend.get_by_agent("a").unwrap().len(), 1);
+        let mut seen = 0;
+        backend
+            .for_each_entry(&mut |_| {
+                seen += 1;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(seen, 2);
+
+        // A line that isn't an entry is an error, not a skip.
+        std::fs::write(&path, "not json\n").unwrap();
+        let broken = FileAuditBackend::new(dir.path()).unwrap();
+        assert!(broken.load_all().is_err());
+        assert!(broken.get_last().is_err());
+        assert!(broken.get_entry(1).is_err());
+
+        let empty = FileAuditBackend::new(dir.path().join("fresh")).unwrap();
+        assert!(empty.load_all().unwrap().is_empty());
+        assert!(empty.get_last().unwrap().is_none());
+        assert!(empty.get_entry(1).unwrap().is_none());
     }
 
     #[test]
