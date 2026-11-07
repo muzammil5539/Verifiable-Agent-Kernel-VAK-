@@ -307,12 +307,12 @@ request path. In order of leverage:
       status updates because nothing ran it. If CI already exists
       (`.github/workflows/ci.yml` is referenced in prior notes), verify it
       is *required* for merge, not merely present.
-- [ ] **Coverage slice: reach the 80% line floor.** Line coverage is 78.13%
-      (37,726 of 48,286 lines, measured at `7de735b`). The Code Coverage job
-      runs under cargo-llvm-cov (ADR 0012) and fails on the floor, which stays
-      at 80%. The red job is a signal, not a blocker: other slices go ahead.
-      One module per commit, in this order:
-      1. [x] **`audit`**, TCB-critical: 71.1% to 86.3%. Writing its tests
+- [ ] **Coverage slice: reach the 80% line floor.** Line coverage is 81.92%
+      (41,703 of 50,908 lines, measured at `a073bbd`), over the floor, which
+      stays at 80%; the Code Coverage job runs under cargo-llvm-cov (ADR 0012).
+      Each module still goes to 80% on its own, one module per commit, in this
+      order:
+      1. [x] **`audit`**, TCB-critical: 71.1% to 86.8%. Writing its tests
          found seven bugs, each fixed in its own commit:
          - V6: the flight recorder never recomputed hashes, and failed every
            trace after the first;
@@ -323,17 +323,27 @@ request path. In order of leverage:
            sent, and the exported macros didn't compile;
          - file rotation overwrote a rotated file;
          - V7: verify_signatures passed unsigned entries.
-      2. **`sandbox`**, security-critical. 71.2%, 1,535 missed; 470 more.
-         `marketplace.rs` 485, `host_funcs.rs` 284, `reasoning_host.rs` 209,
-         `async_host.rs` 205, `pooling.rs` 104.
-      3. **`memory`**. 79.5%, 1,812 missed; 48 more.
-      4. **`reasoner`**, last: outside the TCB. 79.4%, 1,466 missed; 44 more.
+      2. [x] **`sandbox`**, security-critical: 71.2% to 95.8%. Writing its
+         tests found bugs in seven files, each fixed in its own commit:
+         - K13: a guest could panic the host through a negative pointer, and
+           `fs_read`/`fs_write` faked success;
+         - R5: `vak.verify_plan` failed open five ways (stateless approvals,
+           risk-only denials read as allowed, unclamped confidence, the
+           wrong agent, a no-op risk score);
+         - K14: the marketplace trusted the registry with paths, hashes,
+           manifests and signatures;
+         - K15: async host operations were checked as given and run as given,
+           so `..`, user info and redirects escaped their policy;
+         - K16: the pool could be overfilled or bricked, and execution limits
+           were skipped silently;
+         - K17: the publisher registry believed what publishers claimed.
+      3. **`memory`**. 79.5%, 1,812 missed; 47 more. `time_travel.rs` 484,
+         `mod.rs` 200, `content_addressable.rs` 187.
+      4. **`reasoner`**, last: outside the TCB. 80.6% already, from the
+         reasoning-host tests; take it further only after memory.
 
-      With audit done, the floor needs about 900 more covered lines. These
-      three at 80% each add about 560. The rest has to come from taking them
-      past 80%, or from modules this order doesn't rank: `integrations`, `llm`,
-      `tools`, and `policy`, which is in the TCB. Tests follow the Definition
-      of done below. `make coverage` writes the per-file report to `coverage/`.
+      Tests follow the Definition of done below. `make coverage` writes the
+      per-file report to `coverage/`.
 - [ ] **Do not restore aggregate "N% complete" framing** in this file, the
       README, or CHANGELOG until every P0/P1 item above is closed and verified
       by a test that exercises `Kernel::execute`. Track items as done/open;
