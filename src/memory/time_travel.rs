@@ -15,6 +15,21 @@
 //! - State can be verified against any historical snapshot
 //! - Rollbacks are O(1) operations (just change the current head)
 //!
+//! # Integrity
+//!
+//! A checkpoint's hash (version 2, [`StateCheckpoint::expected_hash`]) is
+//! SHA-256 over a domain tag and every field, each length-prefixed: ID,
+//! label, creation time, the parent's ID *and hash*, the state and the
+//! metadata. A chain therefore commits to its whole history: change any
+//! ancestor and every descendant's parent hash stops matching. Given a
+//! trusted head hash ([`TimeTravelManager::get_chain_root`]), nothing below
+//! it can change unnoticed. Without one, the hashes catch corruption, not
+//! someone who rewrites a chain and recomputes it: there is no key.
+//!
+//! Version 1 hashed the fields unseparated (a renamed key or shifted
+//! metadata kept the hash), left out the creation time, and chained parent
+//! IDs rather than hashes. Exports made before version 2 don't verify.
+//!
 //! # Example
 //! ```rust
 //! use vak::memory::time_travel::{TimeTravelManager, StateCheckpoint};
@@ -39,8 +54,18 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
+
+/// Domain tag of the version 2 checkpoint hash.
+const CHECKPOINT_HASH_TAG: &[u8] = b"vak-checkpoint-v2";
+
+/// Feeds `bytes` to `hasher` behind their length, so no two fields run
+/// together.
+fn put(hasher: &mut Sha256, bytes: &[u8]) {
+    hasher.update((bytes.len() as u64).to_be_bytes());
+    hasher.update(bytes);
+}
 
 // Helper Functions
 
@@ -193,6 +218,11 @@ impl StateEntry {
     pub fn verify(&self) -> bool {
         compute_sha256(&self.value) == self.value_hash
     }
+
+    /// Whether the entry is intact and is the one for `key`.
+    fn verify_as(&self, key: &str) -> bool {
+        self.key == key && self.verify()
+    }
 }
 
 /// A checkpoint capturing the state at a specific point in time
@@ -208,8 +238,13 @@ pub struct StateCheckpoint {
     pub created_at: DateTime<Utc>,
     /// The state entries at this checkpoint
     pub state: HashMap<String, StateEntry>,
-    /// Hash of the entire checkpoint (includes parent hash)
+    /// Hash of the entire checkpoint, including the parent's hash
     pub hash: [u8; 32],
+    /// The parent's hash when this checkpoint was made. `None` for a
+    /// genesis checkpoint, and for one made by [`StateCheckpoint::new`]
+    /// with a parent ID, which a chain doesn't accept.
+    #[serde(default)]
+    pub parent_hash: Option<[u8; 32]>,
     /// Optional metadata
     pub metadata: HashMap<String, String>,
 }
@@ -237,8 +272,21 @@ impl StateCheckpoint {
             created_at: Utc::now(),
             state: state_map,
             hash: [0u8; 32],
+            parent_hash: None,
             metadata: HashMap::new(),
         };
+        checkpoint.compute_hash();
+        checkpoint
+    }
+
+    /// A checkpoint whose parent is `parent`, committing to its hash.
+    pub fn child_of(
+        label: impl Into<String>,
+        parent: &StateCheckpoint,
+        state: Vec<(String, Vec<u8>)>,
+    ) -> Self {
+        let mut checkpoint = Self::new(label, Some(parent.id), state);
+        checkpoint.parent_hash = Some(parent.hash);
         checkpoint.compute_hash();
         checkpoint
     }
@@ -250,74 +298,59 @@ impl StateCheckpoint {
         self
     }
 
-    /// Compute the hash for this checkpoint
-    fn compute_hash(&mut self) {
+    /// The version 2 hash of this checkpoint's contents: SHA-256 over a
+    /// domain tag and every field, length-prefixed (see the module docs).
+    pub fn expected_hash(&self) -> [u8; 32] {
         let mut hasher = Sha256::new();
+        put(&mut hasher, CHECKPOINT_HASH_TAG);
+        put(&mut hasher, self.id.0.as_bytes());
+        put(&mut hasher, self.label.as_bytes());
+        hasher.update(self.created_at.timestamp().to_be_bytes());
+        hasher.update(self.created_at.timestamp_subsec_nanos().to_be_bytes());
+        put(
+            &mut hasher,
+            self.parent_id
+                .as_ref()
+                .map(|p| p.0.as_bytes().as_slice())
+                .unwrap_or_default(),
+        );
+        put(
+            &mut hasher,
+            self.parent_hash
+                .as_ref()
+                .map(|h| h.as_slice())
+                .unwrap_or_default(),
+        );
 
-        // Include ID
-        hasher.update(self.id.0.as_bytes());
-
-        // Include label
-        hasher.update(self.label.as_bytes());
-
-        // Include parent hash for chain integrity
-        if let Some(parent_id) = &self.parent_id {
-            hasher.update(parent_id.0.as_bytes());
-        }
-
-        // Include state entries in deterministic order
         let mut keys: Vec<_> = self.state.keys().collect();
         keys.sort();
+        hasher.update((keys.len() as u64).to_be_bytes());
         for key in keys {
-            hasher.update(key.as_bytes());
+            put(&mut hasher, key.as_bytes());
             hasher.update(self.state[key].value_hash);
         }
 
-        // Include metadata in deterministic order
         let mut meta_keys: Vec<_> = self.metadata.keys().collect();
         meta_keys.sort();
+        hasher.update((meta_keys.len() as u64).to_be_bytes());
         for key in meta_keys {
-            hasher.update(key.as_bytes());
-            hasher.update(self.metadata[key].as_bytes());
+            put(&mut hasher, key.as_bytes());
+            put(&mut hasher, self.metadata[key].as_bytes());
         }
 
-        self.hash = hasher.finalize().into();
+        hasher.finalize().into()
     }
 
-    /// Verify the checkpoint's integrity
+    /// Compute the hash for this checkpoint
+    fn compute_hash(&mut self) {
+        self.hash = self.expected_hash();
+    }
+
+    /// Whether the checkpoint is intact: every entry matches its value and
+    /// its key, and the hash matches the contents.
     pub fn verify(&self) -> bool {
-        // Verify all state entries
-        for entry in self.state.values() {
-            if !entry.verify() {
-                return false;
-            }
-        }
-
-        // Recompute and verify hash
-        let mut hasher = Sha256::new();
-        hasher.update(self.id.0.as_bytes());
-        hasher.update(self.label.as_bytes());
-
-        if let Some(parent_id) = &self.parent_id {
-            hasher.update(parent_id.0.as_bytes());
-        }
-
-        let mut keys: Vec<_> = self.state.keys().collect();
-        keys.sort();
-        for key in keys {
-            hasher.update(key.as_bytes());
-            hasher.update(self.state[key].value_hash);
-        }
-
-        let mut meta_keys: Vec<_> = self.metadata.keys().collect();
-        meta_keys.sort();
-        for key in meta_keys {
-            hasher.update(key.as_bytes());
-            hasher.update(self.metadata[key].as_bytes());
-        }
-
-        let computed: [u8; 32] = hasher.finalize().into();
-        computed == self.hash
+        self.state.iter().all(|(key, entry)| entry.verify_as(key))
+            && self.expected_hash() == self.hash
     }
 
     /// Get a state value by key
@@ -537,7 +570,7 @@ impl TimeTravelManager {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
 
-        let checkpoint = StateCheckpoint::new(label, self.head, state);
+        let checkpoint = self.next_checkpoint(label, state);
         let id = checkpoint.id;
 
         self.snapshots.insert(id, checkpoint);
@@ -551,13 +584,25 @@ impl TimeTravelManager {
         id
     }
 
+    /// A checkpoint of `state` whose parent is the head, if there is one.
+    fn next_checkpoint(
+        &self,
+        label: impl Into<String>,
+        state: Vec<(String, Vec<u8>)>,
+    ) -> StateCheckpoint {
+        match self.head.and_then(|id| self.snapshots.get(&id)) {
+            Some(parent) => StateCheckpoint::child_of(label, parent, state),
+            None => StateCheckpoint::new(label, None, state),
+        }
+    }
+
     /// Create a checkpoint with explicit state
     pub fn create_checkpoint_with_state(
         &mut self,
         label: impl Into<String>,
         state: Vec<(String, Vec<u8>)>,
     ) -> SnapshotId {
-        let checkpoint = StateCheckpoint::new(label, self.head, state);
+        let checkpoint = self.next_checkpoint(label, state);
         let id = checkpoint.id;
 
         self.snapshots.insert(id, checkpoint);
@@ -634,21 +679,32 @@ impl TimeTravelManager {
         self.rollback_to(parent_id)
     }
 
-    /// Get the history chain from the current head
-    pub fn get_history(&self) -> Vec<&StateCheckpoint> {
-        let mut history = vec![];
-        let mut current_id = self.head;
-
-        while let Some(id) = current_id {
-            if let Some(snapshot) = self.snapshots.get(&id) {
-                history.push(snapshot);
-                current_id = snapshot.parent_id;
-            } else {
-                break;
+    /// The chain from `id` back towards genesis, newest first, ending at
+    /// a missing parent or genesis; and whether it stopped at a cycle, a
+    /// parent link back into the chain. Every walk up the parents used to
+    /// follow links unguarded, so an imported cycle looped for ever.
+    fn ancestry(&self, id: Option<SnapshotId>) -> (Vec<&StateCheckpoint>, bool) {
+        let mut chain = Vec::new();
+        let mut seen = HashSet::new();
+        let mut current = id;
+        while let Some(id) = current {
+            if !seen.insert(id) {
+                return (chain, true);
+            }
+            match self.snapshots.get(&id) {
+                Some(snapshot) => {
+                    chain.push(snapshot);
+                    current = snapshot.parent_id;
+                }
+                None => break,
             }
         }
+        (chain, false)
+    }
 
-        history
+    /// Get the history chain from the current head
+    pub fn get_history(&self) -> Vec<&StateCheckpoint> {
+        self.ancestry(self.head).0
     }
 
     /// Get the history chain as snapshot IDs
@@ -737,7 +793,25 @@ impl TimeTravelManager {
 
     /// Verify the entire chain from head to genesis
     pub fn verify_chain(&self) -> TimeTravelResult<bool> {
-        let history = self.get_history();
+        self.verify_chain_from(self.head)
+    }
+
+    /// Verifies the chain from `head` to genesis: every snapshot intact,
+    /// each committing to its parent's hash, ending at a genesis snapshot.
+    /// A head that isn't stored fails; no head is an empty, valid chain.
+    fn verify_chain_from(&self, head: Option<SnapshotId>) -> TimeTravelResult<bool> {
+        let (history, cycle) = self.ancestry(head);
+        if let (Some(head), true) = (head, history.is_empty()) {
+            return Err(TimeTravelError::SnapshotNotFound(head));
+        }
+        if cycle {
+            if let Some(last) = history.last() {
+                return Err(TimeTravelError::VerificationFailed {
+                    snapshot_id: last.id,
+                    reason: "Parent links form a cycle".to_string(),
+                });
+            }
+        }
 
         for (i, snapshot) in history.iter().enumerate() {
             if !snapshot.verify() {
@@ -747,12 +821,15 @@ impl TimeTravelManager {
                 });
             }
 
-            // Verify parent linkage (except for genesis)
-            if i < history.len() - 1 && snapshot.parent_id != Some(history[i + 1].id) {
-                return Err(TimeTravelError::VerificationFailed {
-                    snapshot_id: snapshot.id,
-                    reason: "Parent ID mismatch".to_string(),
-                });
+            // The parent's hash, not just its ID: a parent ID alone let any
+            // ancestor change without its descendants noticing.
+            if let Some(parent) = history.get(i + 1) {
+                if snapshot.parent_hash != Some(parent.hash) {
+                    return Err(TimeTravelError::VerificationFailed {
+                        snapshot_id: snapshot.id,
+                        reason: "Parent hash mismatch".to_string(),
+                    });
+                }
             }
         }
 
@@ -784,12 +861,14 @@ impl TimeTravelManager {
             return;
         }
 
-        // Get IDs in the main chain (these should be kept)
-        let chain_ids: std::collections::HashSet<_> = self.get_history_ids().into_iter().collect();
-
-        // Get IDs in branches
-        let branch_ids: std::collections::HashSet<_> =
-            self.branches.values().map(|b| b.head).collect();
+        // Keep the chains of the head and of every branch. Only branch heads
+        // used to be kept, so a branch lost its history and stopped
+        // verifying.
+        let mut kept: HashSet<SnapshotId> =
+            self.ancestry(self.head).0.iter().map(|s| s.id).collect();
+        for branch in self.branches.values() {
+            kept.extend(self.ancestry(Some(branch.head)).0.iter().map(|s| s.id));
+        }
 
         // Keep snapshots that are in chain, branches, or within max_snapshots
         if self.snapshots.len() <= self.config.max_snapshots {
@@ -804,7 +883,7 @@ impl TimeTravelManager {
         let mut to_remove = vec![];
 
         for snapshot in all_snapshots.iter().take(excess) {
-            if !chain_ids.contains(&snapshot.id) && !branch_ids.contains(&snapshot.id) {
+            if !kept.contains(&snapshot.id) {
                 to_remove.push(snapshot.id);
             }
         }
@@ -828,7 +907,10 @@ impl TimeTravelManager {
         })
     }
 
-    /// Import from exported state
+    /// Imports exported state, verifying all of it: every snapshot, the
+    /// head's chain and every branch's. It used to verify the head's chain
+    /// only, so other snapshots and branches came in unchecked, and a head
+    /// naming a missing snapshot passed as an empty chain.
     pub fn import(data: TimeTravelExport) -> TimeTravelResult<Self> {
         let mut manager = Self::new(data.namespace);
 
@@ -843,8 +925,16 @@ impl TimeTravelManager {
         manager.head = data.head;
         manager.working_state = data.working_state;
 
-        // Verify the imported chain
+        if let Some(bad) = manager.snapshots.values().find(|s| !s.verify()) {
+            return Err(TimeTravelError::VerificationFailed {
+                snapshot_id: bad.id,
+                reason: "Imported snapshot failed verification".to_string(),
+            });
+        }
         manager.verify_chain()?;
+        for branch in manager.branches.values() {
+            manager.verify_chain_from(Some(branch.head))?;
+        }
 
         Ok(manager)
     }
@@ -1131,8 +1221,10 @@ impl TimeTravelManager {
             .ok_or(TimeTravelError::SnapshotNotFound(snapshot_id))?
             .clone();
 
-        // Verify if requested
-        if options.verify_before_checkout && !snapshot.verify() {
+        // Verify if requested, or if the manager verifies on every access:
+        // checkout used to skip that, restoring a snapshot rollback_to
+        // refuses.
+        if (options.verify_before_checkout || self.config.verify_on_access) && !snapshot.verify() {
             return Err(TimeTravelError::VerificationFailed {
                 snapshot_id,
                 reason: "Snapshot integrity verification failed".to_string(),
@@ -1195,14 +1287,7 @@ impl TimeTravelManager {
         let mut chain_snapshots = Vec::new();
 
         // Collect all snapshots in the chain
-        while let Some(id) = current_id {
-            if let Some(s) = self.snapshots.get(&id) {
-                chain_snapshots.push(s.clone());
-                current_id = s.parent_id;
-            } else {
-                break;
-            }
-        }
+        chain_snapshots.extend(self.ancestry(current_id.take()).0.into_iter().cloned());
 
         // Reverse to get genesis-first order
         chain_snapshots.reverse();
@@ -1258,14 +1343,33 @@ impl TimeTravelManager {
         })
     }
 
-    /// Restore from a full checkout
+    /// Restores the state in a checkout as a new checkpoint.
+    ///
+    /// This checks the checkout is consistent: its provenance links chain,
+    /// genesis first, to its `merkle_root`. It can't check that
+    /// `state_data` is the state that root committed to, because a checkout
+    /// doesn't carry the rest of the snapshot (its label, parent and
+    /// metadata), and a consistent checkout can be made up whole. So the
+    /// restored state is only as trustworthy as the checkout's source; the
+    /// new checkpoint records `restored_from` and `restored_unverified`
+    /// in its metadata. (It used to say it verified the checkout, having
+    /// compared two strings the checkout itself supplied.)
     pub fn restore_from_checkout(
         &mut self,
         checkout: &FullCheckout,
     ) -> Result<(), TimeTravelError> {
-        // For restoration, we verify the checkout has valid provenance chain
-        // (The merkle_root in checkout was computed from the original snapshot's hash,
-        // which includes ID, label, etc. - we can't recompute that from just state data)
+        let inconsistent = |reason: &str| TimeTravelError::VerificationFailed {
+            snapshot_id: checkout.snapshot_id,
+            reason: reason.to_string(),
+        };
+        for (i, link) in checkout.provenance_chain.iter().enumerate() {
+            let expected = i
+                .checked_sub(1)
+                .map(|previous| checkout.provenance_chain[previous].state_hash.clone());
+            if link.previous_hash != expected {
+                return Err(inconsistent("Provenance links don't chain"));
+            }
+        }
         if checkout.provenance_chain.is_empty() {
             return Err(TimeTravelError::VerificationFailed {
                 snapshot_id: checkout.snapshot_id,
@@ -1286,8 +1390,26 @@ impl TimeTravelManager {
         // Restore the state
         self.working_state = checkout.state_data.clone();
 
-        // Create a new checkpoint for the restoration
-        self.create_checkpoint(format!("Restored from {}", checkout.snapshot_id));
+        // Create a new checkpoint for the restoration, saying what it is.
+        let label = format!("Restored from {}", checkout.snapshot_id);
+        let state = self
+            .working_state
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let checkpoint = self
+            .next_checkpoint(label, state)
+            .with_metadata("restored_from", checkout.snapshot_id.to_string())
+            .with_metadata(
+                "restored_unverified",
+                "state_data is not proven by the checkout",
+            );
+        let id = checkpoint.id;
+        self.snapshots.insert(id, checkpoint);
+        self.head = Some(id);
+        if self.config.auto_prune && self.config.max_snapshots > 0 {
+            self.prune_old_snapshots();
+        }
 
         Ok(())
     }
@@ -1301,17 +1423,11 @@ impl TimeTravelManager {
         let _to_snapshot = self.snapshots.get(to)?;
 
         // Build the path from 'to' back to 'from' by following parent links
-        let mut path = Vec::new();
-        let mut current = Some(*to);
-
-        while let Some(id) = current {
-            if let Some(snapshot) = self.snapshots.get(&id) {
-                path.push(snapshot.clone());
-                if id == *from {
-                    break;
-                }
-                current = snapshot.parent_id;
-            } else {
+        let (ancestry, _) = self.ancestry(Some(*to));
+        let mut path: Vec<StateCheckpoint> = Vec::new();
+        for snapshot in ancestry {
+            path.push(snapshot.clone());
+            if snapshot.id == *from {
                 break;
             }
         }
@@ -1497,5 +1613,304 @@ mod checkout_tests {
 
         let steps = replay.unwrap();
         assert_eq!(steps.len(), 2);
+    }
+
+    /// A manager with three checkpoints, a <- b <- c, the head at c.
+    fn three() -> (TimeTravelManager, [SnapshotId; 3]) {
+        let mut ttm = TimeTravelManager::with_config("agent", TimeTravelConfig::unlimited());
+        ttm.set("k", b"1".to_vec());
+        let a = ttm.create_checkpoint("a");
+        ttm.set("k", b"2".to_vec());
+        let b = ttm.create_checkpoint("b");
+        ttm.set("other", b"x".to_vec());
+        let c = ttm.create_checkpoint("c");
+        (ttm, [a, b, c])
+    }
+
+    fn rehash(
+        ttm: &mut TimeTravelManager,
+        id: SnapshotId,
+        edit: impl FnOnce(&mut StateCheckpoint),
+    ) {
+        let snapshot = ttm.snapshots.get_mut(&id).unwrap();
+        edit(snapshot);
+        snapshot.compute_hash();
+    }
+
+    #[test]
+    fn test_a_renamed_key_or_shifted_metadata_changes_the_hash() {
+        // Fields were hashed unseparated: label "ab" with key "c" hashed as
+        // label "a" with key "bc", and metadata {a: bc} as {ab: c}.
+        let original = StateCheckpoint::new("ab", None, vec![("c".into(), b"v".to_vec())])
+            .with_metadata("a", "bc");
+        let mut renamed = original.clone();
+        renamed.label = "a".into();
+        let entry = renamed.state.remove("c").unwrap();
+        renamed.state.insert(
+            "bc".into(),
+            StateEntry {
+                key: "bc".into(),
+                ..entry
+            },
+        );
+        assert!(!renamed.verify(), "a renamed key is detected");
+
+        let mut shifted = original.clone();
+        shifted.metadata = HashMap::from([("ab".to_string(), "c".to_string())]);
+        assert!(!shifted.verify(), "shifted metadata is detected");
+
+        let mut retimed = original.clone();
+        retimed.created_at += chrono::Duration::seconds(1);
+        assert!(!retimed.verify(), "the creation time is hashed");
+
+        let mut mislabelled = original.clone();
+        let entry = mislabelled.state.get_mut("c").unwrap();
+        entry.key = "elsewhere".into();
+        assert!(!mislabelled.verify(), "an entry must be its key's");
+        assert!(original.verify());
+        assert_ne!(original.hash, StateCheckpoint::new("ab", None, vec![]).hash);
+    }
+
+    #[test]
+    fn test_a_rewritten_ancestor_breaks_the_chain() {
+        // Checkpoints chained parent IDs, so an ancestor rewritten and
+        // rehashed went unnoticed below an unchanged head.
+        let (mut ttm, [a, b, c]) = three();
+        let root = ttm.get_chain_root().unwrap();
+        assert!(ttm.verify_chain().unwrap());
+        assert_eq!(ttm.snapshots[&b].parent_hash, Some(ttm.snapshots[&a].hash));
+
+        rehash(&mut ttm, a, |s| {
+            s.state
+                .insert("k".into(), StateEntry::new("k", b"forged".to_vec()));
+        });
+        assert!(
+            ttm.snapshots[&a].verify(),
+            "a rehashed snapshot is self-consistent"
+        );
+        let err = ttm.verify_chain().unwrap_err();
+        assert!(
+            matches!(&err, TimeTravelError::VerificationFailed { snapshot_id, reason }
+                if *snapshot_id == b && reason.contains("Parent hash")),
+            "{err:?}"
+        );
+        assert_eq!(ttm.get_chain_root(), Some(root), "the head didn't change");
+
+        // Nor can the child be repointed at the rewritten parent: its parent
+        // hash is part of its own hash.
+        let rewritten = ttm.snapshots[&a].hash;
+        ttm.snapshots.get_mut(&b).unwrap().parent_hash = Some(rewritten);
+        assert!(!ttm.snapshots[&b].verify());
+        assert!(ttm.verify_chain().is_err());
+
+        // A checkpoint made with a parent ID but no parent hash is refused.
+        let (mut ttm, [_, b, c2]) = three();
+        let orphan = StateCheckpoint::new("loose", Some(b), vec![]);
+        ttm.snapshots.insert(orphan.id, orphan.clone());
+        ttm.head = Some(orphan.id);
+        assert!(ttm.verify_chain().is_err());
+        ttm.head = Some(c2);
+        assert!(ttm.verify_chain().unwrap());
+        let _ = c;
+    }
+
+    #[test]
+    fn test_import_verifies_everything_and_ends_cycles() {
+        let (mut ttm, [a, b, c]) = three();
+        ttm.rollback_to(b).unwrap();
+        ttm.create_branch("side").unwrap();
+        ttm.rollback_to(c).unwrap();
+        let good = ttm.export().unwrap();
+        let back = TimeTravelManager::import(good.clone()).unwrap();
+        assert_eq!(back.head(), Some(c));
+        assert_eq!(back.snapshot_count(), 3);
+        assert!(format!("{back:?}").contains("snapshot_count: 3"));
+
+        // Only the head's chain was checked: a tampered snapshot off it, a
+        // head naming nothing, and a branch naming nothing came in.
+        let mut stray = good.clone();
+        let mut loose = StateCheckpoint::new("off-chain", None, vec![]);
+        loose.label = "tampered".into();
+        stray.snapshots.push(loose);
+        assert!(TimeTravelManager::import(stray).is_err());
+
+        let mut headless = good.clone();
+        headless.head = Some(SnapshotId::new());
+        assert!(matches!(
+            TimeTravelManager::import(headless),
+            Err(TimeTravelError::SnapshotNotFound(_))
+        ));
+        let mut branchless = good.clone();
+        branchless.branches[0].head = SnapshotId::new();
+        assert!(TimeTravelManager::import(branchless).is_err());
+
+        // A cycle of parent links used to loop for ever.
+        let mut cyclic = good;
+        for snapshot in &mut cyclic.snapshots {
+            if snapshot.id == a {
+                snapshot.parent_id = Some(c);
+            }
+        }
+        let err = TimeTravelManager::import(cyclic).unwrap_err();
+        assert!(
+            matches!(err, TimeTravelError::VerificationFailed { .. }),
+            "{err:?}"
+        );
+
+        let (mut looped, [a, _, c]) = three();
+        looped.snapshots.get_mut(&a).unwrap().parent_id = Some(c);
+        assert_eq!(looped.get_history().len(), 3);
+        let err = looped.verify_chain().unwrap_err();
+        assert!(format!("{err:?}").contains("cycle"), "{err:?}");
+        assert!(looped.full_checkout(&c).is_some());
+        assert!(looped.generate_replay(&SnapshotId::new(), &c).is_none());
+    }
+
+    #[test]
+    fn test_checkout_verifies_when_the_manager_does() {
+        // checkout_by_id skipped verify_on_access, restoring a snapshot
+        // rollback_to refuses.
+        let (mut ttm, [a, _, c]) = {
+            let mut ttm = TimeTravelManager::new("agent");
+            ttm.set("k", b"1".to_vec());
+            let a = ttm.create_checkpoint("a");
+            ttm.set("k", b"2".to_vec());
+            let b = ttm.create_checkpoint("b");
+            let c = ttm.create_checkpoint("c");
+            (ttm, [a, b, c])
+        };
+        ttm.snapshots.get_mut(&a).unwrap().label = "tampered".into();
+        assert!(ttm.rollback_to(a).is_err());
+        assert!(ttm.get_snapshot(a).is_none());
+        assert!(ttm.checkout_by_id(a, None).is_err());
+        assert_eq!(ttm.head(), Some(c), "nothing restored");
+
+        let mut lax = TimeTravelManager::with_config(
+            "agent",
+            TimeTravelConfig {
+                verify_on_access: false,
+                ..TimeTravelConfig::default()
+            },
+        );
+        lax.set("k", b"1".to_vec());
+        let id = lax.create_checkpoint("a");
+        lax.snapshots.get_mut(&id).unwrap().label = "tampered".into();
+        assert!(lax.checkout_by_id(id, None).is_ok(), "not asked to verify");
+        assert!(lax
+            .checkout_by_id(id, Some(CheckoutOptions::new().with_verification()))
+            .is_err());
+        let checked = lax
+            .checkout_by_id(
+                id,
+                Some(CheckoutOptions::new().with_branch("b").preserve_state()),
+            )
+            .unwrap();
+        assert_eq!(checked.entries_restored, 1);
+        assert_eq!(lax.list_branches(), ["b"]);
+        assert!(lax.checkout_by_hash(&[7u8; 32], None).is_err());
+    }
+
+    #[test]
+    fn test_pruning_keeps_every_branch_history() {
+        // Only branch heads were kept, so a branch lost its history and
+        // stopped verifying.
+        let mut ttm = TimeTravelManager::with_config(
+            "agent",
+            TimeTravelConfig::default().with_max_snapshots(3),
+        );
+        ttm.set("k", b"0".to_vec());
+        ttm.create_checkpoint("base");
+        ttm.set("k", b"1".to_vec());
+        let side_a = ttm.create_checkpoint("side-1");
+        ttm.set("k", b"2".to_vec());
+        ttm.create_checkpoint("side-2");
+        ttm.create_branch("side").unwrap();
+        ttm.rollback_to(side_a).unwrap();
+        ttm.rollback().unwrap();
+        for i in 0..6 {
+            ttm.set("k", format!("main-{i}").into_bytes());
+            ttm.create_checkpoint(format!("main-{i}"));
+        }
+        ttm.switch_branch("side").unwrap();
+        assert!(
+            ttm.verify_chain().unwrap(),
+            "the branch's history is intact"
+        );
+        assert_eq!(ttm.get_history().len(), 3);
+        assert_eq!(ttm.get("k"), Some(&b"2"[..]));
+        assert!(ttm.delete_branch("side").is_ok());
+        assert!(ttm.delete_branch("side").is_err());
+        assert!(ttm.switch_branch("side").is_err());
+    }
+
+    #[test]
+    fn test_a_restored_checkout_is_consistent_and_says_unverified() {
+        let (ttm, [_, _, c]) = three();
+        let checkout = ttm.full_checkout(&c).unwrap();
+        assert_eq!(checkout.provenance_chain.len(), 3);
+
+        let mut target = TimeTravelManager::new("other");
+        target.restore_from_checkout(&checkout).unwrap();
+        let restored = target.current_snapshot().unwrap();
+        assert_eq!(restored.metadata["restored_from"], c.to_string());
+        assert!(restored.metadata.contains_key("restored_unverified"));
+        assert_eq!(restored.get("k"), Some(&b"2"[..]));
+        assert!(target.verify_chain().unwrap());
+
+        // Links that don't chain, or a root that isn't the last link.
+        let mut broken = checkout.clone();
+        broken.provenance_chain[1].previous_hash = Some("00".repeat(32));
+        assert!(target.restore_from_checkout(&broken).is_err());
+        let mut rootless = checkout.clone();
+        rootless.merkle_root = "ff".repeat(32);
+        assert!(target.restore_from_checkout(&rootless).is_err());
+        let mut empty = checkout;
+        empty.provenance_chain.clear();
+        assert!(target.restore_from_checkout(&empty).is_err());
+    }
+
+    #[test]
+    fn test_history_diffs_and_working_state() {
+        let (mut ttm, [a, b, c]) = three();
+        assert_eq!(ttm.get_history_ids(), [c, b, a]);
+        let diff = ttm.diff(a, c).unwrap();
+        assert!(diff.has_changes());
+        assert!(ttm.diff(a, SnapshotId::new()).is_err());
+        ttm.set("new", b"n".to_vec());
+        assert!(ttm.diff_from_working(c).unwrap().has_changes());
+        assert!(ttm.diff_from_working(SnapshotId::new()).is_err());
+        assert_eq!(ttm.remove("new"), Some(b"n".to_vec()));
+        let mut keys = ttm.working_keys();
+        keys.sort();
+        assert_eq!(keys, ["k", "other"]);
+        ttm.rollback().unwrap();
+        assert_eq!(ttm.head(), Some(b));
+        ttm.rollback().unwrap();
+        assert!(matches!(
+            ttm.rollback(),
+            Err(TimeTravelError::NoSnapshotsAvailable)
+        ));
+        ttm.clear_working_state();
+        assert!(ttm.working_keys().is_empty());
+        let id = ttm.create_checkpoint_with_state("explicit", vec![("e".into(), b"1".to_vec())]);
+        assert_eq!(ttm.get("e"), Some(&b"1"[..]));
+        assert_eq!(ttm.snapshots[&id].parent_hash, Some(ttm.snapshots[&a].hash));
+        assert!(ttm.verify_chain().unwrap());
+        let snapshot = ttm.get_snapshot(id).unwrap();
+        assert_eq!(
+            (snapshot.len(), snapshot.is_empty(), snapshot.keys()),
+            (1, false, vec!["e"])
+        );
+        assert_eq!(ttm.namespace(), "agent");
+
+        let mut empty = TimeTravelManager::new("e");
+        assert!(empty.rollback().is_err());
+        assert!(empty.create_branch("x").is_err());
+        assert!(empty.verify_chain().unwrap());
+        assert!(empty.get_chain_root().is_none());
+        assert!(TimeTravelConfig::default()
+            .with_retention(60)
+            .retention_seconds
+            .is_some());
     }
 }

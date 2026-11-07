@@ -234,6 +234,21 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- Time-travel checkpoints (`memory::time_travel`) are tamper-evident (finding M3).
+  - **Hash.** The version 2 hash separates its fields, covers the creation
+    time, and commits to the parent's hash. A renamed key, shifted metadata or
+    a rewritten ancestor used to keep the hashes valid. The new `parent_hash`
+    field and `StateCheckpoint::child_of` carry the link. Exports made before
+    this change don't import.
+  - **Import.** It verifies every snapshot, the head and every branch. A head
+    naming a missing snapshot is an error.
+  - **Cycles.** Walks up the parents stop at a cycle. One used to loop for
+    ever, on import among other paths.
+  - **Checkout.** `checkout_by_id` honours `verify_on_access`.
+  - **Pruning** keeps every branch's history, not just its head.
+  - **Restoring.** `restore_from_checkout` checks the checkout is consistent,
+    and marks the restored checkpoint `restored_unverified`: a checkout can't
+    prove its state.
 - `PublisherRegistry` no longer believes what publishers claim (finding K17).
   - **Registration.** A registration earns nothing. It starts `Unverified`, at
     reputation 0.5, with no verifications, skills, downloads or rating. It used
