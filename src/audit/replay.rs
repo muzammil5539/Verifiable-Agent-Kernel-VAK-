@@ -43,7 +43,7 @@
 //! - Gap Analysis Section 3.4: Cryptographic Replay
 //! - Gap Analysis Section 6.4: Forensic and Debugging Capabilities
 
-use super::flight_recorder::{EventType, FlightEvent, TraceReceipt};
+use super::flight_recorder::{verify_events, FlightEvent, TraceReceipt, GENESIS};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -697,45 +697,31 @@ impl ReplayVerifier {
             return Ok(true);
         }
 
-        let mut expected_prev = "genesis".to_string();
-
-        for (i, event) in events.iter().enumerate() {
-            // Check chain linkage
-            if event.prev_hash != expected_prev {
-                if self.verbose {
-                    warn!(
-                        position = i,
-                        event_id = %event.event_id,
-                        expected = %expected_prev,
-                        actual = %event.prev_hash,
-                        "Chain integrity violation"
-                    );
-                }
-                return Err(ReplayError::IntegrityViolation {
-                    event_id: event.event_id.clone(),
-                    expected: expected_prev,
-                    actual: event.prev_hash.clone(),
-                });
+        if let Err(position) = verify_events(events, GENESIS) {
+            let event = &events[position];
+            let (expected, actual) = if event.hash == event.expected_hash() {
+                let expected = match position {
+                    0 => GENESIS.to_string(),
+                    _ => events[position - 1].hash.clone(),
+                };
+                (expected, event.prev_hash.clone())
+            } else {
+                (event.expected_hash(), event.hash.clone())
+            };
+            if self.verbose {
+                warn!(
+                    position,
+                    event_id = %event.event_id,
+                    %expected,
+                    %actual,
+                    "Chain integrity violation"
+                );
             }
-
-            // Verify event hash
-            let computed_hash = Self::compute_event_hash(event, &expected_prev);
-            if computed_hash != event.hash {
-                if self.verbose {
-                    warn!(
-                        position = i,
-                        event_id = %event.event_id,
-                        "Event hash mismatch"
-                    );
-                }
-                return Err(ReplayError::IntegrityViolation {
-                    event_id: event.event_id.clone(),
-                    expected: computed_hash,
-                    actual: event.hash.clone(),
-                });
-            }
-
-            expected_prev = event.hash.clone();
+            return Err(ReplayError::IntegrityViolation {
+                event_id: event.event_id.clone(),
+                expected,
+                actual,
+            });
         }
 
         if self.verbose {
@@ -750,61 +736,24 @@ impl ReplayVerifier {
         Ok(true)
     }
 
-    /// Compute event hash (must match FlightEvent::compute_hash)
-    fn compute_event_hash(event: &FlightEvent, prev_hash: &str) -> String {
-        // Get event type as string - must match FlightEvent::event_type_str()
-        let event_type_str = match &event.event_type {
-            EventType::Request => "request".to_string(),
-            EventType::Response => "response".to_string(),
-            EventType::PolicyEvaluation => "policy_evaluation".to_string(),
-            EventType::ToolExecution => "tool_execution".to_string(),
-            EventType::Error => "error".to_string(),
-            EventType::TraceStart => "trace_start".to_string(),
-            EventType::TraceEnd => "trace_end".to_string(),
-            EventType::SpanStart => "span_start".to_string(),
-            EventType::SpanEnd => "span_end".to_string(),
-            EventType::Custom(name) => format!("custom:{}", name),
-        };
-
-        let content = format!(
-            "{}:{}:{}:{}:{}:{:?}:{:?}:{:?}:{:?}:{}:{:?}",
-            event.event_id,
-            event.trace_id,
-            event.timestamp,
-            event.agent_id,
-            event_type_str,
-            event.action,
-            event.resource,
-            event.decision,
-            event.shadow_mode,
-            prev_hash,
-            event.state_hash,
-        );
-
-        let mut hasher = Sha256::new();
-        hasher.update(content.as_bytes());
-        hex::encode(hasher.finalize())
-    }
-
-    /// Verify a specific trace within the session
+    /// Verify a specific trace within the session: the whole log's chain,
+    /// since every event is chained whatever its trace, and that the trace
+    /// is in it.
+    ///
+    /// `Ok(false)` if no event belongs to `trace_id`: there is nothing to
+    /// vouch for.
+    ///
+    /// # Errors
+    ///
+    /// [`ReplayError::IntegrityViolation`] if the chain is broken anywhere.
     pub fn verify_trace(&self, session: &ReplaySession, trace_id: &str) -> ReplayResult<bool> {
-        let events = session.get_trace_events(trace_id);
-
-        if events.is_empty() {
-            return Ok(true);
+        if session.get_trace_events(trace_id).is_empty() {
+            return Ok(false);
         }
-
-        // For now, we just check that all events in the trace are present
-        // Full verification would check the chain within the trace
-
+        self.verify_log_integrity(session)?;
         if self.verbose {
-            info!(
-                trace_id = %trace_id,
-                events = events.len(),
-                "Trace verified"
-            );
+            info!(trace_id = %trace_id, "Trace verified");
         }
-
         Ok(true)
     }
 }
@@ -872,6 +821,46 @@ mod tests {
         let verifier = ReplayVerifier::new();
 
         assert!(verifier.verify_log_integrity(&session).is_err());
+    }
+
+    #[test]
+    fn test_a_rewritten_event_fails_the_log_and_its_trace() {
+        let mut events = create_test_events();
+        events[2].decision = Some("deny".into());
+        let session = ReplaySession::new(events);
+        let verifier = ReplayVerifier::new().verbose();
+        match verifier.verify_log_integrity(&session) {
+            Err(ReplayError::IntegrityViolation {
+                expected, actual, ..
+            }) => {
+                assert_ne!(expected, actual);
+            }
+            other => panic!("expected a violation, got {other:?}"),
+        }
+        assert!(
+            verifier.verify_trace(&session, "test-trace-1").is_err(),
+            "verify_trace used to accept anything"
+        );
+    }
+
+    #[test]
+    fn test_verify_trace_checks_the_trace_exists() {
+        let session = ReplaySession::new(create_test_events());
+        let verifier = ReplayVerifier::new();
+        assert!(verifier.verify_trace(&session, "test-trace-1").unwrap());
+        assert!(!verifier.verify_trace(&session, "no-such-trace").unwrap());
+    }
+
+    #[test]
+    fn test_a_relinked_event_reports_the_link() {
+        let mut events = create_test_events();
+        events[3].prev_hash = "tampered".to_string();
+        events[3].compute_hash("tampered");
+        let session = ReplaySession::new(events);
+        match ReplayVerifier::new().verify_log_integrity(&session) {
+            Err(ReplayError::IntegrityViolation { actual, .. }) => assert_eq!(actual, "tampered"),
+            other => panic!("expected a violation, got {other:?}"),
+        }
     }
 
     #[tokio::test]

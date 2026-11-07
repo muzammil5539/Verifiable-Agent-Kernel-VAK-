@@ -8,12 +8,17 @@
 //!
 //! # Overview
 //!
-//! The flight recorder captures:
-//! - All kernel requests and responses
-//! - Policy evaluation decisions
-//! - Tool execution attempts (with optional execution in shadow mode)
-//! - Timing and performance data
-//! - Chain hashes for verification
+//! The flight recorder captures what its caller records. `Kernel::execute`
+//! doesn't write to it. It can hold:
+//! - requests and responses;
+//! - policy evaluation decisions;
+//! - tool execution attempts;
+//! - errors, timing and spans.
+//!
+//! Every event is hash-chained to the one before it, across traces.
+//! [`FlightRecorder::verify_chain_integrity`] and [`ReplayEngine::verify_chain`]
+//! recompute every hash, so an edited, removed or reordered event is
+//! detected ([`verify_events`]).
 //!
 //! # Example
 //!
@@ -329,29 +334,31 @@ impl FlightEvent {
         self
     }
 
-    /// Calculate and set the hash for this event
+    /// Links this event to `prev_hash` and sets its hash.
     pub fn compute_hash(&mut self, prev_hash: &str) {
         self.prev_hash = prev_hash.to_string();
+        self.hash = self.expected_hash();
+    }
 
-        // Hash the event content (excluding hash fields)
-        let content = format!(
-            "{}:{}:{}:{}:{}:{:?}:{:?}:{:?}:{:?}:{}:{:?}",
-            self.event_id,
-            self.trace_id,
-            self.timestamp,
-            self.agent_id,
-            self.event_type_str(),
-            self.action,
-            self.resource,
-            self.decision,
-            self.shadow_mode,
-            self.prev_hash,
-            self.state_hash
-        );
-
+    /// The hash this event should carry: SHA-256 over a domain tag and the
+    /// event's JSON with `hash` left empty. It covers every other field,
+    /// `prev_hash`, input, output, error and metadata included, so changing
+    /// any of them is detected.
+    ///
+    /// Version 1 hashed only some fields, joined with `:`. Its input,
+    /// output, error and metadata could change without changing the hash,
+    /// and events recorded with it no longer verify.
+    pub fn expected_hash(&self) -> String {
+        let mut unhashed = self.clone();
+        unhashed.hash = String::new();
+        // Serializing these types can't fail: every map key is a string.
+        let body = serde_json::to_vec(&unhashed).unwrap_or_default();
         let mut hasher = Sha256::new();
-        hasher.update(content.as_bytes());
-        self.hash = hex::encode(hasher.finalize());
+        hasher.update((EVENT_HASH_TAG.len() as u64).to_be_bytes());
+        hasher.update(EVENT_HASH_TAG);
+        hasher.update((body.len() as u64).to_be_bytes());
+        hasher.update(&body);
+        hex::encode(hasher.finalize())
     }
 
     /// Get event type as string
@@ -369,6 +376,34 @@ impl FlightEvent {
             EventType::Custom(name) => format!("custom:{}", name),
         }
     }
+}
+
+/// Domain tag of an event hash (version 2).
+const EVENT_HASH_TAG: &[u8] = b"vak-flight-event-v2";
+
+/// The `prev_hash` of a recorder's first event.
+pub const GENESIS: &str = "genesis";
+
+/// Checks a run of consecutive events from one recorder: each links to the
+/// one before it, the first to `anchor`, and each carries the hash its
+/// contents give.
+///
+/// A recorder chains every event it records, whatever its trace, so a trace
+/// is checked by checking the run that holds it.
+///
+/// # Errors
+///
+/// The index of the first event that doesn't link or whose hash doesn't
+/// match.
+pub fn verify_events(events: &[FlightEvent], anchor: &str) -> Result<(), usize> {
+    let mut expected_prev = anchor;
+    for (index, event) in events.iter().enumerate() {
+        if event.prev_hash != expected_prev || event.hash != event.expected_hash() {
+            return Err(index);
+        }
+        expected_prev = &event.hash;
+    }
+    Ok(())
 }
 
 // Trace Receipt
@@ -409,6 +444,9 @@ pub struct FlightRecorder {
     event_count: AtomicU64,
     /// Last event hash (for chain linking)
     last_hash: RwLock<String>,
+    /// What the first event in memory links to: genesis, or the hash of the
+    /// last event trimmed off by `max_memory_events`.
+    anchor: RwLock<String>,
     /// File handle for persistent storage
     file_handle: Mutex<Option<File>>,
     /// Active spans for timing
@@ -431,7 +469,8 @@ impl FlightRecorder {
             current_trace_id: RwLock::new(None),
             events: RwLock::new(Vec::new()),
             event_count: AtomicU64::new(0),
-            last_hash: RwLock::new("genesis".to_string()),
+            last_hash: RwLock::new(GENESIS.to_string()),
+            anchor: RwLock::new(GENESIS.to_string()),
             file_handle: Mutex::new(file_handle),
             active_spans: RwLock::new(HashMap::new()),
         }
@@ -714,9 +753,15 @@ impl FlightRecorder {
         if let Ok(mut events) = self.events.write() {
             events.push(event);
 
-            // Trim if over limit
+            // Trim if over limit, remembering what the new first event
+            // links to so the rest still verifies.
             if events.len() > self.config.max_memory_events {
                 let drain_count = events.len() - self.config.max_memory_events;
+                if let (Some(last_dropped), Ok(mut anchor)) =
+                    (events.get(drain_count - 1), self.anchor.write())
+                {
+                    *anchor = last_dropped.hash.clone();
+                }
                 events.drain(0..drain_count);
             }
         }
@@ -790,26 +835,25 @@ impl FlightRecorder {
         }
     }
 
-    /// Verify chain integrity for a trace
+    /// Whether the events in memory form an intact chain and hold `trace_id`.
+    ///
+    /// Every event is chained, whatever its trace, so this checks every
+    /// event in memory, not only the trace's: each must link to the one
+    /// before and carry the hash its contents give. After
+    /// `max_memory_events` has trimmed old events, the check starts from the
+    /// last one trimmed.
+    ///
+    /// `false` if any event fails, if no event belongs to `trace_id`, or if
+    /// `enable_chain_hashing` is off, since then there is nothing to check
+    /// against.
     pub fn verify_chain_integrity(&self, trace_id: &str) -> bool {
         if !self.config.enable_chain_hashing {
-            return true;
+            return false;
         }
-
-        let events = self.get_trace_events(trace_id);
-        if events.is_empty() {
-            return true;
-        }
-
-        let mut expected_prev = "genesis".to_string();
-        for event in &events {
-            if event.prev_hash != expected_prev {
-                return false;
-            }
-            expected_prev = event.hash.clone();
-        }
-
-        true
+        let (Ok(events), Ok(anchor)) = (self.events.read(), self.anchor.read()) else {
+            return false;
+        };
+        events.iter().any(|e| e.trace_id == trace_id) && verify_events(&events, &anchor).is_ok()
     }
 
     /// Get event count
@@ -825,7 +869,10 @@ impl FlightRecorder {
         self.event_count.store(0, Ordering::Relaxed);
 
         if let Ok(mut last_hash) = self.last_hash.write() {
-            *last_hash = "genesis".to_string();
+            *last_hash = GENESIS.to_string();
+        }
+        if let Ok(mut anchor) = self.anchor.write() {
+            *anchor = GENESIS.to_string();
         }
     }
 
@@ -881,20 +928,31 @@ impl ReplayEngine {
         Self { events }
     }
 
-    /// Load events from a JSONL file
+    /// Load events from a JSONL file, as a recorder with `storage_path`
+    /// writes it.
+    ///
+    /// # Errors
+    ///
+    /// The file can't be read, or a line isn't an event. A line that doesn't
+    /// parse is an error rather than skipped: skipping it would drop an
+    /// event from the record without a trace.
     pub fn from_file(path: impl AsRef<std::path::Path>) -> std::io::Result<Self> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
         let mut events = Vec::new();
 
-        for line in reader.lines() {
+        for (number, line) in reader.lines().enumerate() {
             let line = line?;
             if line.trim().is_empty() {
                 continue;
             }
-            if let Ok(event) = serde_json::from_str::<FlightEvent>(&line) {
-                events.push(event);
-            }
+            let event = serde_json::from_str::<FlightEvent>(&line).map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("line {}: {e}", number + 1),
+                )
+            })?;
+            events.push(event);
         }
 
         Ok(Self { events })
@@ -921,22 +979,12 @@ impl ReplayEngine {
         ids
     }
 
-    /// Verify chain integrity
+    /// Whether the events form an intact chain from genesis and hold
+    /// `trace_id`. As for [`FlightRecorder::verify_chain_integrity`], every
+    /// event is checked, since every event is chained.
     pub fn verify_chain(&self, trace_id: &str) -> bool {
-        let events: Vec<_> = self.get_trace(trace_id);
-        if events.is_empty() {
-            return true;
-        }
-
-        let mut expected_prev = "genesis".to_string();
-        for event in events {
-            if event.prev_hash != expected_prev {
-                return false;
-            }
-            expected_prev = event.hash.clone();
-        }
-
-        true
+        self.events.iter().any(|e| e.trace_id == trace_id)
+            && verify_events(&self.events, GENESIS).is_ok()
     }
 
     /// Get summary statistics
@@ -1224,5 +1272,328 @@ mod tests {
         assert_eq!(span_ends.len(), 2);
         // Duration should be recorded
         assert!(span_ends.iter().all(|e| e.duration_us.is_some()));
+    }
+
+    /// A recorder with chain hashing, three traces recorded one after the
+    /// other, and the events it holds.
+    fn three_traces() -> (FlightRecorder, Vec<String>) {
+        let recorder = FlightRecorder::new(RecorderConfig::default());
+        let mut traces = Vec::new();
+        for agent in ["a", "b", "c"] {
+            traces.push(recorder.start_trace(agent));
+            recorder.record_request(agent, "read", "/file", None);
+            recorder.record_policy_decision(agent, "allow", Some("rule-1"), 10);
+            recorder.record_response(agent, "read", true, Some(serde_json::json!({"n": 1})));
+            recorder.end_trace(agent);
+        }
+        (recorder, traces)
+    }
+
+    #[test]
+    fn test_every_trace_verifies_not_only_the_first() {
+        // Every event is chained, whatever its trace. Each trace's first
+        // event used to be expected to link to genesis, so any trace after
+        // the first was reported as broken.
+        let (recorder, traces) = three_traces();
+        for trace in &traces {
+            assert!(recorder.verify_chain_integrity(trace), "{trace}");
+        }
+        let replay = ReplayEngine::new(recorder.events.read().unwrap().clone());
+        for trace in &traces {
+            assert!(replay.verify_chain(trace), "{trace}");
+        }
+        assert_eq!(replay.trace_ids().len(), 3);
+    }
+
+    #[test]
+    fn test_a_rewritten_event_is_detected() {
+        // Verification used to check only that each event named the one
+        // before it, so rewriting what an event said went unnoticed.
+        type Tamper = fn(&mut FlightEvent);
+        let tamperings: [(&str, Tamper); 6] = [
+            ("decision", |e| e.decision = Some("deny".into())),
+            ("output", |e| e.output = Some(serde_json::json!({"n": 2}))),
+            ("input", |e| e.input = Some(serde_json::json!({"x": 1}))),
+            ("error", |e| e.error = Some("covered up".into())),
+            ("metadata", |e| {
+                e.metadata = Some(serde_json::json!({"m": 1}))
+            }),
+            ("duration", |e| e.duration_us = Some(1)),
+        ];
+        for (field, tamper) in tamperings {
+            let (recorder, traces) = three_traces();
+            {
+                let mut events = recorder.events.write().unwrap();
+                let response = events
+                    .iter_mut()
+                    .filter(|e| e.trace_id == traces[1])
+                    .find(|e| e.event_type == EventType::Response)
+                    .unwrap();
+                tamper(response);
+            }
+            for trace in &traces {
+                assert!(
+                    !recorder.verify_chain_integrity(trace),
+                    "rewriting the {field} must not verify"
+                );
+            }
+            let events = recorder.events.read().unwrap().clone();
+            assert!(!ReplayEngine::new(events.clone()).verify_chain(&traces[1]));
+            assert!(verify_events(&events, GENESIS).is_err());
+        }
+    }
+
+    #[test]
+    fn test_a_removed_or_reordered_event_is_detected() {
+        let (recorder, traces) = three_traces();
+        let events = recorder.events.read().unwrap().clone();
+        assert_eq!(verify_events(&events, GENESIS), Ok(()));
+
+        let mut removed = events.clone();
+        removed.remove(5);
+        assert_eq!(verify_events(&removed, GENESIS), Err(5));
+
+        let mut swapped = events.clone();
+        swapped.swap(3, 4);
+        assert_eq!(verify_events(&swapped, GENESIS), Err(3));
+
+        assert_eq!(
+            verify_events(&events[1..], GENESIS),
+            Err(0),
+            "not from genesis"
+        );
+        assert!(!ReplayEngine::new(removed).verify_chain(&traces[0]));
+    }
+
+    #[test]
+    fn test_the_chain_still_verifies_after_old_events_are_trimmed() {
+        let recorder = FlightRecorder::new(RecorderConfig {
+            max_memory_events: 4,
+            ..RecorderConfig::default()
+        });
+        recorder.start_trace("a");
+        for i in 0..10 {
+            recorder.record_request("a", "read", &format!("/file/{i}"), None);
+        }
+        let trace = recorder.get_current_trace_id().unwrap();
+        assert_eq!(recorder.events.read().unwrap().len(), 4);
+        assert_eq!(recorder.event_count(), 11, "the count keeps every event");
+        assert!(recorder.verify_chain_integrity(&trace));
+
+        recorder.events.write().unwrap()[1].resource = Some("/elsewhere".into());
+        assert!(!recorder.verify_chain_integrity(&trace));
+    }
+
+    #[test]
+    fn test_nothing_to_check_is_not_verified() {
+        let (recorder, _) = three_traces();
+        assert!(
+            !recorder.verify_chain_integrity("no-such-trace"),
+            "an absent trace isn't vouched for"
+        );
+        assert!(!ReplayEngine::new(Vec::new()).verify_chain("no-such-trace"));
+
+        let unchained = FlightRecorder::new(RecorderConfig::minimal());
+        let trace = unchained.start_trace("a");
+        assert!(
+            !unchained.verify_chain_integrity(&trace),
+            "without chain hashing there is nothing to verify against"
+        );
+    }
+
+    #[test]
+    fn test_clear_starts_a_new_chain() {
+        // Trimmed first, so the anchor has moved off genesis.
+        let recorder = FlightRecorder::new(RecorderConfig {
+            max_memory_events: 2,
+            ..RecorderConfig::default()
+        });
+        recorder.start_trace("a");
+        for _ in 0..5 {
+            recorder.record_request("a", "read", "/f", None);
+        }
+        recorder.end_trace("a");
+        recorder.clear();
+        assert_eq!(recorder.event_count(), 0);
+        let trace = recorder.start_trace("a");
+        assert_eq!(recorder.events.read().unwrap()[0].prev_hash, GENESIS);
+        assert!(recorder.verify_chain_integrity(&trace));
+    }
+
+    #[test]
+    fn test_a_recording_on_disk_replays_and_verifies() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("trace.jsonl");
+        let recorder = FlightRecorder::new(RecorderConfig::full(&path));
+        let trace = recorder.start_trace("agent-1");
+        recorder.record_request(
+            "agent-1",
+            "login",
+            "/auth",
+            Some(serde_json::json!({"password": "hunter2", "user": "u"})),
+        );
+        recorder.record_tool_execution("agent-1", "lookup", false, 25, Some("timeout"));
+        recorder.record_error(
+            "agent-1",
+            "gave up",
+            Some(serde_json::json!({"retries": 3})),
+        );
+        recorder.end_trace("agent-1");
+
+        let replay = ReplayEngine::from_file(&path).unwrap();
+        assert_eq!(replay.events().len(), 5);
+        assert!(replay.verify_chain(&trace));
+        let recorded = replay.get_trace(&trace);
+        let login = recorded[1];
+        assert_eq!(
+            login.input.as_ref().unwrap()["password"],
+            "[REDACTED]",
+            "secrets never reach the file"
+        );
+        let summary = replay.summary();
+        assert_eq!(
+            (
+                summary.request_count,
+                summary.tool_executions,
+                summary.error_count
+            ),
+            (1, 1, 1)
+        );
+        assert_eq!(summary.decisions["failure"], 1);
+
+        // A line that doesn't parse is an error, not a silently dropped
+        // event.
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(
+            &path,
+            text.replacen("\"trace_start\"", "\"trace_stort\"", 1),
+        )
+        .unwrap();
+        let err = ReplayEngine::from_file(&path).err().expect("refused");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("line 1"), "{err}");
+        assert!(ReplayEngine::from_file(dir.path().join("missing.jsonl")).is_err());
+    }
+
+    #[test]
+    fn test_what_is_recorded_follows_the_config() {
+        let recorder = FlightRecorder::new(RecorderConfig {
+            record_requests: false,
+            record_policy_decisions: false,
+            record_tool_executions: false,
+            ..RecorderConfig::default()
+        });
+        let trace = recorder.start_trace("a");
+        recorder.record_request("a", "read", "/f", None);
+        recorder.record_response("a", "read", true, None);
+        recorder.record_policy_decision("a", "allow", None, 1);
+        recorder.record_tool_execution("a", "t", true, 1, None);
+        recorder.record_error("a", "always recorded", None);
+        let kinds: Vec<EventType> = recorder
+            .get_trace_events(&trace)
+            .into_iter()
+            .map(|e| e.event_type)
+            .collect();
+        assert_eq!(kinds, vec![EventType::TraceStart, EventType::Error]);
+
+        let unredacted = FlightRecorder::new(RecorderConfig {
+            redact_sensitive: false,
+            ..RecorderConfig::default()
+        });
+        unredacted.start_trace("a");
+        unredacted.record_response("a", "read", true, Some(serde_json::json!([{"token": "t"}])));
+        let events = unredacted.events.read().unwrap();
+        assert_eq!(events[1].output.as_ref().unwrap()[0]["token"], "t");
+    }
+
+    #[test]
+    fn test_receipts_summarise_a_trace() {
+        let recorder = FlightRecorder::new(RecorderConfig::shadow_mode());
+        assert!(recorder.generate_receipt().is_none(), "no trace yet");
+        assert!(recorder.end_trace("a").is_none());
+
+        let trace = recorder.start_trace("a");
+        recorder.record_policy_decision("a", "allow", None, 5);
+        recorder.record_policy_decision("a", "deny", Some("r"), 5);
+        recorder.record_tool_execution("a", "t", true, 5, None);
+        let receipt = recorder.generate_receipt().unwrap();
+        assert_eq!(receipt.trace_id, trace);
+        assert_eq!(receipt.event_count, 4);
+        assert!(receipt.shadow_mode);
+        assert_eq!(receipt.decision_summary["allow"], 1);
+        assert_eq!(receipt.decision_summary["deny"], 1);
+        assert_eq!(receipt.decision_summary["success"], 1);
+        assert_eq!(receipt.event_type_summary["policy_evaluation"], 2);
+        let events = recorder.get_trace_events(&trace);
+        assert_eq!(receipt.root_hash, events[0].hash);
+        assert_eq!(receipt.final_hash, events[3].hash);
+        assert!(receipt.end_time >= receipt.start_time);
+
+        let empty = recorder.generate_receipt_for_trace("none");
+        assert_eq!((empty.event_count, empty.start_time), (0, 0));
+        assert!(format!("{recorder:?}").contains("shadow_mode: true"));
+    }
+
+    #[test]
+    fn test_custom_events_and_builders_are_hashed() {
+        let mut event = FlightEvent::new("t", EventType::Custom("probe".into()), "a")
+            .with_session("s")
+            .with_parent_span("p")
+            .with_state_hash("state");
+        event.compute_hash(GENESIS);
+        assert_eq!(event.event_type_str(), "custom:probe");
+        assert_eq!(event.hash, event.expected_hash());
+        let before = event.hash.clone();
+        event.session_id = Some("other".into());
+        assert_ne!(event.expected_hash(), before, "the session is covered");
+    }
+
+    #[tokio::test]
+    async fn test_replay_compares_outputs() {
+        let recorder = FlightRecorder::new(RecorderConfig::default());
+        let trace = recorder.start_trace("a");
+        recorder.record_request("a", "read", "/f", None);
+        recorder.record_tool_execution("a", "t", true, 1, None);
+        recorder.record_policy_decision("a", "allow", None, 1);
+        {
+            let mut events = recorder.events.write().unwrap();
+            events[2].output = Some(serde_json::json!("recorded"));
+            events[3].output = Some(serde_json::json!("recorded"));
+        }
+        let replay = ReplayEngine::new(recorder.events.read().unwrap().clone());
+
+        let report = replay
+            .replay_trace(&trace, |event| {
+                let output = match event.event_type {
+                    EventType::Request => Ok(None),
+                    EventType::ToolExecution => Ok(Some(serde_json::json!("recorded"))),
+                    _ => Ok(Some(serde_json::json!("different"))),
+                };
+                async move { output }
+            })
+            .await
+            .unwrap();
+        assert_eq!(report.events_replayed, 3);
+        assert_eq!(
+            (report.matches, report.mismatches, report.errors),
+            (2, 1, 0)
+        );
+        assert_eq!(report.mismatch_details[0].actual, "different");
+
+        let failing = replay
+            .replay_trace(&trace, |event| {
+                let output = match event.event_type {
+                    EventType::ToolExecution => Ok(None),
+                    _ => Err("down".to_string()),
+                };
+                async move { output }
+            })
+            .await
+            .unwrap();
+        assert_eq!((failing.mismatches, failing.errors), (1, 2));
+        assert!(replay
+            .replay_trace("none", |_| async { Ok(None) })
+            .await
+            .is_err());
     }
 }

@@ -234,6 +234,24 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- The flight recorder's hash chain (finding V6).
+  - **Edits were missed.** Verification checked only that each event named the one
+    before it, so an edited decision or output still verified. It now recomputes
+    every hash.
+  - **The hash covers every field.** It used to cover only some, leaving input,
+    output, error and metadata out. It is now a domain-tagged hash over every field
+    (version 2), shared by `FlightEvent`, `ReplayEngine` and `ReplayVerifier`.
+  - **Later traces failed.** Every event is chained whatever its trace, but each
+    trace was expected to start at genesis, so every trace after the first failed.
+    A trace is now checked by checking the whole chain. Once `max_memory_events` has
+    trimmed old events, the check starts from the last event trimmed.
+  - **Nothing to check is not a pass.** An absent trace, or a recorder with chain
+    hashing off, no longer verifies. `ReplayVerifier::verify_trace` returned
+    `Ok(true)` without checking anything; it now checks the log, and returns
+    `Ok(false)` for an absent trace.
+  - **Bad lines are errors.** `ReplayEngine::from_file` refuses a line that isn't an
+    event, rather than skipping it.
+  - **Breaking:** events recorded with the old hash don't verify.
 - The sparse Merkle tree (`memory::sparse_merkle`; finding V4, ADR 0015).
   - **The root commits to every entry.** Every sibling was the empty subtree, so the
     root committed only to the last key written, and proofs for earlier keys failed.

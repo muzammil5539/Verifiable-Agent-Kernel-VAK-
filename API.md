@@ -920,14 +920,33 @@ counts them.
 
 ### FlightRecorder
 
-Shadow-mode recording for safe testing.
+**Module:** `vak::audit::flight_recorder`
+
+Records what agents did (requests, policy decisions, tool runs, errors) as a hash chain,
+in memory and optionally as JSONL, for shadow-mode trials and replay. It is a standalone
+recorder: `Kernel::execute` doesn't write to it.
 
 ```rust
-let recorder = FlightRecorder::new();
-recorder.record_request(&request).await;
-recorder.record_response(&response).await;
-let replay = recorder.replay().await;
+use vak::audit::flight_recorder::{FlightRecorder, RecorderConfig, ReplayEngine};
+
+let recorder = FlightRecorder::new(RecorderConfig::full("traces/run.jsonl"));
+let trace = recorder.start_trace("agent-1");
+recorder.record_request("agent-1", "read", "/data/report.csv", None);
+recorder.record_policy_decision("agent-1", "allow", Some("rule-7"), 120);
+let receipt = recorder.end_trace("agent-1");
+
+assert!(recorder.verify_chain_integrity(&trace));
+let replay = ReplayEngine::from_file("traces/run.jsonl")?;
+assert!(replay.verify_chain(&trace));
 ```
+
+- **The hash.** Each event's hash covers every field and the previous event's hash,
+  behind a domain tag. One chain runs through every trace.
+- **What verification checks.** It recomputes every hash over the whole chain, from
+  genesis, or from the last event trimmed by `max_memory_events`.
+- **When it fails.** An edited, removed or reordered event fails it. So does a trace
+  that isn't there, and a recorder with `enable_chain_hashing` off.
+- **Older recordings.** Events recorded before the version 2 hash don't verify.
 
 ---
 
