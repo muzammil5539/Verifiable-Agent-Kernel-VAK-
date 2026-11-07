@@ -307,11 +307,11 @@ request path. In order of leverage:
       status updates because nothing ran it. If CI already exists
       (`.github/workflows/ci.yml` is referenced in prior notes), verify it
       is *required* for merge, not merely present.
-- [ ] **Coverage slice: reach the 80% line floor.** Line coverage is 81.92%
-      (41,703 of 50,908 lines, measured at `a073bbd`), over the floor, which
+- [x] **Coverage slice: reach the 80% line floor.** Line coverage is 83.18%
+      (42,881 of 51,551 lines, measured at `0e62907`), over the floor, which
       stays at 80%; the Code Coverage job runs under cargo-llvm-cov (ADR 0012).
-      Each module still goes to 80% on its own, one module per commit, in this
-      order:
+      Every module in the order is over 80% too, each taken there one commit
+      at a time:
       1. [x] **`audit`**, TCB-critical: 71.1% to 86.8%. Writing its tests
          found seven bugs, each fixed in its own commit:
          - V6: the flight recorder never recomputed hashes, and failed every
@@ -337,10 +337,20 @@ request path. In order of leverage:
          - K16: the pool could be overfilled or bricked, and execution limits
            were skipped silently;
          - K17: the publisher registry believed what publishers claimed.
-      3. **`memory`**. 79.5%, 1,812 missed; 47 more. `time_travel.rs` 484,
-         `mod.rs` 200, `content_addressable.rs` 187.
-      4. **`reasoner`**, last: outside the TCB. 80.6% already, from the
-         reasoning-host tests; take it further only after memory.
+      3. [x] **`memory`**: 79.5% to 86.5%. Writing its tests found bugs in
+         four files, each fixed in its own commit:
+         - M3: time-travel checkpoints hashed their fields unseparated and
+           chained parent IDs, import trusted what it loaded, and a parent
+           cycle looped for ever;
+         - M4: the content-addressable store couldn't read compressed blobs
+           once reopened, and never repaired a damaged one;
+         - M5: snapshot backends loaded unverified files, and agents `a/b`
+           and `a_b` shared a directory, `..` one outside the base;
+         - M6: `StateManager` namespaces shared keys, so an agent named
+           `session` read session state.
+         V5's table row, fixed long ago, was also marked fixed.
+      4. [x] **`reasoner`**, last: outside the TCB. 80.6% with no slice of
+         its own, from the reasoning-host tests (R5).
 
       Tests follow the Definition of done below. `make coverage` writes the
       per-file report to `coverage/`.
