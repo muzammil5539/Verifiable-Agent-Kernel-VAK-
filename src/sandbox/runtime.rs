@@ -415,8 +415,20 @@ fn classify(
 
 /// A wasm32 pointer as an offset into linear memory. Guest pointers are
 /// unsigned; reading them as `i32` and casting would sign-extend.
-fn guest_offset(ptr: i32) -> usize {
+pub(crate) fn guest_offset(ptr: i32) -> usize {
     u32::from_le_bytes(ptr.to_le_bytes()) as usize
+}
+
+/// The bytes `ptr..ptr + len` of a guest memory `memory_len` bytes long, or
+/// `None` if any of them lie outside it. Both values come from the guest and
+/// are unsigned wasm32 values; the sum is checked, so no `ptr` and `len` can
+/// overflow it or slice out of bounds.
+pub(crate) fn guest_range(ptr: i32, len: i32, memory_len: usize) -> Option<std::ops::Range<usize>> {
+    let start = guest_offset(ptr);
+    start
+        .checked_add(guest_offset(len))
+        .filter(|end| *end <= memory_len)
+        .map(|end| start..end)
 }
 
 /// Compiled modules by content digest, evicting the oldest beyond capacity.
@@ -567,6 +579,25 @@ impl Drop for Running<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_guest_range_never_overflows() {
+        assert_eq!(guest_range(0, 4, 4), Some(0..4));
+        assert_eq!(guest_range(4, 0, 4), Some(4..4));
+        assert_eq!(guest_range(1, 4, 4), None);
+        assert_eq!(guest_range(5, 0, 4), None);
+        // Negative values are large unsigned offsets, never wrapped sums.
+        assert_eq!(
+            guest_range(-1, 2, usize::MAX),
+            Some(0xffff_ffff..0x1_0000_0001)
+        );
+        assert_eq!(guest_range(-1, 2, 65_536), None);
+        assert_eq!(guest_range(0, -1, 65_536), None);
+        assert_eq!(
+            guest_range(i32::MIN, i32::MIN, 1 << 32),
+            Some(0x8000_0000..1 << 32)
+        );
+    }
 
     /// The skill ABI: `execute` echoes its input; `spin` never returns;
     /// `bad_len` returns an output whose length runs past memory;

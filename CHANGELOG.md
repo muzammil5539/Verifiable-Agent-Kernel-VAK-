@@ -234,6 +234,20 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- WASM host functions in `sandbox::host_funcs` (finding K13).
+  - **Host panic.** Guest pointers and lengths were sign-extended and added
+    unchecked, outside the panic boundary, so a guest calling
+    `vak.fs_read(-1, 2)` panicked the host. They are now unsigned wasm32 values
+    with a checked sum.
+  - **Fake success.** `vak.fs_read` and `vak.fs_write` returned 0, success by
+    their ABI, having done nothing. An allowed call now returns `NOT_IMPLEMENTED`
+    (-2).
+  - **Audit.** `audit_logging` was never read, so nothing was recorded. Every
+    file call, allowed, denied or with an unreadable path, is now recorded in
+    `HostFuncState::audit_entries`.
+  - **Smaller fixes.** `vak.log` logs its message, escaped and capped at
+    `MAX_LOG_MESSAGE` (4 KiB); it used to read only the level.
+    `with_panic_boundary_async` catches panics; it awaited the future unguarded.
 - `AuditLogger::verify_signatures` refuses an unsigned entry (finding V7).
   - **The hole.** Signatures aren't hashed, so stripping them left a signed log's
     chain intact, and the signature check passed.
