@@ -180,7 +180,8 @@ impl NamespacedKey {
         }
     }
 
-    /// Parse a namespaced key from string format "namespace:key"
+    /// Parses a canonical key ([`Self::to_canonical`]): the namespace,
+    /// with `%` and `:` percent-encoded, then `:`, then the key.
     pub fn parse(s: &str) -> StateResult<Self> {
         let parts: Vec<&str> = s.splitn(2, ':').collect();
         if parts.len() != 2 {
@@ -190,15 +191,58 @@ impl NamespacedKey {
             )));
         }
         Ok(Self {
-            namespace: parts[0].to_string(),
+            namespace: decode_namespace(parts[0])?,
             key: parts[1].to_string(),
         })
     }
 
-    /// Convert to canonical string representation
+    /// The key as one string, unique to the (namespace, key) pair: the
+    /// namespace with `%` and `:` percent-encoded, `:`, and the key.
+    ///
+    /// It used to be `namespace:key` as given, so `("a:b", "c")` and
+    /// `("a", "b:c")` were one key: an agent named `session` could read
+    /// [`session_key`]s, and agent `x:y` another agent's keys.
     pub fn to_canonical(&self) -> String {
-        format!("{}:{}", self.namespace, self.key)
+        format!("{}{}", namespace_prefix(&self.namespace), self.key)
     }
+}
+
+/// The start every canonical key in `namespace` has, and no other: the
+/// namespace with `%` and `:` percent-encoded, then `:`. Filtering on the
+/// raw `namespace:` used to take in namespace `namespace:anything` too.
+pub fn namespace_prefix(namespace: &str) -> String {
+    let mut prefix = String::with_capacity(namespace.len() + 1);
+    for c in namespace.chars() {
+        match c {
+            '%' => prefix.push_str("%25"),
+            ':' => prefix.push_str("%3A"),
+            c => prefix.push(c),
+        }
+    }
+    prefix.push(':');
+    prefix
+}
+
+/// Reverses the namespace encoding of [`namespace_prefix`].
+fn decode_namespace(encoded: &str) -> StateResult<String> {
+    let mut namespace = String::with_capacity(encoded.len());
+    let mut rest = encoded;
+    while let Some(at) = rest.find('%') {
+        namespace.push_str(&rest[..at]);
+        let escape = rest.get(at..at + 3).unwrap_or("");
+        match escape {
+            "%25" => namespace.push('%'),
+            "%3A" | "%3a" => namespace.push(':'),
+            _ => {
+                return Err(StateError::InvalidNamespace(format!(
+                    "'{encoded}' has a '%' that isn't %25 or %3A"
+                )))
+            }
+        }
+        rest = &rest[at + 3..];
+    }
+    namespace.push_str(rest);
+    Ok(namespace)
 }
 
 impl std::fmt::Display for NamespacedKey {
@@ -467,7 +511,7 @@ impl EphemeralStorage for InMemoryEphemeral {
             .write()
             .map_err(|e| StateError::LockError(e.to_string()))?;
 
-        let prefix = format!("{}:", namespace);
+        let prefix = namespace_prefix(namespace);
         let keys_to_remove: Vec<_> = store
             .keys()
             .filter(|k| k.starts_with(&prefix))
@@ -576,7 +620,7 @@ impl SemanticStorage for InMemorySemanticStorage {
             .read()
             .map_err(|e| StateError::LockError(e.to_string()))?;
 
-        let prefix = format!("{}:", namespace);
+        let prefix = namespace_prefix(namespace);
 
         // Collect all entries in the namespace with their similarity scores
         let mut matches: Vec<(String, &SemanticEntry, f32)> = entries
@@ -1030,6 +1074,100 @@ pub fn session_key(session_id: &str, key: &str) -> NamespacedKey {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_namespaces_cannot_share_keys() {
+        // The canonical key was "namespace:key" as given: an agent named
+        // "session" read session keys, and agent "x:y" agent "x"'s keys.
+        let manager = StateManager::new(StateManagerConfig::default());
+        for tier in [StateTier::Ephemeral, StateTier::Merkle] {
+            manager
+                .set_state(&session_key("abc", "token"), b"secret".to_vec(), tier)
+                .unwrap();
+            assert_eq!(
+                manager
+                    .get_state(&agent_key("session", "abc:token"), tier)
+                    .unwrap(),
+                None
+            );
+            manager
+                .set_state(&agent_key("x", "y:z"), b"x's".to_vec(), tier)
+                .unwrap();
+            assert_eq!(
+                manager.get_state(&agent_key("x:y", "z"), tier).unwrap(),
+                None
+            );
+            assert_eq!(
+                manager
+                    .get_state(&agent_key("x", "y:z"), tier)
+                    .unwrap()
+                    .as_deref(),
+                Some(&b"x's"[..])
+            );
+        }
+        assert_ne!(
+            agent_key("session", "abc:token").to_canonical(),
+            session_key("abc", "token").to_canonical()
+        );
+
+        // Clearing namespace "a" left "a:b" alone? It cleared it too.
+        manager
+            .set_state(&agent_key("a:b", "k"), b"1".to_vec(), StateTier::Ephemeral)
+            .unwrap();
+        manager
+            .set_state(&agent_key("a", "k"), b"2".to_vec(), StateTier::Ephemeral)
+            .unwrap();
+        assert_eq!(manager.clear_ephemeral_namespace("a").unwrap(), 1);
+        assert!(manager.exists(&agent_key("a:b", "k")).unwrap());
+
+        // A semantic search in "a" returned "a:b"'s entries.
+        manager
+            .set_state_semantic(&agent_key("a:b", "doc"), b"other".to_vec(), vec![1.0, 0.0])
+            .unwrap();
+        manager
+            .set_state_semantic(&agent_key("a", "doc"), b"mine".to_vec(), vec![1.0, 0.0])
+            .unwrap();
+        let found = manager.semantic_search("a", vec![1.0, 0.0], 10).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].value, b"mine");
+
+        // A namespace with a colon is found and cleared as itself.
+        let found = manager.semantic_search("a:b", vec![1.0, 0.0], 10).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].value, b"other");
+        assert_eq!(manager.clear_ephemeral_namespace("a:b").unwrap(), 1);
+        assert!(!manager.exists(&agent_key("a:b", "k")).unwrap());
+    }
+
+    #[test]
+    fn test_canonical_keys_round_trip() {
+        for (namespace, key) in [
+            ("agent1", "my_key"),
+            ("session:abc", "token"),
+            ("100%", "k:with:colons"),
+            ("%3A", ""),
+            ("", "k"),
+        ] {
+            let original = NamespacedKey::new(namespace, key);
+            let parsed = NamespacedKey::parse(&original.to_canonical()).unwrap();
+            assert_eq!(parsed, original, "{namespace:?} {key:?}");
+        }
+        assert_eq!(
+            agent_key("agent1", "k").to_canonical(),
+            "agent1:k",
+            "plain IDs unchanged"
+        );
+        assert_eq!(session_key("s", "k").to_canonical(), "session%3As:k");
+        assert_eq!(NamespacedKey::parse("a%3ab:c").unwrap().namespace, "a:b");
+        for bad in ["a%:k", "a%2:k", "a%41:k"] {
+            assert!(NamespacedKey::parse(bad).is_err(), "{bad}");
+        }
+        assert_eq!(
+            agent_key("a:b", "c").to_string(),
+            "a:b:c",
+            "display is unchanged"
+        );
+    }
 
     #[test]
     fn test_namespaced_key_parse() {

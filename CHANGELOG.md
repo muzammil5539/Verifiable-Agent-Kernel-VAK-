@@ -234,6 +234,14 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- `StateManager` namespaces can't share keys (finding M6).
+  - **The collision.** A canonical key was `namespace:key` as given, so
+    `("a:b", "c")` and `("a", "b:c")` were the same key. An agent named
+    `session` could read session keys, and agent `x:y` could read agent `x`'s.
+  - **The fix.** The namespace is now percent-encoded (`%` and `:`), and
+    clearing and semantic search match whole namespaces. The new
+    `memory::namespace_prefix` builds the encoded prefix. Canonical keys change
+    for namespaces containing `:` or `%`, session keys included.
 - Snapshot backends (`memory::snapshot_backend`) store each agent's checkpoints
   faithfully (finding M5).
   - **Loading** checks the snapshot is the one asked for, and that it verifies.
