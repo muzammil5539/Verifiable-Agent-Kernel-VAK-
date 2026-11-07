@@ -448,7 +448,9 @@ pub struct SecurityConfig {
     #[serde(default)]
     pub allowed_tools: Vec<String>,
 
-    /// List of blocked tool names.
+    /// Tool names the kernel always denies, whatever decides the rest:
+    /// config, YAML or Cedar policies, or an embedder's decision point
+    /// (docs/adr/0017). Policies also see them as `resource.restricted`.
     #[serde(default)]
     pub blocked_tools: Vec<String>,
 

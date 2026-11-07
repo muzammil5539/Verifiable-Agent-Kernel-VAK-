@@ -14,6 +14,10 @@
 //! Embedders that want a different engine implement
 //! [`PolicyDecisionPoint`] and pass it to
 //! [`KernelBuilder::with_policy`](super::KernelBuilder::with_policy).
+//!
+//! Whichever decides, [`Blocklist`] wraps it: a tool in
+//! `security.blocked_tools` is denied before the engine is asked
+//! (docs/adr/0017).
 
 use std::sync::Arc;
 
@@ -199,11 +203,7 @@ impl PolicyDecisionPoint for ConfigPolicy {
         let security = &self.config.security;
 
         if security.blocked_tools.contains(tool) {
-            warn!(tool = %tool, "Tool is in blocked list");
-            return PolicyDecision::Deny {
-                reason: format!("Tool '{tool}' is blocked by security policy"),
-                violated_policies: Some(vec!["security.blocked_tools".to_string()]),
-            };
+            return blocked(tool);
         }
 
         if !security.allowed_tools.is_empty() && !security.allowed_tools.contains(tool) {
@@ -255,6 +255,67 @@ impl PolicyDecisionPoint for ConfigPolicy {
 
     fn name(&self) -> &str {
         "config"
+    }
+}
+
+/// The decision for a tool in `security.blocked_tools`.
+fn blocked(tool: &str) -> PolicyDecision {
+    warn!(tool = %tool, "Tool is in blocked list");
+    PolicyDecision::Deny {
+        reason: format!("Tool '{tool}' is blocked by security policy"),
+        violated_policies: Some(vec!["security.blocked_tools".to_string()]),
+    }
+}
+
+/// Denies every tool in `security.blocked_tools`, then lets the decision
+/// point it wraps decide the rest (docs/adr/0017).
+///
+/// The kernel wraps its decision point in one whenever the list isn't
+/// empty, whatever that decision point is: [`ConfigPolicy`], YAML policy
+/// files, Cedar, or an embedder's own. With policy files the list used to be
+/// only `resource.restricted`, an attribute rules could read or ignore, so a
+/// rule permitting a tool without that condition ran a blocked tool.
+#[derive(Debug)]
+pub struct Blocklist {
+    blocked: Vec<String>,
+    inner: Arc<dyn PolicyDecisionPoint>,
+}
+
+impl Blocklist {
+    /// `inner`, behind `blocked`; `inner` itself when `blocked` is empty.
+    #[must_use]
+    pub fn wrap(
+        blocked: Vec<String>,
+        inner: Arc<dyn PolicyDecisionPoint>,
+    ) -> Arc<dyn PolicyDecisionPoint> {
+        if blocked.is_empty() {
+            inner
+        } else {
+            Arc::new(Self { blocked, inner })
+        }
+    }
+
+    /// The decision point this one wraps.
+    #[must_use]
+    pub fn inner(&self) -> &Arc<dyn PolicyDecisionPoint> {
+        &self.inner
+    }
+}
+
+#[async_trait]
+impl PolicyDecisionPoint for Blocklist {
+    async fn decide(&self, req: &PolicyRequest<'_>) -> PolicyDecision {
+        let tool = &req.request.tool_name;
+        if self.blocked.contains(tool) {
+            return blocked(tool);
+        }
+        self.inner.decide(req).await
+    }
+
+    /// The wrapped decision point's name: the blocklist decides only what
+    /// the configuration says outright.
+    fn name(&self) -> &str {
+        self.inner.name()
     }
 }
 

@@ -90,6 +90,7 @@ Any tool name not matching a built-in (`echo`, `calculator`, `data_processor`, `
 ## Key invariants (do not violate silently)
 
 - **Default deny**: no matching policy rule = inadmissible. Never make an action fall through to allow.
+- **Blocked means blocked**: a tool in `security.blocked_tools` is denied before any decision point is asked, whatever engine or embedder decides the rest (docs/adr/0017). Don't remove the `Blocklist` wrapper as redundant.
 - **No fake success**: a tool that doesn't exist or didn't run is an error (`ToolNotFound`, `ToolExecutionFailed`), never a success response.
 - **Policy is a port**: the kernel decides through `kernel::ports::PolicyDecisionPoint`; add policy logic in an implementation of it (see `kernel::pdp`), not inline in `Kernel`.
 - **Guards only narrow**: extra checks on allowed calls are `kernel::ports::Guard` implementations, not inline in `Kernel`. A guard can refuse what the policy allowed, never allow what it denied; a guard that fails denies; only a guard's `Pass` counts toward `policy.min_assurance` (docs/adr/0013).

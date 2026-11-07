@@ -109,7 +109,7 @@ pub use self::identity::{AgentRecord, AgentStatus, InMemoryAgentRegistry, Regist
 pub use self::ifc::{Integrity, Label, LabelConfig, Labeled, Readers, Source, SourceLabel};
 #[cfg(feature = "cedar")]
 pub use self::pdp::CedarPolicy;
-pub use self::pdp::{ConfigPolicy, DenyAll, EnforcerPolicy};
+pub use self::pdp::{Blocklist, ConfigPolicy, DenyAll, EnforcerPolicy};
 pub use self::ports::{AgentRegistry, AuditLog, Budget, Guard, PolicyDecisionPoint, PolicyRequest};
 
 use std::collections::hash_map::Entry;
@@ -425,6 +425,8 @@ impl KernelBuilder {
             Some(policy) => policy,
             None => pdp::policy_from_config(&config).await,
         };
+        // A blocked tool is denied whatever decides the rest (ADR 0017).
+        let policy = pdp::Blocklist::wrap(config.security.blocked_tools.clone(), policy);
         info!(policy = policy.name(), "Policy decision point ready");
 
         // Each guard's name and level are read once, here, so every verdict

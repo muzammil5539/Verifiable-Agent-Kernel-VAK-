@@ -234,6 +234,14 @@ See `docs/architecture-v2.md` for the audit and design behind these changes, and
 - `lib.rs` status table states assurance levels instead of claiming an external audit.
 
 ### Fixed
+- `security.blocked_tools` is a hard block (docs/adr/0017).
+  - **The hole.** With YAML or Cedar policies, the list was only
+    `resource.restricted`, an attribute rules could ignore. A decision point
+    passed to `KernelBuilder::with_policy` never saw it. Either way, a rule or
+    engine that allowed a tool ran it though it was blocked.
+  - **The fix.** The kernel now wraps every decision point in the new
+    `kernel::Blocklist`, which denies blocked tools first and is audited as
+    `security.blocked_tools`.
 - `StateManager` namespaces can't share keys (finding M6).
   - **The collision.** A canonical key was `namespace:key` as given, so
     `("a:b", "c")` and `("a", "b:c")` were the same key. An agent named
